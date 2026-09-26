@@ -79,6 +79,16 @@ export interface PrincipalProfileInput {
 }
 
 const str = (v: unknown): string | null => (v == null ? null : String(v));
+/**
+ * tx.execute trả timestamptz dạng chuỗi của PostgreSQL ("2026-09-26 15:01:01.36+00"),
+ * không phải Date → chuẩn hóa để API luôn trả ISO (trình duyệt nào cũng đọc được).
+ */
+const toDate = (v: unknown): Date => {
+  if (v instanceof Date) return v;
+  const s = String(v ?? "");
+  const d = new Date(s.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"));
+  return Number.isNaN(d.getTime()) ? new Date(s) : d;
+};
 /** id từ URL sai định dạng → coi như không tồn tại (tránh lỗi ép kiểu uuid của PostgreSQL). */
 const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 const blankToNull = (v: string | null | undefined): string | null => {
@@ -94,8 +104,8 @@ function mapTag(r: Record<string, unknown>): ContactTag {
     aiInstructions: (r.ai_instructions as string) ?? "",
     useInGroups: Boolean(r.use_in_groups),
     memberCount: Number(r.member_count ?? 0),
-    createdAt: r.created_at as Date,
-    updatedAt: r.updated_at as Date,
+    createdAt: toDate(r.created_at),
+    updatedAt: toDate(r.updated_at),
   };
 }
 
@@ -118,8 +128,8 @@ function mapProfile(r: Record<string, unknown>): PrincipalProfile {
     aiInstructions: (r.ai_instructions as string) ?? "",
     useInGroups: Boolean(r.use_in_groups),
     updatedBy: str(r.updated_by),
-    createdAt: r.created_at as Date,
-    updatedAt: r.updated_at as Date,
+    createdAt: toDate(r.created_at),
+    updatedAt: toDate(r.updated_at),
   };
 }
 
@@ -135,8 +145,8 @@ function mapOverview(r: Record<string, unknown>): ContactOverview {
     displayName: str(r.display_name),
     profileName: str(r.profile_name),
     principalId: str(r.principal_id),
-    firstSeen: r.first_seen as Date,
-    lastSeen: r.last_seen as Date,
+    firstSeen: toDate(r.first_seen),
+    lastSeen: toDate(r.last_seen),
     pairing: r.pairing as PairingState,
     hasInstructions: Boolean(r.has_instructions),
     tags: tags.map((t) => ({ id: t.id, name: t.name, color: t.color ?? "" })),
@@ -435,7 +445,7 @@ export async function listMemoriesForUserKey(
       content: r.content as string,
       importance: Number(r.importance),
       pinned: Boolean(r.pinned),
-      createdAt: r.created_at as Date,
+      createdAt: toDate(r.created_at),
     }));
   });
 }
@@ -498,7 +508,7 @@ export async function getPersonRelated(
         agentName: r.agent_name as string,
         path: r.path as string,
         bytes: Number(r.bytes),
-        updatedAt: r.updated_at as Date,
+        updatedAt: toDate(r.updated_at),
       })),
       sessions: (sessions.rows as Array<Record<string, unknown>>).map((r) => ({
         id: r.id as string,
@@ -506,7 +516,7 @@ export async function getPersonRelated(
         agentKey: str(r.agent_key),
         agentName: str(r.agent_name),
         messageCount: Number(r.message_count),
-        lastActive: r.last_active as Date,
+        lastActive: toDate(r.last_active),
       })),
       vaultCollections: (vault.rows as Array<Record<string, unknown>>).map((r) => ({
         id: r.id as string,
@@ -550,10 +560,10 @@ export async function getPersonContextData(
       const c = await tx.execute(sql`
         SELECT display_name, first_seen, principal_id FROM contacts WHERE id = ${input.contactId}
       `);
-      const r = c.rows[0] as { display_name: string | null; first_seen: Date; principal_id: string | null } | undefined;
+      const r = c.rows[0] as { display_name: string | null; first_seen: unknown; principal_id: string | null } | undefined;
       if (r) {
         channelDisplayName = r.display_name;
-        firstSeen = r.first_seen;
+        firstSeen = toDate(r.first_seen);
         principalId = principalId ?? r.principal_id;
       }
     }
@@ -562,10 +572,10 @@ export async function getPersonContextData(
     let tags: PersonContextData["tags"] = [];
     if (principalId) {
       const p = await tx.execute(sql`SELECT display_name, created_at FROM principals WHERE id = ${principalId}`);
-      const pr = p.rows[0] as { display_name: string; created_at: Date } | undefined;
+      const pr = p.rows[0] as { display_name: string; created_at: unknown } | undefined;
       if (!pr && !input.contactId) return null;
       principalName = pr?.display_name ?? null;
-      firstSeen = firstSeen ?? pr?.created_at ?? null;
+      firstSeen = firstSeen ?? (pr ? toDate(pr.created_at) : null);
       const prof = await tx.execute(sql`SELECT * FROM principal_profiles WHERE principal_id = ${principalId}`);
       const row = prof.rows[0] as Record<string, unknown> | undefined;
       profile = row ? mapProfile(row) : null;

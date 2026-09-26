@@ -81,6 +81,9 @@ describe("listContactsOverview / getContactOverview", () => {
     expect(byExt.get("222")!.pairing).toBe("cho_duyet");
     expect(byExt.get("333")!.pairing).toBe("khong_can");
     expect(byExt.get("111")!.channelName).toBe("Bot A");
+    // SQL thô trả thời gian dạng chuỗi của PostgreSQL → phải được đổi sang Date (API trả ISO)
+    expect(byExt.get("111")!.lastSeen).toBeInstanceOf(Date);
+    expect(byExt.get("111")!.firstSeen.toISOString()).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(byExt.has("999")).toBe(false);
     expect(await getContactOverview(dbh.db, ctxA(), inB.contactId)).toBeNull();
     expect(await getContactOverview(dbh.db, ctxA(), "khong-phai-uuid")).toBeNull();
