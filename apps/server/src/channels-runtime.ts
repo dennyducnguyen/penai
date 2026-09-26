@@ -803,6 +803,22 @@ function makeInboundHandler(
     let traceUsage = { inputTokens: 0, outputTokens: 0 };
     let traceIterations = 0;
     let traceError: string | null = null;
+    // Trace: ghi cho MOI luot chay tren kenh chat, KE CA luot loi (truoc 26/09/2026
+    // luot loi throw truoc buoc ghi nen admin khong thay loi, phai doc log may chu).
+    const writeTrace = () =>
+      recordTraceSafe(db, ctx, {
+        agentId: agent.id,
+        sessionId: sessionId!,
+        inputTokens: traceUsage.inputTokens,
+        outputTokens: traceUsage.outputTokens,
+        iterations: traceIterations,
+        durationMs: Date.now() - traceStart,
+        source: "channel",
+        model: agent.model,
+        provider: agent.provider,
+        kind: channel.kind,
+        ...(traceError ? { error: String(traceError).slice(0, 500) } : {}),
+      });
     const finalText = await queue.schedule("main", async () => {
       if (ac.signal.aborted) return "";
       hooks?.onStatus?.("thinking");
@@ -856,25 +872,16 @@ function makeInboundHandler(
       } finally {
         activeRuns.delete(sessionId!);
       }
-    }, sessionId).finally(() => activeRuns.delete(sessionId!));
+    }, sessionId)
+      .finally(() => activeRuns.delete(sessionId!))
+      .catch((err: unknown) => {
+        traceError = err instanceof Error ? err.message : String(err);
+        writeTrace();
+        throw err;
+      });
 
     hooks?.onStatus?.("done");
-
-    // Trace: ghi cho MOI luot chay tren kenh chat. Truoc 0025 chi nhanh
-    // non-stream cua Dashboard ghi trace nen bang traces gan nhu rong.
-    recordTraceSafe(db, ctx, {
-      agentId: agent.id,
-      sessionId: sessionId!,
-      inputTokens: traceUsage.inputTokens,
-      outputTokens: traceUsage.outputTokens,
-      iterations: traceIterations,
-      durationMs: Date.now() - traceStart,
-      source: "channel",
-      model: agent.model,
-      provider: agent.provider,
-      kind: channel.kind,
-      ...(traceError ? { error: String(traceError).slice(0, 500) } : {}),
-    });
+    writeTrace();
 
     // Xác minh file từ marker: phải nằm trong thư mục riêng của chính người
     // dùng này hoặc vùng dùng chung, và không vượt jail qua symlink.
