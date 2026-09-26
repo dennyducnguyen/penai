@@ -40,14 +40,14 @@ describe("saveInboundImages", () => {
 });
 
 describe("saveInboundDocs", () => {
-  it("giữ tên gốc, trùng tên thì thêm hậu tố (không ghi đè)", async () => {
+  it("đặt tên theo tên gốc dạng slug, trùng tên thì thêm hậu tố (không ghi đè)", async () => {
     const { saveInboundDocs } = await import("../src/channels-runtime.js");
     const dir = await mkdtemp(join(tmpdir(), "penai-doc-"));
     const b64 = Buffer.from("noi dung pdf gia").toString("base64");
     const s1 = await saveInboundDocs(dir, [{ kind: "document", name: "bao cao.pdf", dataB64: b64 }]);
     const s2 = await saveInboundDocs(dir, [{ kind: "document", name: "bao cao.pdf", dataB64: b64 }]);
-    expect(s1[0]!.name).toBe("bao cao.pdf");
-    expect(s2[0]!.name).toBe("bao cao-2.pdf");
+    expect(s1[0]!.name).toBe("bao-cao.pdf");
+    expect(s2[0]!.name).toBe("bao-cao-2.pdf");
     expect(existsSync(s2[0]!.path)).toBe(true);
   });
   it("tên nguy hiểm bị làm sạch", async () => {
