@@ -46,6 +46,25 @@
       max: 20,
       waitMs: 180000,
     },
+    // Tên gọi tắt model cho phần mềm khác dùng (docs/api-public.md). Mỗi tên là
+    // một chuỗi thử lần lượt: chặng đầu lỗi/không có model thì chuyển chặng sau.
+    // Đổi model theo gói của bạn (xem danh sách thật trong Dashboard → Agents).
+    models: {
+      "penai-fast": { route: [
+        { provider: "codex", model: "gpt-5.5" },
+        { provider: "codex", model: "gpt-5.4" },
+      ] },
+      "penai-smart": { route: [
+        { provider: "codex", model: "gpt-5.5" },
+        { provider: "claude-code", model: "sonnet" },
+        { provider: "antigravity", model: "gemini-3.7-flash-high" },
+      ] },
+      "penai-image": { route: [
+        { provider: "antigravity", kind: "images", model: "gemini-3.7-flash-low" },
+        { provider: "codex", kind: "images", model: "gpt-image-2" },
+      ] },
+      "penai-image-codex": { route: [{ provider: "codex", kind: "images", model: "gpt-image-2" }] },
+    },
   },
 
   // Thương hiệu hiển thị trên Dashboard. theme: "xanh-duong" | "tim" | "xanh-ngoc".

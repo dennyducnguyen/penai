@@ -137,7 +137,9 @@ Danh sách model lấy live ngày 13/09/2026; **đừng hardcode**, hỏi lại 
 gpt-6-astra · gpt-5.6-sol · gpt-5.6-terra · gpt-5.6-luna · gpt-5.5 · gpt-reserve · codex-auto-review
 ```
 
-Dùng: `"model": "codex/gpt-5.6-sol"` — hoặc alias `penai-fast` (`gpt-5.6-sol`, hỏng thì `gpt-5.5`).
+Danh sách thật phụ thuộc gói ChatGPT của tài khoản (xem Dashboard → Agents → chọn provider codex).
+Dùng: `"model": "codex/gpt-5.5"` — hoặc alias `penai-fast` (cấu hình mặc định: `gpt-5.5`, hỏng thì `gpt-5.4`;
+sửa trong `api.models` của file cấu hình).
 
 **Dự phòng tự động khi ChatGPT chạm limit (14/09/2026)**: gọi thẳng `codex/<model>` mà codex trả
 429 (limit 5 giờ), 5xx, hết tài khoản, hay 400 "model not supported" **trước khi có byte nào** →
