@@ -173,9 +173,9 @@ apt-get update -qq
 PKGS=(ca-certificates curl git gnupg openssl sudo xz-utils bubblewrap python3 python3-pip zip unzip ffmpeg pandoc postgresql-common)
 [[ $NO_NGINX == 0 ]] && PKGS+=(nginx)
 [[ $NO_SSL == 0 ]] && PKGS+=(certbot python3-certbot-nginx)
-apt-get install -y -qq "${PKGS[@]}" >/dev/null
+apt-get install -y -qq --no-upgrade "${PKGS[@]}" >/dev/null
 if [[ $WITH_OFFICE == 1 ]]; then
-  apt-get install -y -qq --no-install-recommends libreoffice-writer libreoffice-calc libreoffice-impress >/dev/null
+  apt-get install -y -qq --no-upgrade --no-install-recommends libreoffice-writer libreoffice-calc libreoffice-impress >/dev/null
   ok "Đã cài LibreOffice"
 fi
 PIP_FLAGS=(--quiet --disable-pip-version-check)
@@ -221,7 +221,7 @@ psql_at -d postgres -c 'select 1' >/dev/null 2>&1 && PG_RUNNING=1
 if [[ $NEW_CLUSTER == 1 ]]; then
   [[ $PG_RUNNING == 0 ]] || die "Cổng $DB_PORT đã có PostgreSQL chạy — chọn --db-port khác cho cụm riêng"
   PG_MAJOR="$(ls /usr/lib/postgresql 2>/dev/null | sort -n | tail -1)"
-  if [[ -z $PG_MAJOR ]]; then ensure_pgdg; apt-get install -y -qq "postgresql-$PG_MAJOR_DEFAULT" >/dev/null; PG_MAJOR=$PG_MAJOR_DEFAULT; fi
+  if [[ -z $PG_MAJOR ]]; then ensure_pgdg; apt-get install -y -qq --no-upgrade "postgresql-$PG_MAJOR_DEFAULT" >/dev/null; PG_MAJOR=$PG_MAJOR_DEFAULT; fi
   if ! pg_lsclusters -h | awk '{print $1"/"$2}' | grep -qx "$PG_MAJOR/$INSTANCE"; then
     pg_createcluster "$PG_MAJOR" "$INSTANCE" --port "$DB_PORT" >/dev/null
     # cụm phụ trên máy dùng chung: bộ nhớ đệm nhỏ, ít kết nối
@@ -235,7 +235,7 @@ elif [[ $PG_RUNNING == 1 ]]; then
   ok "Dùng PostgreSQL có sẵn trên cổng $DB_PORT"
 else
   ensure_pgdg
-  apt-get install -y -qq "postgresql-$PG_MAJOR_DEFAULT" >/dev/null
+  apt-get install -y -qq --no-upgrade "postgresql-$PG_MAJOR_DEFAULT" >/dev/null
   for _ in $(seq 1 20); do psql_at -d postgres -c 'select 1' >/dev/null 2>&1 && break; sleep 1; done
   ok "Đã cài PostgreSQL $PG_MAJOR_DEFAULT"
 fi
@@ -244,7 +244,7 @@ PG_MAJOR="$(psql_at -d postgres -c 'show server_version_num' | cut -c1-2)"
 (( PG_MAJOR >= 16 )) || die "Cần PostgreSQL ≥ 16 (đang có $PG_MAJOR)"
 if [[ -z $(psql_at -d postgres -c "select 1 from pg_available_extensions where name='vector'") ]]; then
   ensure_pgdg
-  apt-get install -y -qq "postgresql-$PG_MAJOR-pgvector" >/dev/null || die "Không cài được pgvector cho PostgreSQL $PG_MAJOR"
+  apt-get install -y -qq --no-upgrade "postgresql-$PG_MAJOR-pgvector" >/dev/null || die "Không cài được pgvector cho PostgreSQL $PG_MAJOR"
 fi
 ok "pgvector sẵn sàng cho PostgreSQL $PG_MAJOR"
 # Migration cấp quyền cho role cố định penai_app (role dùng chung cả cụm) → mỗi cụm chỉ chứa MỘT bản PenAI.
