@@ -737,6 +737,8 @@ function makeInboundHandler(
         channelIdentityId: channelIdentity.contactId,
       } : {}),
       ...(conversationId ? { conversationId } : {}),
+      // Hồ sơ contact + chỉ dẫn của quản trị viên cho người đang chat
+      person: { channelKind: channel.kind, peerKind: msg.peerKind === "group" ? "group" : "direct" },
       sourceKind: "channel",
       accessRole: null,
       attachFile: (p) => {

@@ -1,6 +1,6 @@
 import { mkdir, readFile as fsReadFile, readdir, stat, writeFile as fsWriteFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import Fastify, {
   type FastifyInstance,
   type FastifyReply,
@@ -42,6 +42,19 @@ import {
   listPendingPairings,
   listContacts,
   listZaloObservedPeers,
+  listContactsOverview,
+  getContactOverview,
+  findContactIdentity,
+  getPrincipalProfile,
+  upsertPrincipalProfile,
+  listContactTags,
+  createContactTag,
+  updateContactTag,
+  deleteContactTag,
+  listPrincipalTags,
+  setPrincipalTags,
+  listMemoriesForUserKey,
+  getPersonRelated,
   type DbHandle,
 } from "@penai/db";
 import {
@@ -171,7 +184,8 @@ import {
   verifyTeamsJwt,
 } from "@penai/channels";
 import fastifyWebsocket from "@fastify/websocket";
-import { buildLoopDeps, agentOpts, reasoningEffortOf, contentTypeOf } from "./agent-runtime.js";
+import { buildLoopDeps, agentOpts, reasoningEffortOf, contentTypeOf, sanitizeUserKey } from "./agent-runtime.js";
+import { PERSON_LIMITS } from "./person-context.js";
 import { registerApiRoutes } from "./api/index.js";
 import { consolidateSession } from "./memory-worker.js";
 import { channelHandlers, applyChannelChange, scheduleOnChannelQueue, dispatchChannelCallback } from "./channels-runtime.js";
@@ -190,6 +204,7 @@ import {
 import {
   KeyedQueue,
   ProviderGate,
+  composeSystemPrompt,
   runAgent,
   runAgentText,
   type AgentEvent,
@@ -268,6 +283,37 @@ export interface AppDeps {
 }
 
 /** Lỗi Zod → thông báo tiếng Việt ngắn gọn (thay vì JSON thô khó đọc). */
+/**
+ * File trong thư mục riêng của một người (ảnh/tài liệu họ gửi, file AI tạo) —
+ * mới nhất trước. Không đi theo symlink; tối đa 200 file.
+ */
+async function listPersonFiles(
+  dir: string,
+): Promise<Array<{ path: string; bytes: number; modifiedAt: string }>> {
+  const out: Array<{ path: string; bytes: number; modifiedAt: string }> = [];
+  const walk = async (d: string, depth: number): Promise<void> => {
+    if (depth > 4 || out.length >= 500) return;
+    const entries = await readdir(d, { withFileTypes: true }).catch(() => []);
+    for (const e of entries) {
+      const abs = join(d, e.name);
+      if (e.isDirectory()) await walk(abs, depth + 1);
+      else if (e.isFile()) {
+        const st = await stat(abs).catch(() => null);
+        if (st) {
+          out.push({
+            path: relative(dir, abs).split(sep).join("/"),
+            bytes: st.size,
+            modifiedAt: st.mtime.toISOString(),
+          });
+        }
+      }
+      if (out.length >= 500) return;
+    }
+  };
+  await walk(dir, 0);
+  return out.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 200);
+}
+
 function zodMessage(err: z.ZodError): string {
   const seen = new Set<string>();
   const parts: string[] = [];
@@ -1030,6 +1076,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const before = parsed.data.libraryWritable === undefined ? null : await getAgentById(db, req.authCtx, id);
     const agent = await updateAgent(db, req.authCtx, id, parsed.data);
     if (!agent) return reply.code(404).send({ error: "Agent không tồn tại" });
+    // Ai đổi gì, lúc nào (26/09/2026: đổi Thinking làm agent lỗi mà không tra lại được).
+    // Nội dung prompt không ghi — chỉ tên trường + giá trị ngắn của provider/model/thinking.
+    await recordAudit(db, req.authCtx, "agent.update", {
+      agentId: agent.id,
+      agentKey: agent.key,
+      fields: Object.keys(parsed.data),
+      ...(parsed.data.provider !== undefined ? { provider: agent.provider } : {}),
+      ...(parsed.data.model !== undefined ? { model: agent.model } : {}),
+      ...(parsed.data.thinkingLevel !== undefined ? { thinkingLevel: agent.thinkingLevel } : {}),
+    });
     // Quyền ghi thư viện là thiết lập an toàn → ghi nhật ký khi đổi
     if (before && before.libraryWritable !== agent.libraryWritable) {
       await recordAudit(db, req.authCtx, "library.agent_write_toggle", {
@@ -1746,9 +1802,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
               await mapChannelSession(db, ctx, id, chatKey, s.id);
               sessionId = s.id;
             }
+            // Contact đã có từ lúc người này nhắn lần đầu (trước cổng duyệt) → lời
+            // chào dùng được hồ sơ/cách xưng hô quản trị viên đặt sẵn.
+            const identity = await findContactIdentity(db, ctx, id, chatKey).catch(() => null);
             const loopDeps = await buildLoopDeps(deps, ctx, agent.provider, {
               ...agentOpts(agent),
               userKey: `${row!.kind}-${chatKey}`,
+              ...(identity
+                ? { principalId: identity.principalId, channelIdentityId: identity.contactId }
+                : {}),
+              person: { channelKind: row!.kind, peerKind: "direct" },
               sourceKind: "channel",
               accessRole: null,
             });
@@ -1950,8 +2013,285 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { demoThreads: runtime.demoThreads() };
   });
 
+  // ===== Contacts: hồ sơ, nhãn, chỉ dẫn cho AI theo từng người (0029) =====
+  // Xem danh sách: mọi role (trừ member). Xem chi tiết + sửa hồ sơ/chỉ dẫn của
+  // một người: operator trở lên. Nhãn có chỉ dẫn áp cho NHIỀU người → ws_admin.
   app.get("/v1/contacts", async (req) => {
-    return { contacts: await listContacts(db, req.authCtx) };
+    return { contacts: await listContactsOverview(db, req.authCtx) };
+  });
+
+  const contactUserDir = (ctx: WorkspaceContext, userKey: string) =>
+    resolve(join(deps.config.dataDir, ctx.workspaceId, "users", sanitizeUserKey(userKey)));
+  const USER_MD_MAX = 8000; // cùng mức agent-runtime nạp vào ngữ cảnh
+
+  app.get("/v1/contacts/:id", async (req, reply) => {
+    if (!requireRole(req, reply, "operator")) return;
+    const { id } = req.params as { id: string };
+    const ctx = req.authCtx;
+    const contact = await getContactOverview(db, ctx, id);
+    if (!contact) return reply.code(404).send({ error: "Contact không tồn tại" });
+    const dir = contactUserDir(ctx, contact.userKey);
+    const userMdPath = join(dir, "USER.md");
+    const [profile, tags, memories, related, files, userMd, channel] = await Promise.all([
+      contact.principalId ? getPrincipalProfile(db, ctx, contact.principalId) : null,
+      contact.principalId ? listPrincipalTags(db, ctx, contact.principalId) : [],
+      listMemoriesForUserKey(db, ctx, contact.userKey),
+      getPersonRelated(db, ctx, {
+        userKey: contact.userKey,
+        principalId: contact.principalId,
+        channelId: contact.channelId,
+        externalId: contact.externalId,
+      }),
+      listPersonFiles(dir),
+      fsReadFile(userMdPath, "utf8").catch(() => null),
+      contact.channelId ? getChannelById(db, ctx, contact.channelId) : null,
+    ]);
+    const agent = channel ? await getAgentById(db, ctx, channel.agentId) : null;
+    return {
+      contact,
+      profile,
+      tags,
+      memories,
+      related,
+      files,
+      userMd: { exists: userMd !== null, content: userMd ?? "" },
+      channel: channel
+        ? {
+            id: channel.id,
+            name: channel.name,
+            kind: channel.kind,
+            agentKey: agent?.key ?? null,
+            agentName: agent?.name ?? null,
+          }
+        : null,
+      limits: PERSON_LIMITS,
+    };
+  });
+
+  const optText = (max: number) =>
+    z.string().max(max, `tối đa ${max} ký tự`).nullish();
+  const ProfileBody = z.object({
+    displayName: optText(PERSON_LIMITS.displayName),
+    addressAs: optText(PERSON_LIMITS.addressAs),
+    selfAddress: optText(PERSON_LIMITS.selfAddress),
+    roleTitle: optText(PERSON_LIMITS.roleTitle),
+    language: optText(PERSON_LIMITS.language),
+    phone: optText(PERSON_LIMITS.phone),
+    email: optText(PERSON_LIMITS.email),
+    shareContactInfo: z.boolean().optional(),
+    customFields: z
+      .record(
+        z.string().trim().min(1).max(PERSON_LIMITS.customFieldKey, `tên trường tối đa ${PERSON_LIMITS.customFieldKey} ký tự`),
+        z.string().max(PERSON_LIMITS.customFieldValue, `giá trị tối đa ${PERSON_LIMITS.customFieldValue} ký tự`),
+      )
+      .refine(
+        (o) => Object.keys(o).length <= PERSON_LIMITS.customFieldCount,
+        `tối đa ${PERSON_LIMITS.customFieldCount} trường tùy chỉnh`,
+      )
+      .optional(),
+    aiInstructions: z
+      .string()
+      .max(PERSON_LIMITS.personInstructions, `tối đa ${PERSON_LIMITS.personInstructions} ký tự`)
+      .optional(),
+    useInGroups: z.boolean().optional(),
+  });
+
+  app.put("/v1/contacts/:id/profile", async (req, reply) => {
+    if (!requireRole(req, reply, "operator")) return;
+    const { id } = req.params as { id: string };
+    const parsed = ProfileBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: zodMessage(parsed.error) });
+    const contact = await getContactOverview(db, req.authCtx, id);
+    if (!contact?.principalId) return reply.code(404).send({ error: "Contact không tồn tại" });
+    const b = parsed.data;
+    const profile = await upsertPrincipalProfile(db, req.authCtx, contact.principalId, {
+      displayName: b.displayName ?? null,
+      addressAs: b.addressAs ?? null,
+      selfAddress: b.selfAddress ?? null,
+      roleTitle: b.roleTitle ?? null,
+      language: b.language ?? null,
+      phone: b.phone ?? null,
+      email: b.email ?? null,
+      shareContactInfo: b.shareContactInfo === true,
+      customFields: Object.fromEntries(
+        Object.entries(b.customFields ?? {})
+          .map(([k, v]) => [k.trim(), v.trim()] as const)
+          .filter(([k, v]) => k && v),
+      ),
+      aiInstructions: b.aiInstructions ?? "",
+      useInGroups: b.useInGroups === true,
+    });
+    if (!profile) return reply.code(404).send({ error: "Contact không tồn tại" });
+    await recordAudit(db, req.authCtx, "contact.profile.update", {
+      contactId: id,
+      principalId: contact.principalId,
+      hasInstructions: profile.aiInstructions.length > 0,
+      useInGroups: profile.useInGroups,
+    });
+    return { profile };
+  });
+
+  app.put("/v1/contacts/:id/tags", async (req, reply) => {
+    if (!requireRole(req, reply, "operator")) return;
+    const { id } = req.params as { id: string };
+    const parsed = z
+      .object({ tagIds: z.array(z.string().uuid()).max(30, "tối đa 30 nhãn") })
+      .safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: zodMessage(parsed.error) });
+    const contact = await getContactOverview(db, req.authCtx, id);
+    if (!contact?.principalId) return reply.code(404).send({ error: "Contact không tồn tại" });
+    const tags = await setPrincipalTags(db, req.authCtx, contact.principalId, parsed.data.tagIds);
+    if (!tags) return reply.code(400).send({ error: "Có nhãn không tồn tại" });
+    await recordAudit(db, req.authCtx, "contact.tags.set", {
+      contactId: id,
+      principalId: contact.principalId,
+      tags: tags.map((t) => t.name),
+    });
+    return { tags };
+  });
+
+  app.put("/v1/contacts/:id/user-md", async (req, reply) => {
+    if (!requireRole(req, reply, "operator")) return;
+    const { id } = req.params as { id: string };
+    const parsed = z
+      .object({ content: z.string().max(USER_MD_MAX, `tối đa ${USER_MD_MAX} ký tự`) })
+      .safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: zodMessage(parsed.error) });
+    const contact = await getContactOverview(db, req.authCtx, id);
+    if (!contact) return reply.code(404).send({ error: "Contact không tồn tại" });
+    const dir = contactUserDir(req.authCtx, contact.userKey);
+    await mkdir(dir, { recursive: true });
+    const content = parsed.data.content.replace(/\r\n?/g, "\n");
+    await fsWriteFile(join(dir, "USER.md"), content.endsWith("\n") ? content : content + "\n", "utf8");
+    await recordAudit(db, req.authCtx, "contact.user_md.update", {
+      contactId: id,
+      userKey: contact.userKey,
+      chars: content.length,
+    });
+    return { ok: true };
+  });
+
+  // Xem trước đúng system prompt agent sẽ nhận khi người này nhắn (tool không kèm).
+  app.get("/v1/contacts/:id/context-preview", async (req, reply) => {
+    if (!requireRole(req, reply, "operator")) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { agent?: string; message?: string; group?: string };
+    const ctx = req.authCtx;
+    const contact = await getContactOverview(db, ctx, id);
+    if (!contact) return reply.code(404).send({ error: "Contact không tồn tại" });
+    let agent = q.agent ? await getAgentByKey(db, ctx, q.agent) : null;
+    if (!agent && contact.channelId) {
+      const ch = await getChannelById(db, ctx, contact.channelId);
+      agent = ch ? await getAgentById(db, ctx, ch.agentId) : null;
+    }
+    if (!agent) return reply.code(404).send({ error: "Chưa chọn được agent để xem trước" });
+    const message = (q.message ?? "").slice(0, 2000) || "Xin chào";
+    const loopDeps = await buildLoopDeps(deps, ctx, agent.provider, {
+      ...agentOpts(agent),
+      userKey: contact.userKey,
+      ...(contact.principalId ? { principalId: contact.principalId } : {}),
+      channelIdentityId: contact.id,
+      person: { channelKind: contact.channelKind, peerKind: q.group === "1" ? "group" : "direct" },
+      sourceKind: "channel",
+      accessRole: null,
+    });
+    const [context, knowledge, person] = await Promise.all([
+      loopDeps.buildContextPrefix?.(message).catch(() => "") ?? "",
+      loopDeps.buildKnowledgeContext?.(message).catch(() => "") ?? "",
+      loopDeps.buildPersonContext?.(message).catch(() => "") ?? "",
+    ]);
+    const systemPrompt = composeSystemPrompt(agent.systemPrompt, {
+      ...(context ? { context } : {}),
+      ...(knowledge ? { knowledge } : {}),
+      ...(person ? { person } : {}),
+    });
+    return {
+      agent: { key: agent.key, name: agent.name },
+      message,
+      systemPrompt,
+      chars: {
+        total: systemPrompt.length,
+        agentPrompt: agent.systemPrompt.length,
+        context: (context ?? "").length,
+        knowledge: (knowledge ?? "").length,
+        person: (person ?? "").length,
+      },
+    };
+  });
+
+  // Nhãn — chỉ dẫn theo nhãn áp cho mọi người mang nhãn nên sửa cần ws_admin
+  const TagColor = z.string().regex(/^(#[0-9a-fA-F]{6})?$/, "màu dạng #rrggbb");
+  const TagBody = z.object({
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(PERSON_LIMITS.tagName, `tối đa ${PERSON_LIMITS.tagName} ký tự`),
+    color: TagColor.optional(),
+    aiInstructions: z
+      .string()
+      .max(PERSON_LIMITS.tagInstructions, `tối đa ${PERSON_LIMITS.tagInstructions} ký tự`)
+      .optional(),
+    useInGroups: z.boolean().optional(),
+  });
+  const isUniqueViolation = (err: unknown) =>
+    (err as { code?: string })?.code === "23505" ||
+    (err as { cause?: { code?: string } })?.cause?.code === "23505";
+
+  app.get("/v1/contact-tags", async (req) => {
+    return { tags: await listContactTags(db, req.authCtx) };
+  });
+
+  app.post("/v1/contact-tags", async (req, reply) => {
+    if (!requireRole(req, reply, "ws_admin")) return;
+    const parsed = TagBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: zodMessage(parsed.error) });
+    try {
+      const tag = await createContactTag(db, req.authCtx, {
+        name: parsed.data.name,
+        ...(parsed.data.color !== undefined ? { color: parsed.data.color } : {}),
+        ...(parsed.data.aiInstructions !== undefined ? { aiInstructions: parsed.data.aiInstructions } : {}),
+        ...(parsed.data.useInGroups !== undefined ? { useInGroups: parsed.data.useInGroups } : {}),
+      });
+      await recordAudit(db, req.authCtx, "contact_tag.create", { id: tag.id, name: tag.name });
+      return reply.code(201).send({ tag });
+    } catch (err) {
+      if (isUniqueViolation(err)) return reply.code(409).send({ error: "Đã có nhãn trùng tên" });
+      throw err;
+    }
+  });
+
+  app.patch("/v1/contact-tags/:id", async (req, reply) => {
+    if (!requireRole(req, reply, "ws_admin")) return;
+    const { id } = req.params as { id: string };
+    const parsed = TagBody.partial()
+      .refine((v) => Object.keys(v).length > 0, "Không có trường nào để sửa")
+      .safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: zodMessage(parsed.error) });
+    const b = parsed.data;
+    try {
+      const tag = await updateContactTag(db, req.authCtx, id, {
+        ...(b.name !== undefined ? { name: b.name } : {}),
+        ...(b.color !== undefined ? { color: b.color } : {}),
+        ...(b.aiInstructions !== undefined ? { aiInstructions: b.aiInstructions } : {}),
+        ...(b.useInGroups !== undefined ? { useInGroups: b.useInGroups } : {}),
+      });
+      if (!tag) return reply.code(404).send({ error: "Nhãn không tồn tại" });
+      await recordAudit(db, req.authCtx, "contact_tag.update", { id, fields: Object.keys(b) });
+      return { tag };
+    } catch (err) {
+      if (isUniqueViolation(err)) return reply.code(409).send({ error: "Đã có nhãn trùng tên" });
+      throw err;
+    }
+  });
+
+  app.delete("/v1/contact-tags/:id", async (req, reply) => {
+    if (!requireRole(req, reply, "ws_admin")) return;
+    const { id } = req.params as { id: string };
+    const ok = await deleteContactTag(db, req.authCtx, id);
+    if (!ok) return reply.code(404).send({ error: "Nhãn không tồn tại" });
+    await recordAudit(db, req.authCtx, "contact_tag.delete", { id });
+    return { deleted: true };
   });
 
   // ===== Cron jobs =====
@@ -3622,6 +3962,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         // operator/ws_admin giữ quyền MCP như dashboard cũ; member chịu lớp user (fail-closed)
         skipUserMcpLayer: req.authCtx.role !== "member",
         attachFile: (p) => collector.attachFile(p),
+        // Người đăng nhập Dashboard là người thật đang chat → khối "Người đang chat"
+        ...(req.authInfo?.kind === "web" ? { person: { channelKind: "web", peerKind: "direct" as const } } : {}),
       });
     } catch (err) {
       return reply.code(500).send({ error: (err as Error).message });

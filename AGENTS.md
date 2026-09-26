@@ -50,6 +50,7 @@ Báo người dùng: phiên bản cũ → mới và danh sách "Thay đổi" mà
 | Người dùng muốn | Lệnh / cách làm |
 |---|---|
 | Quên mật khẩu đăng nhập | `sudo PENAI_USER_PASSWORD='<mk-mới>' penai reset-password <email>` (có bàn phím thì bỏ biến, lệnh sẽ hỏi) |
+| AI trả lời riêng theo từng người (xưng hô, chỉ dẫn, nhãn VIP/đại lý…) | Dashboard → Contacts → bấm vào người → tab "Hồ sơ & chỉ dẫn"; nhãn dùng chung: nút 🏷️ Quản lý nhãn (ws_admin). Chi tiết: [docs/ho-so-contact.md](docs/ho-so-contact.md) |
 | Đổi tên hiển thị, khẩu hiệu, màu | Sửa khối `branding` trong `/etc/<bản-cài>/penai.config.json5` (định dạng JSON5), tải lại trang là thấy. `theme`: `xanh-duong`, `tim`, `xanh-ngoc`; màu riêng `primaryColor: "#rrggbb"` |
 | Dùng logo riêng | Chép ảnh lên máy chủ: `sudo install -m 0640 -o root -g <bản-cài> logo.png /etc/<bản-cài>/logo.png`, thêm `logoFile: "/etc/<bản-cài>/logo.png"` vào `branding` |
 | Dùng provider Claude / Antigravity | `sudo penai install-cli claude` / `sudo penai install-cli agy`, rồi Dashboard → Providers → Đăng nhập |

@@ -134,6 +134,29 @@ export interface AgentLoopDeps {
   buildContextPrefix?: (userMessage: string) => Promise<string>;
   /** Hybrid RAG đã lọc ACL; lỗi không được làm hỏng lượt chat. */
   buildKnowledgeContext?: (userMessage: string) => Promise<string>;
+  /**
+   * Khối về NGƯỜI đang chat: hồ sơ (dữ liệu) + chỉ dẫn của quản trị viên cho
+   * người này (chỉ thị). Lỗi không được làm hỏng lượt chat.
+   */
+  buildPersonContext?: (userMessage: string) => Promise<string>;
+}
+
+/**
+ * Ghép system prompt của một lượt (26/09/2026). Phần CỐ ĐỊNH đứng trước: prompt
+ * của agent rồi tới hướng dẫn + ghi nhớ (buildContextPrefix, phần tĩnh ở đầu).
+ * Phần đổi theo câu hỏi/người đứng CUỐI: kho tri thức, khối người đang chat +
+ * chỉ dẫn của quản trị viên, cảnh báo bảo mật. Phần đầu giống nhau giữa các
+ * lượt nên tận dụng được prompt cache của nhà cung cấp; chỉ dẫn riêng cho người
+ * này đứng sau cùng nên được ưu tiên hơn hướng dẫn chung.
+ */
+export function composeSystemPrompt(
+  agentPrompt: string,
+  parts: { context?: string; knowledge?: string; person?: string; guardNote?: string },
+): string {
+  const body = [agentPrompt, parts.context, parts.knowledge, parts.person]
+    .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+    .join("\n\n");
+  return body + (parts.guardNote ?? "");
 }
 
 export interface AgentRunInput {
@@ -227,25 +250,20 @@ export async function* runAgent(
     }
   }
 
-  // context: system prompt = prompt agent + ngữ cảnh memory (L0 + L1 liên quan)
-  let systemPrompt = agent.systemPrompt;
-  if (deps.buildContextPrefix) {
-    try {
-      const prefix = await deps.buildContextPrefix(userMessage);
-      if (prefix) systemPrompt = prefix + "\n\n" + systemPrompt;
-    } catch {
-      // memory lỗi không được chặn hội thoại
-    }
-  }
-  if (deps.buildKnowledgeContext) {
-    try {
-      const knowledge = await deps.buildKnowledgeContext(userMessage);
-      if (knowledge) systemPrompt = knowledge + "\n\n" + systemPrompt;
-    } catch {
-      // Vault/embedding lỗi thì hội thoại vẫn chạy; tool có thể thử tìm lại.
-    }
-  }
-  if (guardNote) systemPrompt += guardNote;
+  // context: system prompt = prompt agent + hướng dẫn/ghi nhớ + tri thức + người đang chat
+  // (thứ tự và lý do: composeSystemPrompt). Mỗi phần lỗi thì bỏ phần đó, hội thoại vẫn chạy.
+  const [context, knowledge, person] = await Promise.all([
+    deps.buildContextPrefix?.(userMessage).catch(() => ""),
+    // Vault/embedding lỗi thì hội thoại vẫn chạy; tool có thể thử tìm lại.
+    deps.buildKnowledgeContext?.(userMessage).catch(() => ""),
+    deps.buildPersonContext?.(userMessage).catch(() => ""),
+  ]);
+  const systemPrompt = composeSystemPrompt(agent.systemPrompt, {
+    ...(context ? { context } : {}),
+    ...(knowledge ? { knowledge } : {}),
+    ...(person ? { person } : {}),
+    ...(guardNote ? { guardNote } : {}),
+  });
 
   const toolDefs = deps.tools.definitions();
   let iterations = 0;
