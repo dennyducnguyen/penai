@@ -12,6 +12,7 @@ import {
   DEFAULT_ACCOUNTS_DIR,
   type CodexAccountPublic,
 } from "./accounts.js";
+import { parseSupportedEfforts, pickSupportedEffort } from "./reasoning.js";
 
 const CODEX_API = "https://chatgpt.com/backend-api/codex/responses";
 
@@ -58,6 +59,9 @@ export class CodexProvider implements Provider {
   private rewrites: Record<string, string>;
   /** Đã log cảnh báo cho model nào rồi — tránh spam log mỗi request. */
   private warnedRewrites = new Set<string>();
+  /** Mức suy luận model chấp nhận, học từ lỗi 400 (theo tên model gửi đi). */
+  private effortSupport = new Map<string, string[]>();
+  private warnedEfforts = new Set<string>();
 
   constructor(
     readonly name: string,
@@ -85,6 +89,35 @@ export class CodexProvider implements Provider {
       );
     }
     return next;
+  }
+
+  /** Mức suy luận thực sự gửi đi — đổi sang mức gần nhất model chấp nhận (nếu đã biết). */
+  private effortFor(model: string, requested: string): string {
+    const supported = this.effortSupport.get(model);
+    if (!supported) return requested;
+    const effort = pickSupportedEffort(requested, supported);
+    const key = `${model}:${requested}`;
+    if (effort !== requested && !this.warnedEfforts.has(key)) {
+      this.warnedEfforts.add(key);
+      logger.warn(
+        `Codex: model "${model}" không nhận mức suy luận "${requested}" — tự dùng "${effort}"`,
+      );
+    }
+    return effort;
+  }
+
+  /**
+   * Lỗi 400 do mức suy luận không hợp lệ → nhớ danh sách mức model chấp nhận.
+   * Trả true khi vừa học được điều mới (gửi lại 1 lần sẽ khác lần trước).
+   */
+  private learnEffortSupport(req: ChatRequest, errorText: string): boolean {
+    if (!req.reasoningEffort) return false;
+    const supported = parseSupportedEfforts(errorText);
+    if (!supported) return false;
+    const model = this.effectiveModel(req.model);
+    const before = this.effortFor(model, req.reasoningEffort);
+    this.effortSupport.set(model, supported);
+    return this.effortFor(model, req.reasoningEffort) !== before;
   }
 
   /** Lấy token của 1 tài khoản; lỗi auth được gắn cờ để failover sang tài khoản khác. */
@@ -130,8 +163,9 @@ export class CodexProvider implements Provider {
         });
       }
     }
+    const model = this.effectiveModel(req.model);
     return {
-      model: this.effectiveModel(req.model),
+      model,
       instructions: req.system || "You are a helpful assistant.",
       input,
       ...(req.tools?.length
@@ -147,7 +181,9 @@ export class CodexProvider implements Provider {
             parallel_tool_calls: false,
           }
         : {}),
-      ...(req.reasoningEffort ? { reasoning: { effort: req.reasoningEffort } } : {}),
+      ...(req.reasoningEffort
+        ? { reasoning: { effort: this.effortFor(model, req.reasoningEffort) } }
+        : {}),
       store: false,
       stream: true,
     };
@@ -267,15 +303,24 @@ export class CodexProvider implements Provider {
         throw err;
       }
     }
-    if (!res.ok || !res.body) {
-      const text = await res.text().catch(() => "");
+    const apiError = (r: Response, text: string) => {
       const err = new Error(
-        `Codex API lỗi ${res.status}: ${text.slice(0, 500)}`,
+        `Codex API lỗi ${r.status}: ${text.slice(0, 500)}`,
       ) as Error & { status: number; retryAfterMs?: number };
-      err.status = res.status;
-      const ra = Number(res.headers.get("retry-after"));
+      err.status = r.status;
+      const ra = Number(r.headers.get("retry-after"));
       if (Number.isFinite(ra) && ra > 0) err.retryAfterMs = ra * 1000;
-      throw err;
+      return err;
+    };
+    if (res.status === 400 && req.reasoningEffort) {
+      // Model không nhận mức suy luận này → học mức hợp lệ rồi gửi lại ĐÚNG 1
+      // lần (chưa có chữ nào ra ngoài nên gửi lại an toàn).
+      const text = await res.text().catch(() => "");
+      if (!this.learnEffortSupport(req, text)) throw apiError(res, text);
+      res = await doFetch(auth);
+    }
+    if (!res.ok || !res.body) {
+      throw apiError(res, await res.text().catch(() => ""));
     }
 
     // Parse SSE
