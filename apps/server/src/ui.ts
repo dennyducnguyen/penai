@@ -203,6 +203,20 @@ export const INDEX_HTML = `<!doctype html>
   var $ = function (s, r) { return (r||document).querySelector(s); };
   var el = function (tag, attrs, html) { var e = document.createElement(tag); if (attrs) for (var k in attrs) e.setAttribute(k, attrs[k]); if (html != null) e.innerHTML = html; return e; };
   var esc = function (s) { return String(s==null?"":s).replace(/[&<>"]/g, function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); };
+  // Ô nhập mật khẩu che ký tự + nút 👁 hiện/ẩn (style như trang đăng nhập). autocomplete="new-password"
+  // để trình duyệt không tự điền mật khẩu của chính người đang đăng nhập vào ô của người khác.
+  function pwField(id) {
+    return '<div class="pw-wrap"><input id="' + id + '" type="password" style="width:100%" autocomplete="new-password" placeholder="••••••••">' +
+      '<button type="button" class="pw-toggle" data-for="' + id + '" title="Hiện/ẩn mật khẩu">👁</button></div>';
+  }
+  function bindPwToggles(root) {
+    Array.prototype.forEach.call(root.querySelectorAll(".pw-toggle[data-for]"), function (b) {
+      b.onclick = function () {
+        var input = root.querySelector("#" + b.getAttribute("data-for"));
+        if (input) input.type = input.type === "password" ? "text" : "password";
+      };
+    });
+  }
   // Đăng nhập bằng cookie httpOnly (phiên web) — không còn giữ token trong localStorage.
   var state = { me: null, agents: [], sessionId: null };
   try { localStorage.removeItem("penai_key"); } catch (e) {}
@@ -252,7 +266,6 @@ export const INDEX_HTML = `<!doctype html>
     { id: "skills", icon: "📚", label: "Skills" },
     { id: "tools", icon: "🛠️", label: "Custom Tools" },
     { id: "mcp", icon: "🧩", label: "MCP" },
-    { id: "teams", icon: "👥", label: "Teams" },
     { id: "vault", icon: "🗄️", label: "Kho tri thức (Vault)" },
     { id: "library", icon: "📁", label: "Thư viện file" },
     { id: "kg", icon: "🕸️", label: "Knowledge Graph" },
@@ -423,7 +436,6 @@ export const INDEX_HTML = `<!doctype html>
       ["sessions", "Sessions", "/v1/sessions", "sessions"],
       ["channels", "Channels", "/v1/channels", "channels"],
       ["skills", "Skills", "/v1/skills", "skills"],
-      ["teams", "Teams", "/v1/teams", "teams"],
       ["cron", "Cron jobs", "/v1/cron", "jobs"],
       ["hooks", "Hooks", "/v1/hooks", "hooks"],
       ["traces", "Traces", "/v1/traces", "traces"],
@@ -2522,14 +2534,15 @@ export const INDEX_HTML = `<!doctype html>
       var dlg = el("dialog", { style: "width:560px;padding:20px" });
       dlg.innerHTML = "<h3 style='margin:0 0 6px'>" + (isEdit ? "Sửa người dùng" : "Thêm người dùng") + "</h3>" +
         '<label>Họ tên</label><input id="uName" style="width:100%" placeholder="Nguyễn Văn A">' +
-        '<label>Email (dùng để đăng nhập)</label><input id="uEmail" type="email" style="width:100%" placeholder="a@congty.vn"' + (isEdit ? " disabled" : "") + ">" +
-        (isEdit ? "" : '<label>Mật khẩu ban đầu (≥ 8 ký tự)</label><input id="uPass" type="text" style="width:100%" autocomplete="off"><label style="display:flex;align-items:center;gap:6px;margin-top:8px"><input id="uMust" type="checkbox" style="width:auto" checked> Bắt đổi mật khẩu ở lần đăng nhập đầu</label>') +
+        '<label>Email (dùng để đăng nhập)</label><input id="uEmail" type="email" style="width:100%" placeholder="a@congty.vn" autocomplete="off"' + (isEdit ? " disabled" : "") + ">" +
+        (isEdit ? "" : '<label>Mật khẩu ban đầu (≥ 8 ký tự)</label>' + pwField("uPass") + '<label style="display:flex;align-items:center;gap:6px;margin-top:8px"><input id="uMust" type="checkbox" style="width:auto" checked> Bắt đổi mật khẩu ở lần đăng nhập đầu</label>') +
         '<label>Vai trò</label><select id="uRole" style="width:100%">' + Object.keys(ROLE_LABELS).map(function (r) { return '<option value="' + r + '">' + esc(ROLE_LABELS[r]) + "</option>"; }).join("") + "</select>" +
         '<div id="uRoleHelp" class="muted" style="margin-top:4px"></div>' +
         '<div id="uAgentWrap"><label>Agent được phép chat</label></div>' +
         '<div class="dialog-actions"><button class="ghost" id="uCancel">Hủy</button><button id="uSave">' + (isEdit ? "Lưu" : "Tạo tài khoản") + "</button></div>" +
         '<div id="uMsg" style="margin-top:8px"></div>';
       document.body.appendChild(dlg);
+      bindPwToggles(dlg);
       $("#uAgentWrap", dlg).appendChild(agentChecks(isEdit ? u.agentIds : []));
       if (isEdit) { $("#uName", dlg).value = u.name; $("#uEmail", dlg).value = u.email; $("#uRole", dlg).value = u.role; }
       else { $("#uRole", dlg).value = "member"; }
@@ -2556,11 +2569,12 @@ export const INDEX_HTML = `<!doctype html>
     function openReset(u) {
       var dlg = el("dialog", { style: "width:440px;padding:20px" });
       dlg.innerHTML = "<h3 style='margin:0 0 6px'>Đặt lại mật khẩu — " + esc(u.email) + "</h3>" +
-        '<label>Mật khẩu mới (≥ 8 ký tự)</label><input id="rPass" type="text" style="width:100%" autocomplete="off">' +
+        '<label>Mật khẩu mới (≥ 8 ký tự)</label>' + pwField("rPass") +
         '<label style="display:flex;align-items:center;gap:6px;margin-top:8px"><input id="rMust" type="checkbox" style="width:auto" checked> Bắt đổi mật khẩu ở lần đăng nhập kế</label>' +
         '<div class="muted" style="margin-top:6px">Mọi phiên đăng nhập hiện tại của người này sẽ bị thu hồi.</div>' +
         '<div class="dialog-actions"><button class="ghost" id="rCancel">Hủy</button><button id="rSave">Đặt lại</button></div><div id="rMsg" style="margin-top:8px"></div>';
       document.body.appendChild(dlg);
+      bindPwToggles(dlg);
       $("#rCancel", dlg).onclick = function () { dlg.close(); dlg.remove(); };
       $("#rSave", dlg).onclick = function () {
         var pw = $("#rPass", dlg).value; if (pw.length < 8) { $("#rMsg", dlg).innerHTML = '<span class="err">Mật khẩu tối thiểu 8 ký tự</span>'; return; }

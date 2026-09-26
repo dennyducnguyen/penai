@@ -25,6 +25,17 @@ describe("Dashboard HTML", () => {
     expect(html).not.toContain("</script> công ty");
   });
 
+  it("ô mật khẩu (tạo người dùng, đặt lại, đổi mật khẩu) luôn che ký tự", () => {
+    expect(INDEX_HTML).not.toMatch(/id="[A-Za-z]*Pass[A-Za-z0-9]*" type="text"/);
+    expect(INDEX_HTML).toContain('pwField("uPass")');
+    expect(INDEX_HTML).toContain('pwField("rPass")');
+    expect(INDEX_HTML).toMatch(/id="cpNew" type="password"/);
+  });
+
+  it("menu không hiện mục Teams", () => {
+    expect(INDEX_HTML).not.toContain('{ id: "teams"');
+  });
+
   it("logo mặc định là SVG theo màu theme", () => {
     const svg = defaultLogoSvg(BrandingSchema.parse({ theme: "tim" }));
     expect(svg.startsWith("<svg")).toBe(true);
