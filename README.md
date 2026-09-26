@@ -87,6 +87,7 @@ Các lệnh vận hành khác (`penai status`, `penai backup`, `penai rollback`,
 | [docs/huong-dan-teams-bot.md](docs/huong-dan-teams-bot.md) | Nối Microsoft Teams |
 | [docs/zalo-personal.md](docs/zalo-personal.md) | Nối Zalo cá nhân (chế độ an toàn) |
 | [docs/api-public.md](docs/api-public.md) · [docs/api-reference.md](docs/api-reference.md) | API tương thích OpenAI |
+| [docs/kien-truc.md](docs/kien-truc.md) | Kiến trúc: thành phần, mã nguồn, luồng xử lý, dữ liệu, bản cài trên máy chủ |
 | [docs/phat-trien.md](docs/phat-trien.md) | Sửa mã nguồn, chạy test |
 | [CHANGELOG.md](CHANGELOG.md) | Thay đổi qua từng phiên bản |
 

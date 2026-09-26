@@ -88,7 +88,7 @@ Sau đó mọi lệnh thêm `--instance penai2`: `sudo penai --instance penai2 s
 
 ## Khi người dùng muốn sửa mã nguồn
 
-Hướng dẫn họ **fork** repo, sửa trong fork, chạy test theo [docs/phat-trien.md](docs/phat-trien.md), rồi trỏ máy chủ sang fork (`penai set-repo`). Quy tắc cho mọi thay đổi mã:
+Đọc [docs/kien-truc.md](docs/kien-truc.md) để nắm cấu trúc hệ thống trước khi sửa. Hướng dẫn họ **fork** repo, sửa trong fork, chạy test theo [docs/phat-trien.md](docs/phat-trien.md), rồi trỏ máy chủ sang fork (`penai set-repo`). Quy tắc cho mọi thay đổi mã:
 
 - Migration SQL **chỉ thêm** (bảng mới, cột có giá trị mặc định); không sửa file migration đã có.
 - Khóa cấu hình mới phải có giá trị mặc định.

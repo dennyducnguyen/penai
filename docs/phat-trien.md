@@ -5,6 +5,8 @@ Tài liệu này dành cho ai muốn sửa mã, chạy test hoặc đóng góp t
 
 ## Kiến trúc tóm tắt
 
+Chi tiết (sơ đồ thành phần, luồng một tin nhắn, dữ liệu, bản cài trên máy chủ): [kien-truc.md](kien-truc.md).
+
 Monorepo pnpm, TypeScript chạy trực tiếp bằng `tsx` (không có bước build).
 
 | Thư mục | Vai trò |
