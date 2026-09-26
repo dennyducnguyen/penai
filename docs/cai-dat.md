@@ -80,7 +80,7 @@ Mọi thứ của bản `penai2` tách riêng: user `penai2`, `/opt/penai2`, `/e
 | `Chưa xin được HTTPS` | DNS chưa trỏ đúng hoặc cổng 80 bị chặn → mở cổng, rồi `sudo certbot --nginx -d <tên-miền>` và sửa `PENAI_PUBLIC_URL` trong `/etc/penai/penai.env` thành `https://...`, rồi `sudo penai restart` |
 | `Cụm PostgreSQL ... đã chứa một bản PenAI khác` | Máy đã có PenAI → dùng `--instance` + `--new-pg-cluster` như mục 4 |
 | Dừng giữa chừng vì mạng | Chạy lại đúng lệnh cũ — bước đã xong được bỏ qua |
-| `bubblewrap không chạy được` | VPS (thường là OpenVZ/LXC) chặn user namespace → lệnh exec của agent chạy không cách ly. Nên đổi sang VPS KVM |
+| `bubblewrap không chạy được` | VPS (thường là OpenVZ/LXC) chặn user namespace → lệnh exec của agent chạy không cách ly. Nên đổi sang VPS KVM. Trên Ubuntu 24.04 script tự tạo profile AppArmor `/etc/apparmor.d/penai-bwrap` chỉ cho riêng bubblewrap |
 | Cài xong không vào được trang | `sudo penai doctor` để xem mục nào không đạt |
 
 ## 6. Gỡ cài đặt
