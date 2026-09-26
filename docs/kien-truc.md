@@ -64,7 +64,7 @@ Ví dụ khách nhắn bot Telegram:
 
 1. **Kênh** (`packages/channels/telegram.ts`) nhận tin, bật hiệu ứng "đang soạn…" và emoji trạng thái.
 2. **channels-runtime** kiểm tra ghép nối (người lạ phải được quản trị duyệt), lưu ảnh/tài liệu vào thư mục riêng của người gửi, ghi danh bạ, đưa vào hàng đợi — cùng một hội thoại xử lý tuần tự, khác hội thoại chạy song song.
-3. **agent-runtime** dựng ngữ cảnh: prompt của agent, `AGENT.md`/`USER.md`, trí nhớ ghim + trí nhớ liên quan tới câu hỏi, tài liệu kho tri thức tìm trúng, danh sách skill, tool được phép (kể cả tool MCP theo quyền của agent ∩ người dùng).
+3. **agent-runtime** dựng ngữ cảnh theo thứ tự: prompt của agent → hướng dẫn cố định (`AGENT.md`, skill, MCP) → phần theo người/câu hỏi (`USER.md`, trí nhớ ghim + trí nhớ liên quan) → tài liệu kho tri thức tìm trúng → hồ sơ người đang chat + chỉ dẫn của quản trị viên cho người đó ([ho-so-contact.md](ho-so-contact.md)); kèm tool được phép (kể cả tool MCP theo quyền của agent ∩ người dùng).
 4. **agent-loop** gọi mô hình AI qua **ProviderGate** (giới hạn số lời gọi cùng lúc cho mỗi provider — Claude Code/Antigravity mỗi tiến trình tốn ~220 MB RAM). Mô hình muốn dùng tool → chạy tool → đưa kết quả lại → lặp tới khi có câu trả lời.
 5. **Trả lời** về kênh (có stream chữ nếu kênh và provider hỗ trợ), gửi file bằng tool `send_file`; lượt chạy được ghi vào `traces` (theo dõi) và thống kê token.
 

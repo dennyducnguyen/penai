@@ -3,6 +3,7 @@ export * from "./context.js";
 export * from "./schema.js";
 export * from "./repos.js";
 export * from "./channels-repo.js";
+export * from "./contacts-repo.js";
 export * from "./cron-repo.js";
 export * from "./memory-repo.js";
 export * from "./skills-tools-repo.js";

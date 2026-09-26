@@ -126,6 +126,30 @@ export const INDEX_HTML = `<!doctype html>
   .lib-acts { white-space: nowrap; }
   .lib-acts button { margin: 1px 2px; }
   .fwrap { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+  /* ===== Contacts: hồ sơ, nhãn, chỉ dẫn cho AI (0029) ===== */
+  .ct-dialog { width: 940px; max-width: 96vw; padding: 18px 20px; }
+  .ct-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .ct-tabs { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin: 12px 0 14px; }
+  .ct-tabs button { background: transparent; color: inherit; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 12px; font-weight: 500; opacity: .7; }
+  .ct-tabs button.on { border-bottom-color: var(--accent); opacity: 1; }
+  .ct-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+  @media (max-width: 760px) { .ct-grid { grid-template-columns: 1fr; } }
+  .ct-row { cursor: pointer; }
+  .ct-row:hover td { background: rgba(128,128,128,.07); }
+  .tagpill { display: inline-flex; align-items: center; gap: 5px; margin: 1px 0; }
+  .tagpill i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .ct-check { display: flex; align-items: center; gap: 7px; opacity: 1; font-size: .86rem; margin: 10px 0 4px; }
+  .tagchk { display: inline-flex; align-items: center; gap: 5px; margin: 0 14px 6px 0; opacity: 1; font-size: .86rem; }
+  .cf-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .cf-row input { flex: 1; min-width: 0; }
+  .ct-count { font-size: .74rem; opacity: .6; text-align: right; margin-top: 2px; }
+  .ct-help { font-size: .8rem; opacity: .7; margin: 2px 0 6px; line-height: 1.45; }
+  .ct-pre { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .78rem; line-height: 1.45; max-height: 460px; overflow: auto; background: rgba(128,128,128,.08); padding: 10px 12px; border-radius: 8px; margin: 8px 0 0; }
+  .ct-msgs { max-height: 360px; overflow: auto; display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .ct-msgs div { padding: 6px 10px; border-radius: 8px; font-size: .85rem; white-space: pre-wrap; word-break: break-word; }
+  .ct-msgs .u { background: rgba(128,128,128,.14); }
+  .ct-msgs .b { border: 1px solid var(--border); }
+  .ct-sec { margin: 18px 0 6px; font-size: .92rem; }
   /* ===== Đăng nhập (0024) ===== */
   body:not(.authed) header, body:not(.authed) .layout { display: none; }
   #loginView { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px;
@@ -2601,11 +2625,462 @@ export const INDEX_HTML = `<!doctype html>
     api("/v1/audit").then(function (j) { c.appendChild(table(["Thời gian", "Actor", "Hành động", "Chi tiết"], j.entries, function (r) { var tr = el("tr"); tr.innerHTML = "<td class='muted'>" + esc((r.createdAt || "").slice(0, 19).replace("T", " ")) + "</td><td><code>" + esc(String(r.actor).slice(0, 8)) + "</code></td><td>" + esc(r.action) + "</td><td class='muted'>" + esc(JSON.stringify(r.detail)) + "</td>"; return tr; })); }).catch(function (e) { c.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
   };
 
+  // ===== Contacts: hồ sơ, nhãn và chỉ dẫn cho AI theo từng người (0029) =====
+  var CH_LABELS = { telegram: "Telegram", zalo_personal: "Zalo cá nhân", zalo_oa: "Zalo OA", msteams: "Microsoft Teams", discord: "Discord", slack: "Slack", whatsapp: "WhatsApp", feishu: "Feishu/Lark", web: "Web" };
+  var PAIR_LABELS = { da_duyet: ["Đã duyệt", "ok"], cho_duyet: ["Chờ duyệt", ""], chua_duyet: ["Chưa duyệt", "err"], khong_can: ["Không cần duyệt", ""], khong_ro: ["—", ""] };
+  function chLabel(k) { return CH_LABELS[k] || k; }
+  function fmtTime(s) { if (!s) return ""; var d = new Date(s); return isNaN(d.getTime()) ? "" : d.toLocaleString("vi-VN"); }
+  function tagPill(t) { return '<span class="pill tagpill"><i style="background:' + esc(t.color || "#94a3b8") + '"></i>' + esc(t.name) + "</span>"; }
+  function contactName(c) { return c.profileName || c.displayName || c.externalId; }
+  function eachEl(root, sel, fn) { Array.prototype.forEach.call(root.querySelectorAll(sel), fn); }
+  function charCounter(input, out, max) {
+    var upd = function () { out.textContent = input.value.length + " / " + max + " ký tự"; };
+    input.addEventListener("input", upd); upd();
+  }
+
   PAGES.contacts = function () {
-    var m = page("Contacts", "Danh bạ thu thập từ các kênh");
+    var m = page("Contacts", "Người nhắn tới các kênh chat — bấm vào một người để xem hồ sơ, nhãn và đặt chỉ dẫn riêng cho AI");
     var c = card(m);
-    api("/v1/contacts").then(function (j) { c.appendChild(table(["Kênh", "External ID", "Tên", "Lần cuối"], j.contacts, function (r) { var t = el("tr"); t.innerHTML = "<td>" + esc(r.channelKind) + "</td><td><code>" + esc(r.externalId) + "</code></td><td>" + esc(r.displayName || "") + "</td><td class='muted'>" + esc((r.lastSeen || "").slice(0, 16)) + "</td>"; return t; })); });
+    c.innerHTML =
+      '<div class="row">' +
+      '<input id="ctQ" placeholder="🔍 Tìm theo tên hoặc ID">' +
+      '<select id="ctCh"><option value="">Mọi kênh</option></select>' +
+      '<select id="ctTag"><option value="">Mọi nhãn</option></select>' +
+      (isAdmin() ? '<button id="ctTags" class="ghost">🏷️ Quản lý nhãn</button>' : "") +
+      "</div>" +
+      '<div id="ctList" style="margin-top:12px"><span class="muted">Đang tải…</span></div>';
+    var all = [];
+    function render() {
+      var box = $("#ctList"); if (!box) return;
+      var q = $("#ctQ").value.trim().toLowerCase(), ch = $("#ctCh").value, tg = $("#ctTag").value;
+      var rows = all.filter(function (r) {
+        if (ch && r.channelKind !== ch) return false;
+        if (tg && !r.tags.some(function (t) { return t.id === tg; })) return false;
+        if (!q) return true;
+        return [r.profileName, r.displayName, r.externalId].some(function (v) { return !!v && String(v).toLowerCase().indexOf(q) >= 0; });
+      });
+      box.innerHTML = "";
+      box.appendChild(table(["Tên", "Kênh", "ID", "Duyệt", "Nhắn gần nhất"], rows, function (r) {
+        var tr = el("tr", { "class": "ct-row", title: "Bấm để mở hồ sơ" });
+        var p = PAIR_LABELS[r.pairing] || [r.pairing, ""];
+        tr.innerHTML =
+          "<td><b>" + esc(contactName(r)) + "</b>" +
+          (r.hasInstructions ? ' <span title="Có chỉ dẫn riêng cho AI">📝</span>' : "") +
+          (r.profileName && r.displayName && r.profileName !== r.displayName ? "<div class='muted'>" + esc(r.displayName) + "</div>" : "") +
+          (r.tags.length ? "<div style='margin-top:3px'>" + r.tags.map(tagPill).join(" ") + "</div>" : "") + "</td>" +
+          "<td>" + esc(r.channelName || chLabel(r.channelKind)) + "<div class='muted'>" + esc(chLabel(r.channelKind)) + "</div></td>" +
+          "<td><code>" + esc(r.externalId) + "</code></td>" +
+          "<td><span class='pill " + p[1] + "'>" + esc(p[0]) + "</span></td>" +
+          "<td class='muted'>" + esc(fmtTime(r.lastSeen)) + "</td>";
+        tr.onclick = function () { openContact(r.id, load); };
+        return tr;
+      }));
+      box.appendChild(el("div", { "class": "muted", style: "margin-top:8px" }, rows.length + " / " + all.length + " người"));
+    }
+    function load() {
+      Promise.all([api("/v1/contacts"), api("/v1/contact-tags")]).then(function (res) {
+        if (!$("#ctList")) return;
+        all = res[0].contacts || [];
+        var tags = res[1].tags || [];
+        var kinds = {};
+        all.forEach(function (r) { kinds[r.channelKind] = 1; });
+        var chSel = $("#ctCh"), curC = chSel.value;
+        chSel.innerHTML = '<option value="">Mọi kênh</option>' + Object.keys(kinds).map(function (k) {
+          return '<option value="' + esc(k) + '"' + (k === curC ? " selected" : "") + ">" + esc(chLabel(k)) + "</option>";
+        }).join("");
+        var tgSel = $("#ctTag"), curT = tgSel.value;
+        tgSel.innerHTML = '<option value="">Mọi nhãn</option>' + tags.map(function (t) {
+          return '<option value="' + esc(t.id) + '"' + (t.id === curT ? " selected" : "") + ">" + esc(t.name) + " (" + t.memberCount + ")</option>";
+        }).join("");
+        render();
+      }).catch(function (e) { var b = $("#ctList"); if (b) b.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    }
+    $("#ctQ").addEventListener("input", render);
+    $("#ctCh").onchange = render;
+    $("#ctTag").onchange = render;
+    if ($("#ctTags")) $("#ctTags").onclick = function () { openTagManager(load); };
+    load();
   };
+
+  // Hộp thoại tự gỡ khỏi trang ngay khi đóng (✕ hoặc Esc) — không dựa vào sự kiện
+  // "close" (có trình duyệt nhúng không phát sự kiện này, hộp cũ nằm lại trong trang).
+  function modal(cls, onClose) {
+    eachEl(document, "dialog." + cls, function (x) { if (x.open) x.close(); x.remove(); });
+    var dlg = el("dialog", { "class": cls });
+    var closed = false;
+    dlg.closeNow = function () {
+      if (closed) return;
+      closed = true;
+      if (dlg.open) dlg.close();
+      dlg.remove();
+      if (onClose) onClose();
+    };
+    dlg.addEventListener("cancel", function (e) { e.preventDefault(); dlg.closeNow(); });
+    document.body.appendChild(dlg);
+    return dlg;
+  }
+
+  function openContact(id, onChange) {
+    var dlg = modal("ct-dialog");
+    dlg.innerHTML = '<span class="muted">Đang tải hồ sơ…</span>';
+    dlg.showModal();
+    Promise.all([api("/v1/contacts/" + id), api("/v1/contact-tags"), api("/v1/agents")]).then(function (res) {
+      renderContact(dlg, res[0], res[1].tags || [], res[2].agents || [], onChange);
+    }).catch(function (e) {
+      dlg.innerHTML = '<p class="err">' + esc(e.message) + '</p><div class="dialog-actions"><button class="ghost" data-x="1">Đóng</button></div>';
+      $("[data-x]", dlg).onclick = dlg.closeNow;
+    });
+  }
+
+  function renderContact(dlg, d, allTags, agents, onChange) {
+    var c = d.contact;
+    var p = PAIR_LABELS[c.pairing] || [c.pairing, ""];
+    var TABS = [["ho-so", "Hồ sơ & chỉ dẫn"], ["ghi-nho", "AI ghi nhớ"], ["hoi-thoai", "Hội thoại & file"], ["quyen", "Quyền & tài liệu"], ["ngu-canh", "Xem ngữ cảnh AI"]];
+    dlg.innerHTML =
+      '<div class="ct-head"><div><h3 style="margin:0" id="ctTitle">' + esc(contactName(c)) + "</h3>" +
+      '<div class="muted" style="margin-top:3px">' + esc(chLabel(c.channelKind)) + (d.channel ? " · " + esc(d.channel.name) : "") +
+      " · <code>" + esc(c.externalId) + "</code> · <span class='pill " + p[1] + "'>" + esc(p[0]) + "</span>" +
+      (d.channel && d.channel.agentName ? " · agent " + esc(d.channel.agentName) : "") +
+      " · nhắn lần đầu " + esc(fmtTime(c.firstSeen)) + "</div></div>" +
+      '<button class="ghost sm" data-x="1" title="Đóng">✕</button></div>' +
+      '<div class="ct-tabs">' + TABS.map(function (t, i) {
+        return '<button type="button" data-tab="' + t[0] + '"' + (i === 0 ? ' class="on"' : "") + ">" + esc(t[1]) + "</button>";
+      }).join("") + "</div>" +
+      TABS.map(function (t, i) { return '<div data-pane="' + t[0] + '"' + (i === 0 ? "" : ' style="display:none"') + "></div>"; }).join("");
+    $("[data-x]", dlg).onclick = dlg.closeNow;
+    eachEl(dlg, "[data-tab]", function (b) {
+      b.onclick = function () {
+        var k = b.getAttribute("data-tab");
+        eachEl(dlg, "[data-tab]", function (x) { x.className = x === b ? "on" : ""; });
+        eachEl(dlg, "[data-pane]", function (pn) { pn.style.display = pn.getAttribute("data-pane") === k ? "" : "none"; });
+      };
+    });
+    var pane = function (k) { return dlg.querySelector('[data-pane="' + k + '"]'); };
+    renderProfilePane(pane("ho-so"), d, allTags, onChange);
+    renderMemoryPane(pane("ghi-nho"), d);
+    renderChatsPane(pane("hoi-thoai"), d);
+    renderAccessPane(pane("quyen"), d);
+    renderPreviewPane(pane("ngu-canh"), d, agents);
+  }
+
+  function renderProfilePane(box, d, allTags, onChange) {
+    var c = d.contact, pf = d.profile || {}, L = d.limits || {};
+    var mine = {};
+    (d.tags || []).forEach(function (t) { mine[t.id] = 1; });
+    var input = function (id, label, val, max, ph) {
+      return '<div><label for="' + id + '">' + esc(label) + '</label><input id="' + id + '" style="width:100%" maxlength="' + (max || 200) +
+        '" value="' + esc(val || "") + '" placeholder="' + esc(ph || "") + '"></div>';
+    };
+    box.innerHTML =
+      '<div class="ct-help">Hồ sơ và chỉ dẫn được đưa vào ngữ cảnh mỗi khi người này nhắn (mọi agent trong workspace). Trong nhóm chat chỉ đưa tên và cách xưng hô, trừ khi bật "Dùng cả trong nhóm chat".</div>' +
+      '<div class="ct-grid">' +
+      input("pfName", "Tên hiển thị (quản trị viên đặt)", pf.displayName, L.displayName, c.displayName || "") +
+      input("pfRole", "Vai trò / chức danh / công ty", pf.roleTitle, L.roleTitle, "vd Giám đốc Công ty ABC") +
+      input("pfAddr", "AI gọi người này là", pf.addressAs, L.addressAs, "vd anh Đức, chị Lan") +
+      input("pfSelf", "AI tự xưng là", pf.selfAddress, L.selfAddress, "vd em") +
+      input("pfLang", "Ngôn ngữ trả lời", pf.language, L.language, "để trống = theo người dùng") +
+      input("pfPhone", "Điện thoại", pf.phone, L.phone, "") +
+      input("pfEmail", "Email", pf.email, L.email, "") +
+      "</div>" +
+      '<label class="ct-check"><input type="checkbox" id="pfShare"' + (pf.shareContactInfo ? " checked" : "") + "> Cho AI biết điện thoại và email</label>" +
+      '<label>Trường tùy chỉnh (AI thấy được)</label><div id="pfFields"></div>' +
+      '<button type="button" class="ghost sm" id="pfAddField">＋ Thêm trường</button>' +
+      '<label style="margin-top:14px">Nhãn</label><div id="pfTags"></div>' +
+      '<label for="pfAi" style="margin-top:12px">Chỉ dẫn cho AI khi trả lời người này</label>' +
+      '<textarea id="pfAi" class="memory-textarea" style="min-height:130px" maxlength="' + (L.personInstructions || 2000) +
+      '" placeholder="vd Khách VIP — trả lời ngắn gọn, báo giá theo bảng đại lý cấp 1, không bàn công nợ (chuyển kế toán)."></textarea>' +
+      '<div class="ct-count" id="pfAiCount"></div>' +
+      '<label class="ct-check"><input type="checkbox" id="pfGroups"' + (pf.useInGroups ? " checked" : "") + "> Dùng cả trong nhóm chat (hồ sơ đầy đủ + chỉ dẫn riêng)</label>" +
+      '<div class="dialog-actions"><span class="muted" id="pfInfo" style="margin-right:auto"></span><button id="pfSave">Lưu hồ sơ</button></div>';
+    var fbox = $("#pfFields", box);
+    function addField(k, v) {
+      var row = el("div", { "class": "cf-row" });
+      row.innerHTML = '<input class="cfk" placeholder="Tên trường, vd Mã khách" maxlength="' + (L.customFieldKey || 60) + '" value="' + esc(k || "") + '">' +
+        '<input class="cfv" placeholder="Giá trị" maxlength="' + (L.customFieldValue || 300) + '" value="' + esc(v || "") + '">';
+      var x = el("button", { type: "button", "class": "ghost sm", title: "Xóa trường" }, "✕");
+      x.onclick = function () { row.remove(); };
+      row.appendChild(x);
+      fbox.appendChild(row);
+    }
+    Object.keys(pf.customFields || {}).forEach(function (k) { addField(k, pf.customFields[k]); });
+    $("#pfAddField", box).onclick = function () {
+      if (fbox.children.length >= (L.customFieldCount || 20)) { $("#pfInfo", box).textContent = "Tối đa " + (L.customFieldCount || 20) + " trường"; return; }
+      addField("", "");
+    };
+    var tbox = $("#pfTags", box);
+    if (!allTags.length) tbox.innerHTML = '<span class="muted">Chưa có nhãn nào' + (isAdmin() ? " — tạo bằng nút 🏷️ Quản lý nhãn ở trang Contacts" : "") + ".</span>";
+    allTags.forEach(function (t) {
+      var lb = el("label", { "class": "tagchk" });
+      lb.innerHTML = '<input type="checkbox" value="' + esc(t.id) + '"' + (mine[t.id] ? " checked" : "") + "> " + tagPill(t);
+      tbox.appendChild(lb);
+    });
+    var ai = $("#pfAi", box);
+    ai.value = pf.aiInstructions || "";
+    charCounter(ai, $("#pfAiCount", box), L.personInstructions || 2000);
+    $("#pfSave", box).onclick = function () {
+      var fields = {};
+      eachEl(fbox, ".cf-row", function (row) {
+        var k = row.querySelector(".cfk").value.trim(), v = row.querySelector(".cfv").value.trim();
+        if (k && v) fields[k] = v;
+      });
+      var tagIds = [];
+      eachEl(tbox, "input[type=checkbox]", function (cb) { if (cb.checked) tagIds.push(cb.value); });
+      var body = {
+        displayName: $("#pfName", box).value, roleTitle: $("#pfRole", box).value,
+        addressAs: $("#pfAddr", box).value, selfAddress: $("#pfSelf", box).value,
+        language: $("#pfLang", box).value, phone: $("#pfPhone", box).value, email: $("#pfEmail", box).value,
+        shareContactInfo: $("#pfShare", box).checked, customFields: fields,
+        aiInstructions: ai.value, useInGroups: $("#pfGroups", box).checked
+      };
+      var btn = $("#pfSave", box), info = $("#pfInfo", box);
+      btn.disabled = true; info.textContent = "Đang lưu…";
+      api("/v1/contacts/" + c.id + "/profile", { method: "PUT", body: body })
+        .then(function () { return api("/v1/contacts/" + c.id + "/tags", { method: "PUT", body: { tagIds: tagIds } }); })
+        .then(function () {
+          btn.disabled = false;
+          info.textContent = "✓ Đã lưu lúc " + new Date().toLocaleTimeString("vi-VN");
+          var dl = box.closest("dialog"), h = dl && dl.querySelector("#ctTitle");
+          if (h) h.textContent = body.displayName.trim() || c.displayName || c.externalId;
+          if (onChange) onChange();
+        })
+        .catch(function (e) { btn.disabled = false; info.textContent = "✗ " + e.message; });
+    };
+  }
+
+  function renderMemoryPane(box, d) {
+    var c = d.contact;
+    box.innerHTML =
+      '<div class="ct-help">AI tự ghi file USER.md khi biết thêm về người này (tên gọi, sở thích, việc đang làm…); file được nạp vào mọi lượt chat của họ. Sửa khi AI ghi sai — lời dặn cho AI nên đặt ở tab "Hồ sơ & chỉ dẫn".</div>' +
+      '<textarea id="umText" class="memory-textarea" maxlength="8000"></textarea>' +
+      '<div class="row" style="justify-content:space-between;margin-top:6px"><span class="muted" id="umInfo"></span><button id="umSave" class="sm">Lưu USER.md</button></div>' +
+      '<h4 class="ct-sec">Ghi nhớ gắn với người này</h4><div id="umMem"></div>' +
+      '<h4 class="ct-sec">File ghi nhớ riêng (MEMORY.md, memory/*.md)</h4><div id="umDocs"></div><div id="umDocView"></div>';
+    var ta = $("#umText", box);
+    ta.value = d.userMd.content || "";
+    $("#umInfo", box).textContent = d.userMd.exists ? "" : "Chưa có — AI tạo khi người này nhắn lượt đầu (hoặc lưu ngay tại đây).";
+    $("#umSave", box).onclick = function () {
+      var btn = this;
+      btn.disabled = true;
+      api("/v1/contacts/" + c.id + "/user-md", { method: "PUT", body: { content: ta.value } })
+        .then(function () { btn.disabled = false; $("#umInfo", box).textContent = "✓ Đã lưu lúc " + new Date().toLocaleTimeString("vi-VN"); })
+        .catch(function (e) { btn.disabled = false; $("#umInfo", box).textContent = "✗ " + e.message; });
+    };
+    $("#umMem", box).appendChild(table(["Agent", "Nội dung", "Mức", ""], d.memories || [], function (r) {
+      var tr = el("tr");
+      tr.innerHTML = "<td>" + esc(r.agentName) + "</td><td class='umc'>" + esc(r.content) + "</td><td>" + (r.pinned ? "📌 " : "") + Number(r.importance).toFixed(1) + "</td>";
+      var td = el("td", { style: "white-space:nowrap" });
+      var ed = el("button", { "class": "ghost sm" }, "Sửa");
+      ed.onclick = function () {
+        var cell = tr.querySelector(".umc");
+        if (cell.querySelector("textarea")) return;
+        cell.innerHTML = '<textarea class="memory-textarea" style="min-height:80px"></textarea><div class="row" style="margin-top:4px"><button class="sm" data-ok="1">Lưu</button><button class="ghost sm" data-no="1">Hủy</button></div>';
+        var t = cell.querySelector("textarea");
+        t.value = r.content;
+        t.focus();
+        cell.querySelector("[data-no]").onclick = function () { cell.textContent = r.content; };
+        cell.querySelector("[data-ok]").onclick = function () {
+          var v = t.value.trim();
+          if (!v) return;
+          api("/v1/memories/" + r.id, { method: "PATCH", body: { content: v } })
+            .then(function () { r.content = v; cell.textContent = v; })
+            .catch(function (e) { alert(e.message); });
+        };
+      };
+      var del = el("button", { "class": "ghost sm" }, "Xóa");
+      del.onclick = function () {
+        if (!confirm("Xóa ghi nhớ này?")) return;
+        api("/v1/memories/" + r.id, { method: "DELETE" }).then(function () { tr.remove(); }).catch(function (e) { alert(e.message); });
+      };
+      td.appendChild(ed); td.appendChild(document.createTextNode(" ")); td.appendChild(del);
+      tr.appendChild(td);
+      return tr;
+    }));
+    var docs = (d.related && d.related.memoryDocs) || [];
+    $("#umDocs", box).appendChild(table(["Agent", "File", "Kích thước", "Cập nhật", ""], docs, function (r) {
+      var tr = el("tr");
+      tr.innerHTML = "<td>" + esc(r.agentName) + "</td><td><code>" + esc(r.path) + "</code></td><td>" + fmtSize(r.bytes) + "</td><td class='muted'>" + esc(fmtTime(r.updatedAt)) + "</td>";
+      var td = el("td");
+      var v = el("button", { "class": "ghost sm" }, "Xem");
+      v.onclick = function () {
+        api("/v1/memory-docs/" + r.id).then(function (j) {
+          var out = $("#umDocView", box);
+          out.innerHTML = "";
+          var pre = el("div", { "class": "ct-pre" });
+          pre.textContent = j.doc.content;
+          out.appendChild(pre);
+        }).catch(function (e) { alert(e.message); });
+      };
+      td.appendChild(v);
+      tr.appendChild(td);
+      return tr;
+    }));
+  }
+
+  function renderChatsPane(box, d) {
+    var rel = d.related || {};
+    box.innerHTML =
+      '<h4 class="ct-sec" style="margin-top:0">Hội thoại hiện tại trên kênh</h4><div id="hsList"></div><div id="hsView"></div>' +
+      '<h4 class="ct-sec">File trong thư mục riêng</h4><div class="ct-help">Ảnh, tài liệu người này gửi và file AI tạo cho họ.</div><div id="hsFiles"></div>';
+    $("#hsList", box).appendChild(table(["Agent", "Số tin", "Hoạt động gần nhất", ""], rel.sessions || [], function (s) {
+      var tr = el("tr");
+      tr.innerHTML = "<td>" + esc(s.agentName || "") + "</td><td>" + s.messageCount + "</td><td class='muted'>" + esc(fmtTime(s.lastActive)) + "</td>";
+      var td = el("td");
+      var b = el("button", { "class": "ghost sm" }, "Xem tin nhắn");
+      b.onclick = function () {
+        var out = $("#hsView", box);
+        out.innerHTML = '<span class="muted">Đang tải…</span>';
+        api("/v1/sessions/" + s.id + "/messages").then(function (j) {
+          var list = (j.messages || []).filter(function (msg) {
+            var ct = msg.content || {};
+            return (msg.role === "user" && ct.kind === "text") || (msg.role === "assistant" && ct.text);
+          }).slice(-40);
+          out.innerHTML = "";
+          var wrap = el("div", { "class": "ct-msgs" });
+          if (!list.length) wrap.appendChild(el("span", { "class": "muted" }, "(chưa có tin nhắn)"));
+          list.forEach(function (msg) {
+            var div = el("div", { "class": msg.role === "user" ? "u" : "b" });
+            div.textContent = (msg.role === "user" ? "👤 " : "🤖 ") + String(msg.content.text || "");
+            wrap.appendChild(div);
+          });
+          out.appendChild(wrap);
+          wrap.scrollTop = wrap.scrollHeight;
+        }).catch(function (e) { out.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+      };
+      td.appendChild(b);
+      tr.appendChild(td);
+      return tr;
+    }));
+    $("#hsFiles", box).appendChild(table(["File", "Kích thước", "Sửa lúc"], d.files || [], function (f) {
+      var tr = el("tr");
+      tr.innerHTML = "<td><code>" + esc(f.path) + "</code></td><td>" + fmtSize(f.bytes) + "</td><td class='muted'>" + esc(fmtTime(f.modifiedAt)) + "</td>";
+      return tr;
+    }));
+  }
+
+  function renderAccessPane(box, d) {
+    var rel = d.related || {};
+    box.innerHTML =
+      '<h4 class="ct-sec" style="margin-top:0">Tài liệu riêng trong Kho tri thức</h4>' +
+      '<div class="ct-help">Bộ sưu tập cấp cho riêng người này — AI chỉ tìm được tài liệu trong đó khi người này hỏi. Cấp thêm ở trang <a href="#/vault">Kho tri thức (Vault)</a>, phân quyền "Người cụ thể".</div><div id="acVault"></div>' +
+      '<h4 class="ct-sec">Quyền dùng tool MCP riêng</h4>' +
+      '<div class="ct-help">Chỉnh ở trang <a href="#/mcp">MCP</a>, phần quyền theo người dùng (mã <code>' + esc(d.contact.userKey) + "</code>).</div><div id='acMcp'></div>";
+    $("#acVault", box).appendChild(table(["Bộ sưu tập", "Agent được dùng"], rel.vaultCollections || [], function (v) {
+      var tr = el("tr");
+      tr.innerHTML = "<td>" + esc(v.name) + " <code>" + esc(v.slug) + "</code></td><td>" + esc(v.agentKey || "mọi agent") + "</td>";
+      return tr;
+    }));
+    $("#acMcp", box).appendChild(table(["MCP server", "Trạng thái", "Cho phép", "Chặn"], rel.mcpGrants || [], function (g) {
+      var tr = el("tr");
+      tr.innerHTML = "<td>" + esc(g.serverName) + "</td><td>" + (g.enabled ? "<span class='pill ok'>được dùng</span>" : "<span class='pill err'>bị chặn</span>") +
+        "</td><td>" + esc(g.toolAllow.join(", ") || "mọi tool") + "</td><td>" + esc(g.toolDeny.join(", ") || "—") + "</td>";
+      return tr;
+    }));
+    eachEl(box, "a[href]", function (a) {
+      a.addEventListener("click", function () { var dl = box.closest("dialog"); if (dl && dl.closeNow) dl.closeNow(); });
+    });
+  }
+
+  function renderPreviewPane(box, d, agents) {
+    var c = d.contact, def = d.channel && d.channel.agentKey;
+    box.innerHTML =
+      '<div class="ct-help">Xem đúng lời dặn hệ thống (system prompt) agent nhận khi người này nhắn: prompt của agent, hướng dẫn, ghi nhớ, tài liệu liên quan, rồi tới khối "Người đang chat" và "Chỉ dẫn của quản trị viên" ở cuối. Danh sách tool không kèm theo.</div>' +
+      '<div class="row"><select id="pvAgent"></select><input id="pvMsg" placeholder="Câu hỏi mẫu (để thử phần ghi nhớ/tài liệu liên quan)" value="Xin chào">' +
+      '<label class="ct-check" style="margin:0"><input type="checkbox" id="pvGroup"> Giả lập nhóm chat</label><button id="pvRun">Xem</button></div>' +
+      '<div id="pvOut"></div>';
+    $("#pvAgent", box).innerHTML = agents.map(function (a) {
+      return '<option value="' + esc(a.key) + '"' + (a.key === def ? " selected" : "") + ">" + esc(a.name) + "</option>";
+    }).join("");
+    $("#pvRun", box).onclick = function () {
+      var out = $("#pvOut", box), btn = this;
+      out.innerHTML = '<span class="muted">Đang dựng ngữ cảnh…</span>';
+      btn.disabled = true;
+      var qs = "?agent=" + encodeURIComponent($("#pvAgent", box).value) + "&message=" + encodeURIComponent($("#pvMsg", box).value) + ($("#pvGroup", box).checked ? "&group=1" : "");
+      api("/v1/contacts/" + c.id + "/context-preview" + qs).then(function (j) {
+        btn.disabled = false;
+        var ch = j.chars || {};
+        out.innerHTML = '<div class="muted" style="margin-top:10px">Tổng ' + ch.total + " ký tự — prompt agent " + ch.agentPrompt + " · hướng dẫn + ghi nhớ " + ch.context + " · tài liệu " + ch.knowledge + " · người đang chat + chỉ dẫn " + ch.person + "</div>";
+        var pre = el("div", { "class": "ct-pre" });
+        pre.textContent = j.systemPrompt;
+        out.appendChild(pre);
+      }).catch(function (e) { btn.disabled = false; out.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    };
+  }
+
+  function openTagManager(onChange) {
+    var dlg = modal("ct-dialog", onChange);
+    dlg.innerHTML =
+      '<div class="ct-head"><div><h3 style="margin:0">🏷️ Nhãn</h3><div class="muted" style="margin-top:3px">Phân nhóm người (VIP, Đại lý cấp 1, Học viên…). Chỉ dẫn của nhãn áp cho mọi người mang nhãn, đứng trước chỉ dẫn riêng của từng người.</div></div><button class="ghost sm" data-x="1">✕</button></div>' +
+      '<div id="tgList" style="margin-top:12px"></div>' +
+      '<h4 class="ct-sec" id="tgFormTitle">Thêm nhãn</h4>' +
+      '<div class="row"><input id="tgName" maxlength="40" placeholder="Tên nhãn, vd VIP"><input id="tgColor" type="color" value="#3b82f6" title="Màu nhãn" style="flex:0 0 52px;min-width:52px;padding:2px"></div>' +
+      '<label for="tgAi">Chỉ dẫn cho AI với mọi người mang nhãn này (không bắt buộc)</label>' +
+      '<textarea id="tgAi" class="memory-textarea" style="min-height:100px" maxlength="1000" placeholder="vd Đại lý cấp 1: báo giá theo bảng đại lý, ưu tiên xử lý đơn gấp."></textarea><div class="ct-count" id="tgAiCount"></div>' +
+      '<label class="ct-check"><input type="checkbox" id="tgGroups"> Dùng chỉ dẫn này cả trong nhóm chat</label>' +
+      '<div class="dialog-actions"><span class="muted" id="tgInfo" style="margin-right:auto"></span><button class="ghost" id="tgCancel" style="display:none">Hủy sửa</button><button id="tgSave">Thêm nhãn</button></div>';
+    var editing = null;
+    var ai = $("#tgAi", dlg);
+    charCounter(ai, $("#tgAiCount", dlg), 1000);
+    $("[data-x]", dlg).onclick = dlg.closeNow;
+    function resetForm() {
+      editing = null;
+      $("#tgName", dlg).value = "";
+      $("#tgColor", dlg).value = "#3b82f6";
+      ai.value = "";
+      ai.dispatchEvent(new Event("input"));
+      $("#tgGroups", dlg).checked = false;
+      $("#tgFormTitle", dlg).textContent = "Thêm nhãn";
+      $("#tgSave", dlg).textContent = "Thêm nhãn";
+      $("#tgCancel", dlg).style.display = "none";
+    }
+    function load() {
+      api("/v1/contact-tags").then(function (j) {
+        var box = $("#tgList", dlg);
+        box.innerHTML = "";
+        box.appendChild(table(["Nhãn", "Số người", "Chỉ dẫn cho AI", "Trong nhóm", ""], j.tags || [], function (t) {
+          var tr = el("tr");
+          var note = t.aiInstructions ? (t.aiInstructions.length > 140 ? t.aiInstructions.slice(0, 140) + "…" : t.aiInstructions) : "—";
+          tr.innerHTML = "<td>" + tagPill(t) + "</td><td>" + t.memberCount + "</td><td class='muted' style='max-width:380px'>" + esc(note) + "</td><td>" + (t.useInGroups ? "có" : "không") + "</td>";
+          var td = el("td", { style: "white-space:nowrap" });
+          var ed = el("button", { "class": "ghost sm" }, "Sửa");
+          ed.onclick = function () {
+            editing = t;
+            $("#tgName", dlg).value = t.name;
+            $("#tgColor", dlg).value = t.color || "#3b82f6";
+            ai.value = t.aiInstructions || "";
+            ai.dispatchEvent(new Event("input"));
+            $("#tgGroups", dlg).checked = !!t.useInGroups;
+            $("#tgFormTitle", dlg).textContent = "Sửa nhãn " + t.name;
+            $("#tgSave", dlg).textContent = "Lưu nhãn";
+            $("#tgCancel", dlg).style.display = "";
+            $("#tgName", dlg).focus();
+          };
+          var del = el("button", { "class": "ghost sm" }, "Xóa");
+          del.onclick = function () {
+            if (!confirm("Xóa nhãn " + t.name + "? Nhãn sẽ bị gỡ khỏi " + t.memberCount + " người.")) return;
+            api("/v1/contact-tags/" + t.id, { method: "DELETE" }).then(function () {
+              if (editing && editing.id === t.id) resetForm();
+              load();
+            }).catch(function (e) { $("#tgInfo", dlg).textContent = "✗ " + e.message; });
+          };
+          td.appendChild(ed); td.appendChild(document.createTextNode(" ")); td.appendChild(del);
+          tr.appendChild(td);
+          return tr;
+        }));
+      }).catch(function (e) { $("#tgList", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    }
+    $("#tgCancel", dlg).onclick = resetForm;
+    $("#tgSave", dlg).onclick = function () {
+      var body = { name: $("#tgName", dlg).value.trim(), color: $("#tgColor", dlg).value, aiInstructions: ai.value, useInGroups: $("#tgGroups", dlg).checked };
+      if (!body.name) { $("#tgInfo", dlg).textContent = "✗ Nhập tên nhãn"; return; }
+      var req = editing
+        ? api("/v1/contact-tags/" + editing.id, { method: "PATCH", body: body })
+        : api("/v1/contact-tags", { method: "POST", body: body });
+      req.then(function () { $("#tgInfo", dlg).textContent = "✓ Đã lưu nhãn " + body.name; resetForm(); load(); })
+        .catch(function (e) { $("#tgInfo", dlg).textContent = "✗ " + e.message; });
+    };
+    dlg.showModal();
+    load();
+  }
 
   PAGES.traces = function () {
     var m = page("Traces", "Nhật ký gọi LLM");

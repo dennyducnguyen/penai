@@ -287,6 +287,51 @@ export const contacts = pgTable(
   (t) => [uniqueIndex("contacts_legacy_uq").on(t.workspaceId, t.channelKind, t.externalId)],
 );
 
+/** Hồ sơ + chỉ dẫn của quản trị viên cho một người (0029) — gắn principal, 1-1. */
+export const principalProfiles = pgTable("principal_profiles", {
+  principalId: uuid("principal_id")
+    .primaryKey()
+    .references(() => principals.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
+  displayName: text("display_name"),
+  addressAs: text("address_as"),
+  selfAddress: text("self_address"),
+  roleTitle: text("role_title"),
+  language: text("language"),
+  phone: text("phone"),
+  email: text("email"),
+  shareContactInfo: boolean("share_contact_info").notNull().default(false),
+  customFields: jsonb("custom_fields").notNull().default({}),
+  aiInstructions: text("ai_instructions").notNull().default(""),
+  useInGroups: boolean("use_in_groups").notNull().default(false),
+  updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Nhãn phân nhóm người (VIP, Đại lý…) kèm chỉ dẫn chung cho AI (0029). */
+export const contactTags = pgTable("contact_tags", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
+  name: text("name").notNull(),
+  color: text("color").notNull().default(""),
+  aiInstructions: text("ai_instructions").notNull().default(""),
+  useInGroups: boolean("use_in_groups").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const principalTags = pgTable("principal_tags", {
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
+  principalId: uuid("principal_id")
+    .notNull()
+    .references(() => principals.id, { onDelete: "cascade" }),
+  tagId: uuid("tag_id")
+    .notNull()
+    .references(() => contactTags.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const conversations = pgTable(
   "conversations",
   {

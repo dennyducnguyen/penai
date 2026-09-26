@@ -206,4 +206,23 @@ describe("Agent loop (spec-agent-loop)", () => {
     const toolMsg = lastReq.messages.find((m) => m.role === "tool");
     expect(toolMsg && "toolCallId" in toolMsg && toolMsg.toolCallId).toBe("call_h1");
   });
+
+  it("system prompt: prompt agent → hướng dẫn/ghi nhớ → tri thức → người đang chat; phần lỗi thì bỏ qua", async () => {
+    const provider = new ScriptedProvider([textResponse("ok")]);
+    const deps: AgentLoopDeps = {
+      ...makeDeps(provider),
+      buildContextPrefix: async () => "CONTEXT",
+      buildKnowledgeContext: async () => {
+        throw new Error("vault hỏng");
+      },
+      buildPersonContext: async () => "# Người đang chat\n- Tên: An",
+    };
+    const events = await collect(
+      runAgent(deps, { ctx: ctx(), agent: AGENT, sessionId: await newSession(), userMessage: "chào" }),
+    );
+    expect(events.at(-1)!.type).toBe("done");
+    expect(provider.requests[0]!.system).toBe(
+      "Bạn là trợ lý test.\n\nCONTEXT\n\n# Người đang chat\n- Tên: An",
+    );
+  });
 });
