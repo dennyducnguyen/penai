@@ -4,6 +4,14 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.0.1 — 2026-09-26
+
+- Trang **Người dùng**: ô mật khẩu khi tạo người dùng và khi đặt lại mật khẩu nay được che ký tự (có nút 👁 để xem khi cần); trình duyệt không còn tự điền mật khẩu của người đang đăng nhập vào các ô này.
+- Ẩn mục **Teams** khỏi menu và trang Tổng quan (tính năng vẫn giữ ở phía máy chủ).
+- Thêm `scripts/mock-dashboard.ts` để xem thử giao diện Dashboard trên máy mà không cần PostgreSQL.
+
+Cập nhật: `sudo penai update`.
+
 ## 1.0.0 — 2026-09-26
 
 Bản phát hành công khai đầu tiên.

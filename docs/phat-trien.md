@@ -49,6 +49,9 @@ pnpm dev                          # http://127.0.0.1:18800
 Chạy thử không cần LLM thật: `pnpm mock-llm` (LLM giả trả lời cố định, cổng 18801) rồi khai provider
 `openai-compat` trỏ `http://127.0.0.1:18801/v1` trong `penai.config.json5`.
 
+Chỉ sửa giao diện Dashboard thì không cần cả PostgreSQL: `pnpm exec tsx scripts/mock-dashboard.ts` rồi mở
+http://127.0.0.1:18899/#/users — máy chủ giả phục vụ đúng `ui.ts` đang sửa kèm dữ liệu mẫu (đăng nhập sẵn quyền quản trị).
+
 ## Test
 
 Test chạy trên PostgreSQL thật (không mock). Database `penai_test` bị **xóa và tạo lại** mỗi lần chạy — đừng trỏ vào cụm PostgreSQL có dữ liệu thật. Mặc định kết nối `127.0.0.1:5433`, đổi bằng biến môi trường:
