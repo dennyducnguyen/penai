@@ -17,6 +17,7 @@ PenAI là hệ thống "trợ lý AI của công ty": bạn tạo các **agent**
   - Gói thuê bao: **ChatGPT** (Plus/Pro/Team), **Claude** (Pro/Max qua Claude Code), **Google Antigravity** — đăng nhập ngay trong Dashboard.
   - API key: **OpenAI**, **Gemini**, **Qwen**, **Anthropic**, hoặc bất kỳ dịch vụ tương thích OpenAI (OpenRouter, DeepSeek...).
 - **Kênh chat**: Telegram, Zalo OA, Zalo cá nhân, Microsoft Teams, Discord, Slack, WhatsApp, Feishu — cùng trang Chat ngay trong Dashboard.
+- **Hồ sơ contact**: mỗi người nhắn tới bot có hồ sơ riêng (tên, cách xưng hô, vai trò, nhãn VIP/Đại lý…) và chỉ dẫn riêng cho AI — AI biết đang nói chuyện với ai và trả lời đúng từng người.
 - **Kho tri thức (Vault)**: tải lên PDF/Word/Excel/TXT, tìm kiếm ngữ nghĩa, phân quyền theo bộ sưu tập, agent đọc toàn văn khi tìm trúng tài liệu.
 - **Skill & MCP**: nạp skill (thư mục `SKILL.md` + script), kết nối MCP server (Canva, Google, công cụ nội bộ...), phân quyền theo agent và theo người dùng.
 - **Tool có sẵn**: đọc/ghi file, chạy Python/Node trong sandbox, đọc tài liệu, tạo ảnh, tạo landing page, đặt lịch (cron), gửi thẻ duyệt có nút bấm, xuất link tải công khai có hạn...
@@ -84,6 +85,7 @@ Các lệnh vận hành khác (`penai status`, `penai backup`, `penai rollback`,
 | [docs/cai-dat.md](docs/cai-dat.md) | Cài đặt chi tiết, mọi tùy chọn, xử lý sự cố |
 | [docs/van-hanh.md](docs/van-hanh.md) | Lệnh `penai`: cập nhật, sao lưu, khôi phục, nhật ký, kiểm tra |
 | [docs/dang-nhap-nguoi-dung.md](docs/dang-nhap-nguoi-dung.md) | Tài khoản, vai trò, phân quyền |
+| [docs/ho-so-contact.md](docs/ho-so-contact.md) | Hồ sơ contact, nhãn, chỉ dẫn cho AI theo từng người |
 | [docs/huong-dan-teams-bot.md](docs/huong-dan-teams-bot.md) | Nối Microsoft Teams |
 | [docs/zalo-personal.md](docs/zalo-personal.md) | Nối Zalo cá nhân (chế độ an toàn) |
 | [docs/api-public.md](docs/api-public.md) · [docs/api-reference.md](docs/api-reference.md) | API tương thích OpenAI |
