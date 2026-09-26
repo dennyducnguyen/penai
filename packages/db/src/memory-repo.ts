@@ -54,6 +54,49 @@ export async function addMemory(
 }
 
 /** Điều kiện phạm vi: memory chung + memory của người dùng đang chat. */
+/**
+ * Hư từ và đại từ hay gặp trong câu hỏi — bỏ khi dò trí nhớ để câu hỏi tự
+ * nhiên ("Cho tôi biết chính sách đổi trả") vẫn khớp ghi nhớ ("Chính sách đổi
+ * trả sản phẩm…"). Chỉ gồm từ chức năng, không có từ mang nội dung.
+ */
+const RECALL_STOPWORDS = new Set(
+  (
+    "cho tôi mình tớ ta bạn anh chị em ông bà họ nó chúng biết hãy giúp xin vui lòng làm ơn là của và " +
+    "có không gì nào được với này đó kia ấy một các những thì mà như để về ở trong ngoài ra vào lên " +
+    "xuống từ theo khi nếu nhưng hay hoặc rằng bị sẽ đã đang vẫn cũng rất quá nữa thế sao vậy à ạ " +
+    "nhé nha ơi hả nhỉ chứ đâu ai bao nhiêu mấy cái việc điều hỏi muốn xem " +
+    "the a an is are was were be to of and or in on at for with by me my you your i we our it this " +
+    "that what which who how please tell about can could would do does"
+  ).split(" "),
+);
+
+/**
+ * Tách câu hỏi thành từ khóa để dò trí nhớ. plainto_tsquery bắt MỌI từ phải
+ * có mặt nên câu hỏi tự nhiên hầu như không khớp gì; ở đây bỏ hư từ rồi chỉ
+ * cần khớp một phần từ khóa (≥ 1 khi có 1–2 từ, ≥ nửa số từ và tối đa 3 khi
+ * nhiều hơn), kết quả xếp theo số từ khớp trước, độ liên quan sau.
+ */
+export function recallTerms(query: string): { terms: string[]; minMatch: number } {
+  const seen = new Set<string>();
+  for (const word of query.normalize("NFC").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+    if (!RECALL_STOPWORDS.has(word)) seen.add(word);
+    if (seen.size >= 12) break;
+  }
+  const terms = [...seen];
+  return { terms, minMatch: terms.length <= 2 ? 1 : Math.min(3, Math.ceil(terms.length / 2)) };
+}
+
+/** Phần SQL: tsquery "khớp bất kỳ từ khóa" + biểu thức đếm số từ khóa khớp (cột tsv). */
+function recallSql(terms: string[]) {
+  return {
+    any: sql`to_tsquery('simple', ${terms.join(" | ")})`,
+    matched: sql.join(
+      terms.map((t) => sql`(tsv @@ to_tsquery('simple', ${t}))::int`),
+      sql` + `,
+    ),
+  };
+}
+
 function scopeCond(userKey?: string) {
   return userKey
     ? sql`(user_key IS NULL OR user_key = ${userKey})`
@@ -95,14 +138,20 @@ export async function searchMemories(
   limit = 5,
   userKey?: string,
 ): Promise<Array<MemoryRow & { rank: number }>> {
+  const { terms, minMatch } = recallTerms(query);
+  if (!terms.length) return [];
+  const { any, matched } = recallSql(terms);
   return withWorkspace(db, ctx, async (tx) => {
     const res = await tx.execute(sql`
-      SELECT *, ts_rank(tsv, plainto_tsquery('simple', ${query})) * (0.5 + importance) AS rank
-      FROM memories
-      WHERE agent_id = ${agentId}
-        AND tsv @@ plainto_tsquery('simple', ${query})
-        AND ${scopeCond(userKey)}
-      ORDER BY rank DESC
+      SELECT * FROM (
+        SELECT *, (${matched}) AS matched, ts_rank(tsv, ${any}) * (0.5 + importance) AS rank
+        FROM memories
+        WHERE agent_id = ${agentId}
+          AND tsv @@ ${any}
+          AND ${scopeCond(userKey)}
+      ) m
+      WHERE m.matched >= ${minMatch}
+      ORDER BY m.matched DESC, m.rank DESC
       LIMIT ${limit}
     `);
     return (res.rows as Array<Record<string, unknown>>).map((r) => ({
@@ -285,12 +334,18 @@ export async function searchWorkspaceSemanticMemories(
   query: string,
   limit = 5,
 ): Promise<Array<WorkspaceSemanticMemoryRow & { rank: number }>> {
+  const { terms, minMatch } = recallTerms(query);
+  if (!terms.length) return [];
+  const { any, matched } = recallSql(terms);
   return withWorkspace(db, ctx, async (tx) => {
     const res = await tx.execute(sql`
-      SELECT *, ts_rank(tsv, plainto_tsquery('simple', ${query})) * (0.5 + importance) AS rank
-      FROM workspace_semantic_memories
-      WHERE tsv @@ plainto_tsquery('simple', ${query})
-      ORDER BY rank DESC, updated_at DESC
+      SELECT * FROM (
+        SELECT *, (${matched}) AS matched, ts_rank(tsv, ${any}) * (0.5 + importance) AS rank
+        FROM workspace_semantic_memories
+        WHERE tsv @@ ${any}
+      ) m
+      WHERE m.matched >= ${minMatch}
+      ORDER BY m.matched DESC, m.rank DESC, m.updated_at DESC
       LIMIT ${limit}
     `);
     return (res.rows as Array<Record<string, unknown>>).map((r) => ({
@@ -515,17 +570,23 @@ export async function searchMemoryDocs(
   limit = 5,
   userKey?: string,
 ): Promise<MemoryDocHit[]> {
+  const { terms, minMatch } = recallTerms(query);
+  if (!terms.length) return [];
+  const { any, matched } = recallSql(terms);
   return withWorkspace(db, ctx, async (tx) => {
     const res = await tx.execute(sql`
-      SELECT id, path, user_key,
-             ts_rank(tsv, plainto_tsquery('simple', ${query})) AS rank,
-             ts_headline('simple', content, plainto_tsquery('simple', ${query}),
-               'MaxFragments=2, MaxWords=40, MinWords=10, StartSel=», StopSel=«') AS snippet
-      FROM memory_documents
-      WHERE agent_id = ${agentId}
-        AND tsv @@ plainto_tsquery('simple', ${query})
-        AND ${scopeCond(userKey)}
-      ORDER BY rank DESC
+      SELECT * FROM (
+        SELECT id, path, user_key, (${matched}) AS matched,
+               ts_rank(tsv, ${any}) AS rank,
+               ts_headline('simple', content, ${any},
+                 'MaxFragments=2, MaxWords=40, MinWords=10, StartSel=», StopSel=«') AS snippet
+        FROM memory_documents
+        WHERE agent_id = ${agentId}
+          AND tsv @@ ${any}
+          AND ${scopeCond(userKey)}
+      ) d
+      WHERE d.matched >= ${minMatch}
+      ORDER BY d.matched DESC, d.rank DESC
       LIMIT ${limit}
     `);
     return (res.rows as Array<Record<string, unknown>>).map((r) => ({
