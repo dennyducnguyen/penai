@@ -4,6 +4,17 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.1.0 — 2026-09-26
+
+- **Hồ sơ contact và chỉ dẫn cho AI theo từng người** (Dashboard → Contacts): mỗi người nhắn tới bot có hồ sơ riêng — tên, cách xưng hô, vai trò, ngôn ngữ, trường tùy chỉnh, nhãn (VIP, Đại lý…) và **chỉ dẫn riêng cho AI**. AI biết đang nói chuyện với ai ngay từ tin nhắn đầu tiên. Nhãn có chỉ dẫn chung cho cả nhóm người. Trong nhóm chat mặc định chỉ dùng tên và cách xưng hô. Trang hồ sơ còn cho xem/sửa file `USER.md` AI ghi về người đó, các ghi nhớ, hội thoại, file, quyền, và **xem trước ngữ cảnh** AI sẽ nhận. Chi tiết: `docs/ho-so-contact.md`.
+- Danh sách Contacts có ô tìm kiếm, lọc theo kênh/nhãn và cột trạng thái duyệt.
+- Sửa lỗi: agent dùng model ChatGPT họ gpt-6 với Thinking = `minimal` bị lỗi ở mọi tin nhắn — nay tự dùng mức gần nhất model nhận (`low`).
+- Lượt chat bị lỗi được ghi vào **Traces** (trước đây chỉ có trong nhật ký máy chủ).
+- **Audit log** ghi thêm khi sửa agent (trường nào, provider/model/Thinking mới) và khi sửa hồ sơ, nhãn, `USER.md`.
+- Thứ tự lời dặn hệ thống gửi AI: prompt của agent đứng đầu, phần theo người và câu hỏi ở cuối — nhà cung cấp dùng lại được bộ nhớ đệm, chỉ dẫn riêng được ưu tiên.
+
+Cập nhật: `sudo penai update` (có migration `0029` thêm 3 bảng, tự chạy — không phải làm gì thêm).
+
 ## 1.0.1 — 2026-09-26
 
 - Trang **Người dùng**: ô mật khẩu khi tạo người dùng và khi đặt lại mật khẩu nay được che ký tự (có nút 👁 để xem khi cần); trình duyệt không còn tự điền mật khẩu của người đang đăng nhập vào các ô này.
