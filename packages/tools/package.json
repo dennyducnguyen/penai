@@ -1,0 +1,24 @@
+{
+  "name": "@penai/tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@penai/providers": "workspace:*",
+    "@penai/shared": "workspace:*",
+    "dockerode": "^4.0.0",
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^2.4.5",
+    "playwright-core": "^1.48.0",
+    "xlsx": "^0.18.5",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "@types/pdf-parse": "^1.1.5",
+    "adm-zip": "^0.6.0"
+  }
+}

@@ -1,0 +1,32 @@
+# PenAI ({{INSTANCE}}) — tạo bởi lệnh penai (deploy/templates/penai.service).
+# Lệnh `penai update` dựng lại file này từ bản mới nên đừng sửa tay ở đây;
+# cần thêm biến môi trường thì sửa {{ETC_DIR}}/penai.env.
+[Unit]
+Description=PenAI ({{INSTANCE}})
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{APP_USER}}
+Group={{APP_USER}}
+WorkingDirectory={{APP_DIR}}
+EnvironmentFile={{ETC_DIR}}/penai.env
+Environment=PATH={{NODE_BIN}}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart={{NODE_BIN}}/node --import tsx apps/server/src/index.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=40
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths={{DATA_HOME}}
+ReadOnlyPaths={{BASE_DIR}}
+LimitNOFILE=65535
+{{MEMORY_LINE}}
+
+[Install]
+WantedBy=multi-user.target

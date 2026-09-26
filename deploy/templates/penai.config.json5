@@ -1,0 +1,58 @@
+// Cấu hình PenAI (bản "{{INSTANCE}}") — tạo bởi deploy/install.sh.
+// File này nằm NGOÀI thư mục mã nên lệnh `penai update` không bao giờ ghi đè.
+// Sửa xong: phần providers, trần đồng thời và branding tự nạp lại (tải lại trang
+// là thấy); phần còn lại (port, dataDir, api.models...) cần `sudo penai restart`.
+{
+  // Cổng nội bộ — nginx nhận HTTPS rồi chuyển vào đây
+  port: {{PORT}},
+  host: "127.0.0.1",
+  // File của người dùng, thư viện agent, skill...
+  dataDir: "{{DATA_HOME}}/data",
+
+  providers: {
+    // ChatGPT (gói Plus/Pro/Team) — đăng nhập tại Dashboard → Providers
+    codex: {
+      kind: "codex",
+      authFile: "{{DATA_HOME}}/codex-auth.json",
+      accountsDir: "{{DATA_HOME}}/codex-accounts",
+    },
+    // Claude (gói Pro/Max) qua Claude Code CLI — cài: sudo penai install-cli claude
+    "claude-code": {
+      kind: "claude-code",
+      command: "{{DATA_HOME}}/.local/bin/claude",
+      scratchDir: "{{DATA_HOME}}/claude-scratch",
+      tokenFile: "{{DATA_HOME}}/claude-code-token",
+    },
+    // Google Antigravity qua agy CLI — cài: sudo penai install-cli agy
+    antigravity: {
+      kind: "antigravity",
+      command: "{{DATA_HOME}}/.local/bin/agy",
+      scratchDir: "{{DATA_HOME}}/agy-scratch",
+    },
+    // Provider dùng API key (OpenAI, Gemini, Qwen, Anthropic, OpenRouter...) thêm
+    // trong Dashboard → Providers → "＋ Thêm provider API key", không cần sửa ở đây.
+  },
+
+  // API tương thích OpenAI (/v1/chat/completions...) cho phần mềm khác gọi vào,
+  // xác thực bằng khóa psk_ tạo ở Dashboard → Khóa API. Xem docs/api-public.md.
+  api: {
+    enabled: true,
+    providers: ["codex", "claude-code", "antigravity"],
+    queue: {
+      // Mỗi tiến trình Claude Code / Antigravity CLI tốn ~220 MB RAM → giới hạn
+      // số tiến trình chạy cùng lúc theo RAM của máy chủ.
+      concurrency: { codex: 4, "claude-code": 1, antigravity: 1 },
+      cliTotal: {{CLI_TOTAL}},
+      max: 20,
+      waitMs: 180000,
+    },
+  },
+
+  // Thương hiệu hiển thị trên Dashboard. theme: "xanh-duong" | "tim" | "xanh-ngoc".
+  // Màu riêng: primaryColor: "#rrggbb". Logo riêng: logoFile: "/đường/dẫn/logo.png".
+  branding: {
+    name: "PenAI",
+    tagline: "Nền tảng AI Agent cho doanh nghiệp",
+    theme: "xanh-duong",
+  },
+}

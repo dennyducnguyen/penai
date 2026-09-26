@@ -1,0 +1,25 @@
+{
+  "name": "@penai/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/app.ts"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.0.0",
+    "@penai/channels": "workspace:*",
+    "@penai/core": "workspace:*",
+    "@penai/db": "workspace:*",
+    "@penai/mcp": "workspace:*",
+    "@penai/providers": "workspace:*",
+    "@penai/shared": "workspace:*",
+    "@penai/tools": "workspace:*",
+    "adm-zip": "^0.6.0",
+    "fastify": "^5.2.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8"
+  }
+}

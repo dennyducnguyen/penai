@@ -1,0 +1,17 @@
+{
+  "name": "@penai/channels",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@penai/shared": "workspace:*",
+    "grammy": "^1.30.0",
+    "discord.js": "^14.16.0",
+    "@slack/bolt": "^4.2.0",
+    "image-dimensions": "^2.6.0",
+    "zca-js": "^2.1.2"
+  }
+}

@@ -1,0 +1,72 @@
+GIẤY PHÉP PENAI — HỌC TẬP VÀ DÙNG THỬ
+Phiên bản 1.0 — tháng 9/2026
+
+Bản quyền © 2026 Nguyễn Minh Đức (github.com/dennyducnguyen). Mọi quyền không
+được cấp rõ trong giấy phép này đều được bảo lưu.
+
+"Phần mềm" là mã nguồn, tài liệu, hình ảnh và mọi tệp trong kho mã PenAI này,
+kể cả bản bạn đã sửa đổi.
+
+1. ĐƯỢC PHÉP, MIỄN PHÍ, KHÔNG CẦN XIN PHÉP
+   a) Tải về, đọc, học, cài đặt và chạy Phần mềm để học tập, nghiên cứu, giảng
+      dạy, hoặc dùng cá nhân không nhằm mục đích kinh doanh.
+   b) Cài đặt và chạy thử Phần mềm trong doanh nghiệp/tổ chức để thử nghiệm,
+      đánh giá hoặc trình diễn — không đưa vào vận hành kinh doanh thực tế.
+   c) Sửa đổi Phần mềm cho các mục đích ở điểm a) và b).
+   d) Chia sẻ lại Phần mềm (bản gốc hoặc bản đã sửa) miễn phí, không nhằm mục
+      đích kinh doanh, với điều kiện giữ nguyên giấy phép này, thông báo bản
+      quyền, và ghi rõ những chỗ đã sửa (nếu có).
+
+2. PHẢI ĐƯỢC TÁC GIẢ CHO PHÉP BẰNG VĂN BẢN (kể cả email)
+   Mọi hình thức sử dụng thương mại, bao gồm nhưng không giới hạn:
+   a) Dùng Phần mềm trong hoạt động kinh doanh thực tế của doanh nghiệp, tổ
+      chức hoặc cá nhân kinh doanh (phục vụ khách hàng, nhân viên, bán hàng,
+      chăm sóc khách hàng, vận hành...).
+   b) Cung cấp dịch vụ dựa trên Phần mềm cho bên thứ ba: cho thuê, dịch vụ
+      trên đám mây (SaaS), cài đặt/triển khai/tùy biến có thu phí.
+   c) Bán, cho thuê, cấp phép lại, hoặc đóng gói Phần mềm (hay bản sửa đổi)
+      vào sản phẩm/dịch vụ có thu phí.
+   d) Đổi tên, gắn thương hiệu khác lên Phần mềm để dùng vào các việc trên.
+   Tác giả có thể cho phép miễn phí hoặc có điều kiện; sự cho phép chỉ có hiệu
+   lực với đúng bên được nêu trong văn bản/email cho phép.
+   Liên hệ xin phép: https://github.com/dennyducnguyen
+
+3. THÀNH PHẦN CỦA BÊN THỨ BA
+   Các thư viện mà Phần mềm sử dụng (cài qua pnpm, apt, pip...) và các dịch vụ
+   mà Phần mềm kết nối tới (OpenAI, Anthropic, Google, Telegram, Zalo,
+   Microsoft...) tuân theo giấy phép và điều khoản riêng của từng bên. Bạn tự
+   chịu trách nhiệm tuân thủ các điều khoản đó, đặc biệt khi dùng tài khoản gói
+   thuê bao cá nhân (ChatGPT, Claude, Antigravity) hoặc tài khoản Zalo cá nhân.
+
+4. KHÔNG BẢO ĐẢM
+   Phần mềm được cung cấp "NGUYÊN TRẠNG", không kèm bất kỳ bảo đảm nào, rõ ràng
+   hay ngụ ý, kể cả bảo đảm về tính thương mại, sự phù hợp cho một mục đích cụ
+   thể hay việc không vi phạm quyền của bên khác.
+
+5. GIỚI HẠN TRÁCH NHIỆM
+   Trong mọi trường hợp, tác giả không chịu trách nhiệm về bất kỳ khiếu nại,
+   thiệt hại, mất mát dữ liệu hay trách nhiệm nào khác phát sinh từ, hoặc liên
+   quan tới, Phần mềm hay việc sử dụng Phần mềm.
+
+6. CHẤM DỨT
+   Quyền theo giấy phép này tự động chấm dứt khi bạn vi phạm bất kỳ điều khoản
+   nào. Khi đó bạn phải ngừng sử dụng và xóa các bản sao của Phần mềm.
+
+7. LUẬT ÁP DỤNG
+   Giấy phép này được hiểu và áp dụng theo pháp luật Việt Nam.
+
+-------------------------------------------------------------------------------
+ENGLISH SUMMARY (the Vietnamese text above prevails)
+
+PenAI Learning & Evaluation License 1.0 — Copyright © 2026 Nguyen Minh Duc.
+You may download, study, install, run and modify the Software free of charge
+for learning, research, teaching, personal non-commercial use, and internal
+testing/evaluation or demonstration (not production business use), and share
+it non-commercially with this license and notices kept. ANY COMMERCIAL USE —
+production use in a business, offering services based on the Software (SaaS,
+paid installation/customization), selling, sublicensing, bundling or
+rebranding for such purposes — requires prior written permission from the
+author (https://github.com/dennyducnguyen). Third-party components and
+services keep their own licenses and terms. The Software is provided "AS IS",
+without warranty of any kind; the author is not liable for any damages. The
+license terminates automatically on breach. Governed by the laws of Vietnam.

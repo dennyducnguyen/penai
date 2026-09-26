@@ -1,0 +1,19 @@
+// Mẫu cấu hình để CHẠY THỬ TRÊN MÁY (pnpm dev): cp penai.config.example.json5 penai.config.json5
+// Bản cài trên VPS dùng /etc/penai/penai.config.json5 do deploy/install.sh tạo (mẫu: deploy/templates/).
+{
+  port: 18800,
+  host: "127.0.0.1",
+  dataDir: "./.data",
+
+  providers: {
+    // LLM giả để thử không tốn tiền: chạy `pnpm mock-llm` (cổng 18801)
+    mock: { kind: "openai-compat", baseURL: "http://127.0.0.1:18801/v1" },
+    // ChatGPT (gói Plus/Pro) — đăng nhập: pnpm codex:login hoặc Dashboard → Providers
+    codex: { kind: "codex" },
+    // Claude Code CLI / Antigravity CLI (phải cài CLI trên máy trước)
+    "claude-code": { kind: "claude-code", command: "claude" },
+    antigravity: { kind: "antigravity", command: "agy" },
+  },
+
+  branding: { name: "PenAI", theme: "xanh-duong" },
+}

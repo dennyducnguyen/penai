@@ -1,0 +1,15 @@
+{
+  "name": "@penai/providers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./mock-llm": "./src/mock-llm.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.60.0",
+    "@penai/shared": "workspace:*",
+    "openai": "^5.0.0"
+  }
+}

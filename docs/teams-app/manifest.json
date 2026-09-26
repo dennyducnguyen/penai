@@ -1,0 +1,35 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "00000000-0000-0000-0000-000000000000",
+  "developer": {
+    "name": "Tên công ty của bạn",
+    "websiteUrl": "https://ai.example.com",
+    "privacyUrl": "https://ai.example.com",
+    "termsOfUseUrl": "https://ai.example.com"
+  },
+  "name": {
+    "short": "PenAI",
+    "full": "PenAI — Trợ lý AI của công ty"
+  },
+  "description": {
+    "short": "Trợ lý AI của công ty trên Microsoft Teams",
+    "full": "Trợ lý AI chạy trên nền tảng PenAI: chat cá nhân và trong nhóm/kênh, trả lời theo kho tri thức nội bộ, nhận file đính kèm."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#2563EB",
+  "bots": [
+    {
+      "botId": "00000000-0000-0000-0000-000000000000",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": true,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}

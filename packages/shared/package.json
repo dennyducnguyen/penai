@@ -1,0 +1,15 @@
+{
+  "name": "@penai/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "json5": "^2.2.3",
+    "pino": "^9.6.0",
+    "zod": "^4.0.0",
+    "chokidar": "^4.0.0"
+  }
+}

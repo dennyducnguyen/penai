@@ -1,0 +1,21 @@
+# Phụ thuộc và kết quả build
+node_modules/
+dist/
+coverage/
+.turbo/
+
+# Dữ liệu và bí mật chạy thử trên máy — KHÔNG bao giờ commit
+.local/
+.data/
+.env
+.env.*
+!.env.example
+/penai.config.json5
+/release.json
+*.log
+
+# Công cụ cá nhân
+.aider*
+.vscode/
+.idea/
+.DS_Store

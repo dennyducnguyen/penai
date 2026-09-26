@@ -1,0 +1,30 @@
+{
+  "name": "penai",
+  "version": "1.0.0",
+  "description": "PenAI — nền tảng AI Agent cho doanh nghiệp (chat đa kênh, kho tri thức, skill, MCP) chạy trên VPS riêng",
+  "license": "SEE LICENSE IN LICENSE",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.10.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "db:migrate": "tsx packages/db/src/cli-migrate.ts",
+    "db:seed": "tsx packages/db/src/cli-seed.ts",
+    "setup:admin": "tsx packages/db/src/cli-setup.ts",
+    "user:create": "tsx packages/db/src/cli-user.ts",
+    "dev": "tsx watch apps/server/src/index.ts",
+    "start": "tsx apps/server/src/index.ts",
+    "mock-llm": "tsx apps/server/src/mock-llm-server.ts",
+    "codex:login": "tsx packages/providers/src/codex/cli-login.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

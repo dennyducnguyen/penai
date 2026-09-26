@@ -1,0 +1,9 @@
+# Tự cập nhật PenAI ({{INSTANCE}}) theo kênh {{CHANNEL}} — tạo bởi: penai auto-update on
+[Unit]
+Description=Tự cập nhật PenAI ({{INSTANCE}})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/penai --instance {{INSTANCE}} update --channel {{CHANNEL}} --yes --quiet

@@ -1,0 +1,12 @@
+# Lịch tự cập nhật PenAI ({{INSTANCE}}) — tạo bởi: penai auto-update on
+[Unit]
+Description=Lịch tự cập nhật PenAI ({{INSTANCE}})
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{EVERY}}
+RandomizedDelaySec=30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

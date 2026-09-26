@@ -1,0 +1,495 @@
+#!/usr/bin/env bash
+# penai — lệnh quản trị PenAI trên máy chủ Linux.
+# Cài bởi deploy/install.sh vào /usr/local/bin/penai; mỗi lần `penai update`
+# tự thay bằng bản đi kèm phiên bản mới.
+#
+#   sudo penai status                 xem phiên bản, trạng thái, bản mới nhất
+#   sudo penai update                 cập nhật lên bản phát hành mới nhất
+#   sudo penai help                   xem mọi lệnh
+#
+# Máy cài nhiều bản PenAI: thêm --instance <tên> ngay sau chữ penai.
+set -Eeuo pipefail
+
+CLI_VERSION=1
+
+# ------------------------------------------------------------------ tiện ích
+if [[ -t 1 ]]; then C_RED=$'\e[31m'; C_GRN=$'\e[32m'; C_YEL=$'\e[33m'; C_CYN=$'\e[36m'; C_OFF=$'\e[0m'
+else C_RED=; C_GRN=; C_YEL=; C_CYN=; C_OFF=; fi
+die()  { printf '%sLỗi:%s %s\n' "$C_RED" "$C_OFF" "$*" >&2; exit 1; }
+info() { [[ ${QUIET:-0} == 1 ]] || printf '%s==>%s %s\n' "$C_CYN" "$C_OFF" "$*"; }
+ok()   { printf '%s✓%s %s\n' "$C_GRN" "$C_OFF" "$*"; }
+warn() { printf '%s!%s %s\n' "$C_YEL" "$C_OFF" "$*" >&2; }
+need_root() { [[ $EUID -eq 0 ]] || die "Cần quyền root — chạy lại với sudo: sudo penai $*"; }
+confirm() {
+  [[ ${ASSUME_YES:-0} == 1 ]] && return 0
+  [[ -t 0 ]] || die "Cần xác nhận nhưng không có bàn phím — thêm --yes"
+  local ans; read -r -p "$1 [y/N] " ans; [[ $ans =~ ^[yYcC] ]]
+}
+
+# ------------------------------------------------------------------ bản cài (instance)
+INSTANCE="${PENAI_INSTANCE:-}"
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --instance) INSTANCE="${2:-}"; shift 2 || die "Thiếu tên sau --instance" ;;
+    --instance=*) INSTANCE="${1#*=}"; shift ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+find_instance() {
+  if [[ -n $INSTANCE ]]; then
+    [[ $INSTANCE =~ ^[a-z][a-z0-9-]{0,30}$ ]] || die "Tên bản cài không hợp lệ: $INSTANCE"
+    [[ -f /etc/$INSTANCE/penai-install.conf ]] || die "Không thấy bản cài '$INSTANCE' (/etc/$INSTANCE/penai-install.conf)"
+    return
+  fi
+  local found=() f
+  for f in /etc/*/penai-install.conf; do [[ -f $f ]] && found+=("$(basename "$(dirname "$f")")"); done
+  case ${#found[@]} in
+    0) die "Máy này chưa cài PenAI bằng deploy/install.sh" ;;
+    1) INSTANCE="${found[0]}" ;;
+    *) die "Máy có nhiều bản PenAI (${found[*]}) — chỉ rõ: penai --instance <tên> ..." ;;
+  esac
+}
+
+# Đọc file cấu hình cài đặt: chỉ nhận các khóa đã biết, KHÔNG chạy như mã shell.
+load_conf() {
+  find_instance
+  CONF_FILE="/etc/$INSTANCE/penai-install.conf"
+  REPO_URL=""; CHANNEL="stable"; DOMAIN=""; PUBLIC_URL=""; PORT="18800"; DB_NAME="penai"; DB_PORT="5432"
+  APP_USER="$INSTANCE"; MEMORY_MAX=""; CLI_TOTAL="1"; NODE_DIR="/opt/node24"; PNPM_BIN="/opt/pnpm11/bin/pnpm"
+  local line key val
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    [[ $line =~ ^([A-Z_]+)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
+    val="${val%\"}"; val="${val#\"}"
+    case "$key" in
+      REPO_URL|CHANNEL|DOMAIN|PUBLIC_URL|PORT|DB_NAME|DB_PORT|APP_USER|MEMORY_MAX|CLI_TOTAL|NODE_DIR|PNPM_BIN) printf -v "$key" '%s' "$val" ;;
+    esac
+  done < "$CONF_FILE"
+  BASE_DIR="/opt/$INSTANCE"; APP_DIR="$BASE_DIR/app"; RELEASES="$BASE_DIR/releases"; REPO_DIR="$BASE_DIR/repo.git"
+  ETC_DIR="/etc/$INSTANCE"; DATA_HOME="/var/lib/$INSTANCE"; BACKUP_DIR="/var/backups/$INSTANCE"; LOG_DIR="/var/log/$INSTANCE"
+  SERVICE="$INSTANCE"; NODE_BIN="$NODE_DIR/bin"
+}
+
+set_conf() { # set_conf KEY VALUE — ghi/đổi một dòng trong file cấu hình cài đặt
+  local key="$1" val="$2" tmp
+  tmp="$(mktemp)"
+  grep -v "^$key=" "$CONF_FILE" > "$tmp" || true
+  printf '%s=%s\n' "$key" "$val" >> "$tmp"
+  install -m 0640 -o root -g "$APP_USER" "$tmp" "$CONF_FILE"; rm -f "$tmp"
+}
+
+git_repo() { git --git-dir="$REPO_DIR" "$@"; }
+as_app() { sudo -u "$APP_USER" env -u NODE_ENV HOME="$DATA_HOME" PATH="$NODE_BIN:$(dirname "$PNPM_BIN"):/usr/local/bin:/usr/bin:/bin" "$@"; }
+as_pg() { # chạy lệnh Node với quyền postgres (chủ database) — migration, tạo tài khoản
+  sudo -u postgres env HOME=/tmp PATH="$NODE_BIN:/usr/bin:/bin" PGHOST=/var/run/postgresql PGPORT="$DB_PORT" \
+    DATABASE_URL_ADMIN="postgresql:///$DB_NAME?host=/var/run/postgresql" "$@"
+}
+
+current_release() { readlink -f "$APP_DIR" 2>/dev/null || true; }
+release_field() { # release_field <thư mục> <khóa> — đọc release.json
+  local f="$1/release.json"; [[ -f $f ]] || return 0
+  "$NODE_BIN/node" -e 'try{const r=require(process.argv[1]);process.stdout.write(String(r[process.argv[2]]??""))}catch{}' "$f" "$2"
+}
+
+latest_tag() { git_repo tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true; }
+
+resolve_target() { # in: $REF / $CHANNEL → out: TARGET_NAME, TARGET_SHA
+  if [[ -n ${REF:-} ]]; then TARGET_NAME="$REF"
+  elif [[ $CHANNEL == main ]]; then TARGET_NAME="main"
+  else
+    TARGET_NAME="$(latest_tag)"
+    if [[ -z $TARGET_NAME ]]; then warn "Kho mã chưa có bản phát hành (tag v*) — dùng nhánh main"; TARGET_NAME="main"; fi
+  fi
+  TARGET_SHA="$(git_repo rev-parse --verify --quiet "${TARGET_NAME}^{commit}" || true)"
+  [[ -n $TARGET_SHA ]] || die "Không tìm thấy phiên bản '$TARGET_NAME' trong kho mã $REPO_URL"
+}
+
+health_ok() { # health_ok [commit] — 90 giây chờ /healthz trả ok (và đúng commit nếu có)
+  local want="${1:-}" body
+  for _ in $(seq 1 90); do
+    body="$(curl -fsS --max-time 3 "http://127.0.0.1:$PORT/healthz" 2>/dev/null || true)"
+    if [[ $body == *'"ok":true'* ]] && { [[ -z $want ]] || [[ $body == *"$want"* ]]; }; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+render() { # render <mẫu> <đích> — thay {{KHÓA}} bằng giá trị
+  local src="$1" dst="$2" text mem_line=""
+  text="$(cat "$src")"
+  [[ -n $MEMORY_MAX ]] && mem_line="MemoryMax=${MEMORY_MAX}M"
+  local nginx_id="${INSTANCE//[^a-zA-Z0-9]/_}"
+  text="${text//\{\{INSTANCE\}\}/$INSTANCE}"
+  text="${text//\{\{APP_USER\}\}/$APP_USER}"
+  text="${text//\{\{APP_DIR\}\}/$APP_DIR}"
+  text="${text//\{\{BASE_DIR\}\}/$BASE_DIR}"
+  text="${text//\{\{ETC_DIR\}\}/$ETC_DIR}"
+  text="${text//\{\{DATA_HOME\}\}/$DATA_HOME}"
+  text="${text//\{\{NODE_BIN\}\}/$NODE_BIN}"
+  text="${text//\{\{PORT\}\}/$PORT}"
+  text="${text//\{\{DOMAIN\}\}/$DOMAIN}"
+  text="${text//\{\{CLI_TOTAL\}\}/$CLI_TOTAL}"
+  text="${text//\{\{MEMORY_LINE\}\}/$mem_line}"
+  text="${text//\{\{NGINX_ID\}\}/$nginx_id}"
+  text="${text//\{\{CHANNEL\}\}/${RENDER_CHANNEL:-$CHANNEL}}"
+  text="${text//\{\{EVERY\}\}/${RENDER_EVERY:-5min}}"
+  printf '%s\n' "$text" > "$dst"
+}
+
+install_unit() { # dựng lại file systemd từ bản mã $1; nạp lại nếu đổi
+  local rel="$1" tmp unit="/etc/systemd/system/$SERVICE.service"
+  tmp="$(mktemp)"; render "$rel/deploy/templates/penai.service" "$tmp"
+  if ! cmp -s "$tmp" "$unit" 2>/dev/null; then
+    install -m 0644 "$tmp" "$unit"; systemctl daemon-reload
+  fi
+  rm -f "$tmp"
+  systemctl enable "$SERVICE" >/dev/null 2>&1 || true
+}
+
+install_cli_from() { # thay /usr/local/bin/penai bằng bản đi kèm phiên bản $1 (đổi tên nguyên tử)
+  local src="$1/deploy/penai"
+  [[ -f $src ]] || return 0
+  install -m 0755 "$src" /usr/local/bin/penai.new && mv -f /usr/local/bin/penai.new /usr/local/bin/penai
+}
+
+switch_to() { ln -sfn "$1" "$APP_DIR.next" && mv -Tf "$APP_DIR.next" "$APP_DIR"; }
+
+prune_releases() { # giữ 3 bản gần nhất (luôn giữ bản đang chạy)
+  local cur keep=3 n=0 d
+  cur="$(current_release)"
+  while IFS= read -r d; do
+    [[ -z $d ]] && continue
+    n=$((n + 1))
+    if (( n > keep )) && [[ $d != "$cur" ]]; then rm -rf "$d"; fi
+  done < <(find "$RELEASES" -mindepth 1 -maxdepth 1 -type d -printf '%p\n' 2>/dev/null | sort -r)
+}
+
+do_backup() { # do_backup [--with-data]
+  local ts dir cur
+  ts="$(date +%Y%m%d-%H%M%S)"; dir="$BACKUP_DIR/$ts"
+  install -d -m 0700 "$dir"
+  info "Sao lưu cơ sở dữ liệu → $dir"
+  # shellcheck disable=SC2024 # cố ý: root ghi file sao lưu, postgres chỉ đọc database
+  sudo -u postgres pg_dump -h /var/run/postgresql -p "$DB_PORT" -Fc "$DB_NAME" > "$dir/db.dump" || { rm -rf "$dir"; return 1; }
+  install -d -m 0700 "$dir/etc"; cp -a "$ETC_DIR/." "$dir/etc/"
+  cur="$(current_release)"; [[ -n $cur ]] && release_field "$cur" commit > "$dir/commit" || true
+  if [[ ${1:-} == --with-data ]]; then
+    info "Sao lưu dữ liệu file (có thể lâu)"
+    tar -C "$DATA_HOME" -czf "$dir/data.tar.gz" --exclude='./.local' --exclude='./.cache' --exclude='./.npm' --exclude='*-scratch' . || warn "Sao lưu file chưa trọn vẹn"
+  fi
+  ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | tail -n +8 | xargs -r rm -rf
+  ok "Đã sao lưu: $dir"
+}
+
+# ------------------------------------------------------------------ lệnh
+cmd_help() {
+  cat <<EOF
+penai — quản trị PenAI trên máy chủ (bản lệnh $CLI_VERSION)
+
+Cách dùng: sudo penai [--instance <tên>] <lệnh> [tùy chọn]
+
+  status                      Phiên bản đang chạy, trạng thái dịch vụ, bản mới nhất
+  update [--ref <tag|nhánh>]  Cập nhật (mặc định: bản phát hành mới nhất)
+         [--channel stable|main] [--yes] [--no-backup] [--force]
+  rollback                    Quay về bản chạy trước đó
+  backup [--with-data]        Sao lưu cơ sở dữ liệu + cấu hình (thêm file dữ liệu)
+  restore <thư-mục-sao-lưu>   Khôi phục cơ sở dữ liệu từ bản sao lưu
+  restart                     Khởi động lại dịch vụ
+  logs [-n 200] [--follow]    Xem nhật ký dịch vụ
+  doctor                      Kiểm tra sức khỏe hệ thống
+  reset-password <email>      Đặt lại mật khẩu đăng nhập Dashboard
+  install-cli claude|agy|all  Cài/nâng cấp CLI cho provider Claude / Antigravity
+  auto-update on|off [--channel stable|main] [--every 5min]
+  set-repo <url>              Đổi kho mã nguồn (vd bản fork của bạn)
+  version                     In phiên bản lệnh và ứng dụng
+EOF
+}
+
+cmd_version() {
+  load_conf
+  local cur; cur="$(current_release)"
+  echo "penai CLI: $CLI_VERSION"
+  echo "Ứng dụng ($INSTANCE): $(release_field "$cur" version) — $(release_field "$cur" ref) @ $(release_field "$cur" commit | cut -c1-8)"
+}
+
+cmd_status() {
+  load_conf
+  local cur state health latest
+  cur="$(current_release)"
+  state="$(systemctl is-active "$SERVICE" 2>/dev/null || true)"
+  health="$(curl -fsS --max-time 3 "http://127.0.0.1:$PORT/healthz" 2>/dev/null || echo "không phản hồi")"
+  echo "Bản cài        : $INSTANCE ($PUBLIC_URL)"
+  echo "Phiên bản      : $(release_field "$cur" version) — $(release_field "$cur" ref) @ $(release_field "$cur" commit | cut -c1-8), cài lúc $(release_field "$cur" installedAt)"
+  echo "Dịch vụ        : $state   /healthz: $health"
+  echo "Kênh cập nhật  : $CHANNEL   Nguồn: $REPO_URL"
+  if [[ $EUID -eq 0 ]] && git_repo fetch --quiet --prune origin 2>/dev/null; then
+    latest="$(latest_tag)"
+    echo "Bản phát hành mới nhất: ${latest:-(chưa có tag)}"
+    if [[ -n $latest && $(release_field "$cur" ref) != "$latest" ]]; then echo "→ Có bản mới: chạy  sudo penai update"; fi
+  fi
+  echo "RAM            : $(free -m | awk '/^Mem:/{print $7" MB trống / "$2" MB"}')   Ổ đĩa trống: $(df -h "$BASE_DIR" | awk 'NR==2{print $4}')"
+  if systemctl is-enabled "$SERVICE-autoupdate.timer" >/dev/null 2>&1; then echo "Tự cập nhật    : BẬT"; fi
+}
+
+cmd_update() {
+  local REF="" force=0 backup=1 opt
+  QUIET=0
+  while [[ $# -gt 0 ]]; do
+    opt="$1"; shift
+    case "$opt" in
+      --ref) REF="${1:-}"; shift || true ;;
+      --ref=*) REF="${opt#*=}" ;;
+      --channel) CHANNEL_ARG="${1:-}"; shift || true ;;
+      --channel=*) CHANNEL_ARG="${opt#*=}" ;;
+      --yes|-y) ASSUME_YES=1 ;;
+      --no-backup) backup=0 ;;
+      --force) force=1 ;;
+      --quiet) QUIET=1; ASSUME_YES=1 ;;
+      *) die "Tùy chọn không hiểu: $opt" ;;
+    esac
+  done
+  need_root update
+  load_conf
+  [[ -n ${CHANNEL_ARG:-} ]] && CHANNEL="$CHANNEL_ARG"
+  [[ $CHANNEL == stable || $CHANNEL == main ]] || die "Kênh cập nhật chỉ nhận stable hoặc main"
+  install -d -m 0755 "$RELEASES"; install -d -m 0750 "$LOG_DIR"
+
+  exec 9>"/run/lock/$INSTANCE-penai.lock"
+  flock -n 9 || die "Đang có một lệnh cập nhật khác chạy cho bản $INSTANCE"
+
+  info "Lấy mã mới từ $REPO_URL"
+  git_repo fetch --quiet --prune origin || die "Không tải được mã từ $REPO_URL (mạng? kho riêng tư?)"
+  resolve_target
+
+  local cur cur_sha
+  cur="$(current_release)"; cur_sha="$(release_field "$cur" commit)"
+  if [[ $TARGET_SHA == "$cur_sha" && $force == 0 ]]; then
+    [[ $QUIET == 1 ]] || ok "Đang chạy bản mới nhất ($TARGET_NAME @ ${TARGET_SHA:0:8})"
+    return 0
+  fi
+
+  QUIET=0
+  echo "Bản đang chạy : $(release_field "$cur" ref) @ ${cur_sha:0:8}"
+  echo "Cập nhật lên  : $TARGET_NAME @ ${TARGET_SHA:0:8}"
+  if [[ -n $cur_sha ]] && git_repo merge-base --is-ancestor "$cur_sha" "$TARGET_SHA" 2>/dev/null; then
+    echo "Thay đổi:"; { git_repo log --no-merges --format='  • %s' "$cur_sha..$TARGET_SHA" | head -n 40; } || true
+  fi
+  confirm "Tiếp tục cập nhật?" || die "Đã hủy"
+
+  if [[ $backup == 1 && -n $cur ]]; then do_backup || die "Sao lưu thất bại — dừng cập nhật (thêm --no-backup nếu chắc chắn)"; fi
+
+  local name rel log
+  name="$(date -u +%Y%m%dT%H%M%SZ)-${TARGET_SHA:0:8}"; rel="$RELEASES/$name"; log="$LOG_DIR/update-$name.log"
+  info "Chuẩn bị bản mới: $rel"
+  install -d -m 0755 -o "$APP_USER" -g "$APP_USER" "$rel"
+  git_repo archive "$TARGET_SHA" | tar -x -C "$rel" || { rm -rf "$rel"; die "Không giải nén được mã nguồn"; }
+  local version
+  version="$("$NODE_BIN/node" -p 'require(process.argv[1]).version' "$rel/package.json" 2>/dev/null || echo "0.0.0")"
+  printf '{"version":"%s","ref":"%s","commit":"%s","installedAt":"%s"}\n' \
+    "$version" "$TARGET_NAME" "$TARGET_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$rel/release.json"
+  chown -R "$APP_USER:$APP_USER" "$rel"
+
+  info "Cài thư viện (pnpm install) — nhật ký: $log"
+  if ! as_app bash -c "cd '$rel' && '$PNPM_BIN' install --frozen-lockfile --prefer-offline" >"$log" 2>&1; then
+    tail -n 30 "$log" >&2; rm -rf "$rel"; die "Cài thư viện thất bại — bản cũ vẫn chạy bình thường"
+  fi
+  chmod -R a+rX "$rel"
+
+  info "Nâng cấp cơ sở dữ liệu (migration)"
+  if ! (cd "$rel" && as_pg "$rel/node_modules/.bin/tsx" "$rel/packages/db/src/cli-migrate.ts") >>"$log" 2>&1; then
+    tail -n 20 "$log" >&2; rm -rf "$rel"
+    die "Migration thất bại — bản cũ vẫn chạy. Nếu cần quay về dữ liệu cũ: sudo penai restore $BACKUP_DIR/<thời-điểm>"
+  fi
+  grep -E "^Đã chạy|^Không có migration" "$log" | tail -n1 || true
+
+  info "Chuyển sang bản mới và khởi động lại"
+  install_unit "$rel"
+  switch_to "$rel"
+  systemctl restart "$SERVICE"
+  if ! health_ok "$TARGET_SHA"; then
+    journalctl -u "$SERVICE" -n 40 --no-pager >&2 || true
+    if [[ -n $cur && -d $cur ]]; then
+      warn "Bản mới không khởi động được — quay về bản cũ"
+      install_unit "$cur"; switch_to "$cur"; systemctl restart "$SERVICE"
+      if health_ok; then warn "Đã quay về bản cũ, hệ thống chạy lại bình thường"; else warn "Bản cũ cũng không lên — xem: sudo penai logs"; fi
+    fi
+    rm -rf "$rel"
+    die "Cập nhật thất bại (nhật ký: $log)"
+  fi
+  install_cli_from "$rel"
+  prune_releases
+  ok "Đã cập nhật lên $TARGET_NAME (phiên bản $version) — $PUBLIC_URL"
+}
+
+cmd_rollback() {
+  need_root rollback
+  load_conf
+  local cur prev d
+  cur="$(current_release)"
+  prev=""
+  while IFS= read -r d; do
+    [[ $d == "$cur" ]] && continue
+    [[ -n $cur && $d > $cur ]] && continue
+    prev="$d"; break
+  done < <(find "$RELEASES" -mindepth 1 -maxdepth 1 -type d -printf '%p\n' | sort -r)
+  [[ -n $prev ]] || die "Không còn bản cũ hơn để quay về"
+  echo "Quay từ $(basename "$cur") về $(basename "$prev")"
+  warn "Cơ sở dữ liệu giữ nguyên (migration chỉ thêm nên bản cũ vẫn chạy được)"
+  confirm "Tiếp tục?" || die "Đã hủy"
+  install_unit "$prev"; switch_to "$prev"; systemctl restart "$SERVICE"
+  health_ok || die "Bản cũ không khởi động được — xem: sudo penai logs"
+  ok "Đã quay về $(release_field "$prev" ref) @ $(release_field "$prev" commit | cut -c1-8)"
+}
+
+cmd_backup() { need_root backup; load_conf; do_backup "${1:-}"; }
+
+cmd_restore() {
+  need_root restore
+  local src="${1:-}"; [[ -n $src ]] || die "Cách dùng: sudo penai restore <thư-mục-sao-lưu> (xem: ls /var/backups/<bản-cài>)"
+  shift || true
+  [[ ${1:-} == --yes ]] && ASSUME_YES=1
+  load_conf
+  [[ -f $src/db.dump ]] || die "Không thấy $src/db.dump"
+  warn "Khôi phục sẽ THAY TOÀN BỘ dữ liệu hiện tại của '$INSTANCE' bằng bản sao lưu $src"
+  if [[ ${ASSUME_YES:-0} != 1 ]]; then
+    local typed; read -r -p "Gõ tên bản cài ($INSTANCE) để xác nhận: " typed
+    [[ $typed == "$INSTANCE" ]] || die "Đã hủy"
+  fi
+  do_backup || die "Không sao lưu được trạng thái hiện tại — dừng khôi phục"
+  systemctl stop "$SERVICE"
+  sudo -u postgres dropdb -h /var/run/postgresql -p "$DB_PORT" --if-exists --force "$DB_NAME"
+  sudo -u postgres createdb -h /var/run/postgresql -p "$DB_PORT" "$DB_NAME"
+  sudo -u postgres pg_restore -h /var/run/postgresql -p "$DB_PORT" -d "$DB_NAME" "$src/db.dump" || warn "pg_restore báo lỗi (thường vô hại nếu chỉ là cảnh báo quyền)"
+  systemctl start "$SERVICE"
+  health_ok || die "Dịch vụ không lên sau khôi phục — xem: sudo penai logs"
+  ok "Đã khôi phục cơ sở dữ liệu từ $src (cấu hình cũ nằm trong $src/etc nếu cần)"
+}
+
+cmd_restart() { need_root restart; load_conf; systemctl restart "$SERVICE"; health_ok && ok "Đã khởi động lại" || die "Dịch vụ không lên — xem: sudo penai logs"; }
+
+cmd_logs() {
+  load_conf
+  local n=200 follow=()
+  while [[ $# -gt 0 ]]; do case "$1" in -n) n="$2"; shift 2 ;; -f|--follow) follow=(-f); shift ;; *) shift ;; esac; done
+  journalctl -u "$SERVICE" -n "$n" --no-pager "${follow[@]+"${follow[@]}"}"
+}
+
+cmd_reset_password() {
+  need_root reset-password
+  local email="${1:-}"; [[ -n $email ]] || die "Cách dùng: sudo penai reset-password <email>"
+  load_conf
+  local pw="${PENAI_USER_PASSWORD:-}" pw2
+  if [[ -z $pw ]]; then
+    [[ -t 0 ]] || die "Đặt mật khẩu qua biến PENAI_USER_PASSWORD khi không có bàn phím"
+    read -r -s -p "Mật khẩu mới (tối thiểu 8 ký tự): " pw; echo
+    read -r -s -p "Nhập lại: " pw2; echo
+    [[ $pw == "$pw2" ]] || die "Hai lần nhập không khớp"
+  fi
+  local rel; rel="$(current_release)"
+  (cd "$rel" && as_pg env PENAI_USER_PASSWORD="$pw" "$rel/node_modules/.bin/tsx" "$rel/packages/db/src/cli-password.ts" --email "$email")
+}
+
+cmd_install_cli() {
+  need_root install-cli
+  local which="${1:-all}" force=0
+  [[ $which =~ ^(claude|agy|all)$ ]] || die "Chỉ nhận: claude, agy hoặc all"
+  [[ ${2:-} == --force ]] && force=1
+  load_conf
+  install -d -m 0750 -o "$APP_USER" -g "$APP_USER" "$DATA_HOME/.local" "$DATA_HOME/.local/bin"
+  if [[ $which == claude || $which == all ]]; then
+    info "Cài Claude Code CLI (script chính thức claude.ai/install.sh) cho user $APP_USER"
+    if as_app bash -c 'curl -fsSL https://claude.ai/install.sh | bash' ; then ok "Claude Code CLI: $DATA_HOME/.local/bin/claude"
+    else warn "Cài Claude Code CLI thất bại — thử lại sau: sudo penai install-cli claude"; fi
+  fi
+  if [[ $which == agy || $which == all ]]; then
+    if [[ -x $DATA_HOME/.local/bin/agy && $force == 0 ]]; then
+      ok "Antigravity CLI đã có ($DATA_HOME/.local/bin/agy) — nâng cấp: sudo penai install-cli agy --force"
+    else
+      [[ $force == 1 ]] && rm -f "$DATA_HOME/.local/bin/agy"
+      info "Cài Antigravity CLI (script chính thức antigravity.google/cli/install.sh) cho user $APP_USER"
+      if as_app bash -c 'curl -fsSL https://antigravity.google/cli/install.sh | bash'; then ok "Antigravity CLI: $DATA_HOME/.local/bin/agy"
+      else warn "Cài Antigravity CLI thất bại — thử lại sau: sudo penai install-cli agy"; fi
+    fi
+  fi
+  echo "Tiếp theo: Dashboard → Providers → bấm Đăng nhập ở dòng Claude / Antigravity."
+}
+
+cmd_auto_update() {
+  need_root auto-update
+  local action="${1:-}" every="5min" ch=""
+  shift || true
+  while [[ $# -gt 0 ]]; do case "$1" in --channel) ch="$2"; shift 2 ;; --every) every="$2"; shift 2 ;; *) shift ;; esac; done
+  load_conf
+  local svc="/etc/systemd/system/$SERVICE-autoupdate.service" tmr="/etc/systemd/system/$SERVICE-autoupdate.timer" rel
+  case "$action" in
+    on)
+      rel="$(current_release)"
+      RENDER_CHANNEL="${ch:-$CHANNEL}" RENDER_EVERY="$every"
+      render "$rel/deploy/templates/autoupdate.service" "$svc"
+      render "$rel/deploy/templates/autoupdate.timer" "$tmr"
+      systemctl daemon-reload; systemctl enable --now "$SERVICE-autoupdate.timer" >/dev/null
+      ok "Đã bật tự cập nhật (kênh ${ch:-$CHANNEL}, kiểm tra mỗi $every). Xem nhật ký: journalctl -u $SERVICE-autoupdate"
+      ;;
+    off)
+      systemctl disable --now "$SERVICE-autoupdate.timer" >/dev/null 2>&1 || true
+      rm -f "$svc" "$tmr"; systemctl daemon-reload
+      ok "Đã tắt tự cập nhật"
+      ;;
+    *) die "Cách dùng: sudo penai auto-update on|off [--channel stable|main] [--every 5min]" ;;
+  esac
+}
+
+cmd_set_repo() {
+  need_root set-repo
+  local url="${1:-}"; [[ -n $url ]] || die "Cách dùng: sudo penai set-repo <url-kho-git>"
+  load_conf
+  git_repo remote set-url origin "$url"
+  git_repo fetch --quiet --prune origin || die "Không tải được từ $url"
+  set_conf REPO_URL "$url"
+  ok "Đã đổi nguồn mã sang $url — cập nhật: sudo penai update"
+}
+
+cmd_doctor() {
+  load_conf
+  local fail=0 b
+  check() { if eval "$2" >/dev/null 2>&1; then ok "$1"; else warn "$1 — KHÔNG ĐẠT${3:+: $3}"; fail=1; fi; }
+  check "Dịch vụ $SERVICE đang chạy" "systemctl is-active --quiet $SERVICE" "sudo penai logs"
+  check "Ứng dụng trả lời /healthz" "curl -fsS --max-time 5 http://127.0.0.1:$PORT/healthz"
+  check "PostgreSQL (cổng $DB_PORT) + database $DB_NAME" "sudo -u postgres psql -h /var/run/postgresql -p $DB_PORT -d $DB_NAME -tAc 'select 1'"
+  check "Extension pgvector" "sudo -u postgres psql -h /var/run/postgresql -p $DB_PORT -d $DB_NAME -tAc \"select 1 from pg_extension where extname='vector'\" | grep -q 1"
+  check "Sandbox bubblewrap cho lệnh exec của agent" "sudo -u $APP_USER bwrap --ro-bind / / --dev /dev --proc /proc true" "agent chạy lệnh không cách ly"
+  for b in claude agy; do check "CLI $b đã cài" "test -x $DATA_HOME/.local/bin/$b" "sudo penai install-cli $b"; done
+  if [[ -n $DOMAIN ]]; then
+    check "nginx cấu hình hợp lệ" "nginx -t"
+    check "Truy cập được $PUBLIC_URL" "curl -fsS --max-time 10 $PUBLIC_URL/healthz"
+  fi
+  local free_mb; free_mb="$(free -m | awk '/^Mem:/{print $7}')"
+  if (( free_mb < 300 )); then warn "RAM trống thấp: ${free_mb} MB"; fail=1; else ok "RAM trống: ${free_mb} MB"; fi
+  local disk_pct; disk_pct="$(df --output=pcent "$BASE_DIR" | tail -1 | tr -dc 0-9)"
+  if (( disk_pct > 90 )); then warn "Ổ đĩa đã dùng ${disk_pct}%"; fail=1; else ok "Ổ đĩa đã dùng ${disk_pct}%"; fi
+  return $fail
+}
+
+# ------------------------------------------------------------------ điều phối
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  help|-h|--help) cmd_help ;;
+  version|--version) cmd_version ;;
+  status) cmd_status ;;
+  update) cmd_update "$@" ;;
+  rollback) cmd_rollback "$@" ;;
+  backup) cmd_backup "$@" ;;
+  restore) cmd_restore "$@" ;;
+  restart) cmd_restart ;;
+  logs) cmd_logs "$@" ;;
+  doctor) cmd_doctor ;;
+  reset-password) cmd_reset_password "$@" ;;
+  install-cli) cmd_install_cli "$@" ;;
+  auto-update) cmd_auto_update "$@" ;;
+  set-repo) cmd_set_repo "$@" ;;
+  *) cmd_help; die "Không có lệnh '$cmd'" ;;
+esac

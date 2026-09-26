@@ -1,0 +1,12 @@
+# Luôn dùng LF cho file văn bản, kể cả khi clone trên Windows (core.autocrlf=true).
+# Script .sh xuống dòng kiểu Windows (CRLF) sẽ không chạy được trên VPS Linux.
+* text=auto eol=lf
+*.sh text eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary

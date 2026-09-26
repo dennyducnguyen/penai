@@ -1,0 +1,67 @@
+name: CI
+
+# Mỗi pull request và mỗi lần gộp vào main: kiểm tra kiểu + chạy toàn bộ test
+# trên PostgreSQL thật có pgvector, và kiểm tra cú pháp các script cài đặt.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  scripts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kiểm tra cú pháp script cài đặt
+        run: |
+          bash -n deploy/install.sh
+          bash -n deploy/penai
+          shellcheck -S warning deploy/install.sh deploy/penai
+
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PENAI_TEST_PG_HOST: 127.0.0.1
+      PENAI_TEST_PG_PORT: "5433"
+    steps:
+      - uses: actions/checkout@v4
+      - name: bubblewrap cho test sandbox exec
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap
+          # Ubuntu 24.04 chặn user namespace không đặc quyền → bwrap không chạy được
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
