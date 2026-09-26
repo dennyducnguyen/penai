@@ -290,7 +290,23 @@ ok "Mã nguồn: $REF @ ${SHA:0:8}"
 
 # ------------------------------------------------------------------ bí mật + cấu hình
 step 6/10 "Bí mật và file cấu hình"
-if sudo -u "$APP_USER" bwrap --ro-bind / / --dev /dev --proc /proc true >/dev/null 2>&1; then
+bwrap_ok() { sudo -u "$APP_USER" bwrap --ro-bind / / --dev /dev --proc /proc true >/dev/null 2>&1; }
+# Ubuntu 23.10+ chặn user namespace với chương trình thường (AppArmor). Không tắt chặn cho cả máy —
+# chỉ cấp riêng cho /usr/bin/bwrap, và chỉ khi máy chưa có profile nào cho bwrap.
+if ! bwrap_ok && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null) == 1 ]]    && command -v apparmor_parser >/dev/null && ! grep -rqs '/usr/bin/bwrap' /etc/apparmor.d/; then
+  cat > /etc/apparmor.d/penai-bwrap <<'APPARMOR'
+# Tạo bởi deploy/install.sh của PenAI: cho bubblewrap tạo user namespace (sandbox lệnh exec của agent)
+abi <abi/4.0>,
+include <tunables/global>
+
+profile penai-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/penai-bwrap>
+}
+APPARMOR
+  apparmor_parser -r /etc/apparmor.d/penai-bwrap >/dev/null 2>&1 && ok "Cấp quyền AppArmor riêng cho bubblewrap (Ubuntu chặn user namespace)"
+fi
+if bwrap_ok; then
   SANDBOX=required; ok "Sandbox bubblewrap hoạt động — lệnh exec của agent chạy cách ly"
 else
   SANDBOX=auto; warn "bubblewrap không chạy được trên máy này (VPS chặn user namespace) — lệnh exec của agent sẽ chạy KHÔNG cách ly"

@@ -57,6 +57,10 @@ r = client.chat.completions.create(model="penai-fast",
 | `codex/gpt-5.6-sol`, `claude-code/sonnet`, … | Ép đúng provider/model — dùng để debug |
 | `agent:<key>` | Chạy agent PenAI đầy đủ (tool, vault, trả file) |
 
+Các alias `penai-*` được khai sẵn trong file cấu hình lúc cài (`/etc/penai/penai.config.json5` → `api.models`,
+mặc định trỏ `gpt-5.5` rồi `gpt-5.4` của ChatGPT, `sonnet` của Claude, `gemini-3.7-flash-*` của Antigravity).
+Tài khoản của bạn có model khác thì sửa route ở đó rồi `sudo penai restart`.
+
 **Nên dùng alias** (`penai-fast`…): route phía sau đổi được (hết quota tài khoản này → nhảy
 provider khác) mà app không phải deploy lại.
 
