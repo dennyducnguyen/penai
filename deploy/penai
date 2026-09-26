@@ -229,7 +229,12 @@ cmd_status() {
   if [[ $EUID -eq 0 ]] && git_repo fetch --quiet --prune origin 2>/dev/null; then
     latest="$(latest_tag)"
     echo "Bản phát hành mới nhất: ${latest:-(chưa có tag)}"
-    if [[ -n $latest && $(release_field "$cur" ref) != "$latest" ]]; then echo "→ Có bản mới: chạy  sudo penai update"; fi
+    if [[ $CHANNEL == main ]]; then
+      local head; head="$(git_repo rev-parse --verify --quiet 'main^{commit}' || true)"
+      if [[ -n $head && $head != "$(release_field "$cur" commit)" ]]; then echo "→ Nhánh main có mã mới (${head:0:8}): sudo penai update --channel main"; fi
+    elif [[ -n $latest && $(release_field "$cur" ref) != "$latest" ]]; then
+      echo "→ Có bản mới: chạy  sudo penai update"
+    fi
   fi
   echo "RAM            : $(free -m | awk '/^Mem:/{print $7" MB trống / "$2" MB"}')   Ổ đĩa trống: $(df -h "$BASE_DIR" | awk 'NR==2{print $4}')"
   if systemctl is-enabled "$SERVICE-autoupdate.timer" >/dev/null 2>&1; then echo "Tự cập nhật    : BẬT"; fi
