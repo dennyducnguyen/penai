@@ -125,6 +125,25 @@ export interface ToolContext {
       deleteFiles: string[];
     }): Promise<string>;
   };
+  /** Múi giờ của doanh nghiệp (IANA, vd "Asia/Ho_Chi_Minh") — tool hiển thị giờ dùng mặc định. */
+  timezone?: string;
+  /**
+   * Lịch hẹn agent tự đặt khi chat (tool cron_*). Runtime kiểm tra lịch, giới hạn
+   * và quyền; trả chuỗi kết quả, ném lỗi dễ hiểu khi không làm được.
+   * Không có → ngữ cảnh không hỗ trợ đặt lịch (API, lượt chạy theo lịch, subagent).
+   */
+  cron?: {
+    create(input: { name: string; schedule: string; prompt: string; deliver: boolean }): Promise<string>;
+    list(input: { includeDone: boolean }): Promise<string>;
+    update(input: {
+      id: string;
+      name?: string;
+      schedule?: string;
+      prompt?: string;
+      enabled?: boolean;
+    }): Promise<string>;
+    remove(id: string): Promise<string>;
+  };
   /** Landing page HTML cong khai do agent tao/sua. */
   landingPages?: {
     save(input: { slug: string; title: string; html: string }): Promise<string>;

@@ -39,6 +39,7 @@ import {
   listLandingPages,
   getLandingPageBySlug,
   type McpUserAccessRow,
+  type CronOrigin,
   getAgentByKey,
   getAgentById,
   createSession,
@@ -59,6 +60,8 @@ import {
 } from "@penai/db";
 import {
   gatedProvider,
+  localDateKey,
+  weekdayVi,
   runAgentText,
   type AgentLoopDeps,
   type ProviderGate,
@@ -82,6 +85,7 @@ import {
 } from "@penai/tools";
 import { readFile, writeFile, readdir, stat } from "node:fs/promises";
 import type { McpAccess, McpManager } from "./mcp-manager.js";
+import { makeCronToolApi } from "./cron-tools.js";
 import { makeHookDispatcher } from "./hooks.js";
 import { agentLibraryDir, execSandboxFor } from "./library-paths.js";
 import { moveToTrash } from "./library-trash.js";
@@ -415,6 +419,11 @@ export async function buildLoopDeps(
       text: string;
       buttons: Array<{ label: string; value: string }>;
     }) => Promise<string>;
+    /**
+     * Cuộc trò chuyện đang chat (kênh chat / trang Chat web) → bật tool đặt lịch
+     * cron_*: lịch nhớ nơi này để tới giờ gửi kết quả về. Cần kèm userKey.
+     */
+    cronOrigin?: CronOrigin;
   } = {},
 ): Promise<AgentLoopDeps> {
   const { db } = rt.db;
@@ -568,6 +577,22 @@ export async function buildLoopDeps(
     };
   }
 
+  // Lịch hẹn agent tự đặt (tool cron_*): chỉ ở lượt gốc đang chat với người thật —
+  // không cho lượt chạy theo lịch, API, subagent tự đẻ thêm lịch.
+  const cron =
+    agentId && opts.userKey && opts.cronOrigin && depth === 0 && opts.sourceKind !== "cron"
+      ? makeCronToolApi(db, ctx, {
+          agentId,
+          ownerKey: opts.userKey,
+          origin:
+            opts.cronOrigin.kind === "web" && !opts.cronOrigin.principalId && principalId
+              ? { ...opts.cronOrigin, principalId }
+              : opts.cronOrigin,
+          seeAll: opts.cronOrigin.kind === "web" && effectiveRole === "ws_admin",
+          timezone: rt.config.timezone,
+        })
+      : undefined;
+
   // Recheck quyền MCP tại thời điểm gọi tool (fail-closed) — chặn trường hợp
   // admin thu hồi quyền giữa một phiên chat đang mở.
   const mcpGuard: AgentLoopDeps["mcpGuard"] = async (serverId, toolName) => {
@@ -719,6 +744,8 @@ return res.text || "(agent không trả về nội dung)";
     ...(opts.userKey ? { userKey: opts.userKey } : {}),
     ...(publishFile ? { publishFile } : {}),
     ...(landingPages ? { landingPages } : {}),
+    timezone: rt.config.timezone,
+    ...(cron ? { cron } : {}),
     mcpGuard,
     requestApproval: async () => opts.autoApproveExec === true,
     inputGuard: (text) => { const g = checkInput(text, "warn"); return { blocked: g.blocked, matches: g.matches }; },
@@ -1102,15 +1129,16 @@ return res.text || "(agent không trả về nội dung)";
                   : ""),
             );
             // Hướng dẫn ghi nhớ: điều cần nhớ phải ghi ra file, đừng chỉ "nhớ trong đầu"
-            // Ngày LOCAL (không phải UTC) — nửa đêm giờ VN mà dùng toISOString
-            // thì tên file ghi chú bị lùi 1 ngày.
+            // Ngày theo múi giờ của doanh nghiệp (config.timezone), không theo giờ VPS
+            // (VPS để UTC thì 0h–7h sáng giờ VN bị lùi 1 ngày: tên file ghi chú sai,
+            // agent hẹn "8h sáng mai" thành ngày hôm sau nữa).
             const now = new Date();
-            const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+            const today = localDateKey(now, rt.config.timezone);
             parts.push(
               "# Ghi nhớ dài hạn (memory)\n" +
                 "Bạn bắt đầu mỗi phiên với trí nhớ trống — file ghi nhớ là sự liên tục duy nhất của bạn. Hôm nay: " +
                 today +
-                ".\n" +
+                ` (${weekdayVi(now, rt.config.timezone)}, múi giờ ${rt.config.timezone}).\n` +
                 `- Ghi chú theo ngày → file memory/${today}.md (write_file với append=true). Tri thức chọn lọc lâu dài → file MEMORY.md.\n` +
                 '- Khi người dùng bảo "nhớ nhé / ghi nhớ điều này" → GHI NGAY trong lượt này bằng write_file; TUYỆT ĐỐI không chỉ nói "đã nhớ" suông.\n' +
                 "- Fact ngắn gọn quan trọng (tên gọi, xưng hô, sở thích, quyết định) → dùng thêm memory_add để tự nạp vào ngữ cảnh các lần sau.\n" +

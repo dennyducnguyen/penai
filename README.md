@@ -20,6 +20,7 @@ PenAI là hệ thống "trợ lý AI của công ty": bạn tạo các **agent**
 - **Hồ sơ contact**: mỗi người nhắn tới bot có hồ sơ riêng (tên, cách xưng hô, vai trò, nhãn VIP/Đại lý…) và chỉ dẫn riêng cho AI — AI biết đang nói chuyện với ai và trả lời đúng từng người.
 - **Kho tri thức (Vault)**: tải lên PDF/Word/Excel/TXT, tìm kiếm ngữ nghĩa, phân quyền theo bộ sưu tập, agent đọc toàn văn khi tìm trúng tài liệu.
 - **Skill & MCP**: nạp skill (thư mục `SKILL.md` + script), kết nối MCP server (Canva, Google, công cụ nội bộ...), phân quyền theo agent và theo người dùng.
+- **Lịch hẹn ngay trong lúc chat**: nhắn *"nhắc tôi 8h sáng mai…"*, *"sáng thứ Hai hằng tuần gửi tôi báo cáo…"* là agent tự đặt lịch; tới giờ agent tự chạy và gửi kết quả về đúng cuộc trò chuyện (Telegram, Zalo, trang Chat…). Chi tiết: [docs/lich-hen.md](docs/lich-hen.md).
 - **Tool có sẵn**: đọc/ghi file, chạy Python/Node trong sandbox, đọc tài liệu, tạo ảnh, tạo landing page, đặt lịch (cron), gửi thẻ duyệt có nút bấm, xuất link tải công khai có hạn...
 - **Quản trị**: tài khoản đăng nhập + 4 cấp quyền, workspace theo bộ phận, nhật ký kiểm tra (audit), theo dõi token, giới hạn hạn mức.
 - **API tương thích OpenAI**: phần mềm khác gọi agent PenAI bằng SDK `openai` chính thức.

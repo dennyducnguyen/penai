@@ -106,13 +106,15 @@ const stopWatch = await watchConfig((next) => {
   providers.reload(next.providers);
   // Thương hiệu đọc lúc phục vụ trang → đổi trong file cấu hình là tải lại trang thấy ngay.
   config.branding = next.branding;
+  // Múi giờ đọc mỗi lượt chat (lịch hẹn mới, "hôm nay"); lịch đã tạo giữ múi giờ riêng.
+  config.timezone = next.timezone;
   providerGate.reconfigure({
     concurrency: next.api.queue.concurrency,
     cliTotal: next.api.queue.cliTotal,
     max: next.api.queue.max,
     waitMs: next.api.queue.waitMs,
   });
-  logger.info("Đã nạp lại config (providers + trần đồng thời + thương hiệu)");
+  logger.info("Đã nạp lại config (providers + trần đồng thời + thương hiệu + múi giờ)");
 });
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {

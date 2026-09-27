@@ -51,6 +51,7 @@ Báo người dùng: phiên bản cũ → mới và danh sách "Thay đổi" mà
 |---|---|
 | Quên mật khẩu đăng nhập | `sudo PENAI_USER_PASSWORD='<mk-mới>' penai reset-password <email>` (có bàn phím thì bỏ biến, lệnh sẽ hỏi) |
 | AI trả lời riêng theo từng người (xưng hô, chỉ dẫn, nhãn VIP/đại lý…) | Dashboard → Contacts → bấm vào người → tab "Hồ sơ & chỉ dẫn"; nhãn dùng chung: nút 🏷️ Quản lý nhãn (ws_admin). Chi tiết: [docs/ho-so-contact.md](docs/ho-so-contact.md) |
+| AI tự nhắc việc / gửi báo cáo định kỳ | Người dùng nhắn thẳng cho agent ("nhắc tôi 8h sáng mai…", "sáng thứ Hai hằng tuần gửi tôi…") — agent tự đặt lịch, tới giờ gửi kết quả về cuộc trò chuyện đó. Xem/tạm dừng/xóa: Dashboard → Cron & lịch hẹn. Cấm một agent tự đặt lịch: Agents → Sửa → bỏ tick `cron_create`. Múi giờ: khóa `timezone` trong `penai.config.json5` (mặc định `Asia/Ho_Chi_Minh`). Chi tiết: [docs/lich-hen.md](docs/lich-hen.md) |
 | Đổi tên hiển thị, khẩu hiệu, màu | Sửa khối `branding` trong `/etc/<bản-cài>/penai.config.json5` (định dạng JSON5), tải lại trang là thấy. `theme`: `xanh-duong`, `tim`, `xanh-ngoc`; màu riêng `primaryColor: "#rrggbb"` |
 | Dùng logo riêng | Chép ảnh lên máy chủ: `sudo install -m 0640 -o root -g <bản-cài> logo.png /etc/<bản-cài>/logo.png`, thêm `logoFile: "/etc/<bản-cài>/logo.png"` vào `branding` |
 | Dùng provider Claude / Antigravity | `sudo penai install-cli claude` / `sudo penai install-cli agy`, rồi Dashboard → Providers → Đăng nhập |
@@ -78,7 +79,7 @@ Sau đó mọi lệnh thêm `--instance penai2`: `sudo penai --instance penai2 s
 |---|---|---|
 | `/opt/penai/app` → `/opt/penai/releases/<thời-điểm>-<commit>` | Mã đang chạy (giữ 3 bản gần nhất) | Thay mới |
 | `/opt/penai/repo.git` | Bản sao kho mã GitHub | Tải thêm |
-| `/etc/penai/penai.config.json5` | Cấu hình: provider, trần đồng thời, thương hiệu | Không |
+| `/etc/penai/penai.config.json5` | Cấu hình: provider, trần đồng thời, thương hiệu, múi giờ | Không |
 | `/etc/penai/penai.env` | Bí mật: kết nối DB, `PENAI_MASTER_KEY`, địa chỉ công khai | Không |
 | `/etc/penai/penai-install.conf` | Thông tin bản cài (nguồn mã, cổng, database) | Không |
 | `/var/lib/penai/` | Dữ liệu: file người dùng, thư viện agent, token đăng nhập provider, CLI | Không |
