@@ -2,9 +2,11 @@
 // phục vụ đúng INDEX_HTML đang sửa + trả dữ liệu mẫu cố định cho vài API.
 //   pnpm exec tsx scripts/mock-dashboard.ts   → http://127.0.0.1:18899/#/users
 //   Trang Contacts (hồ sơ, nhãn, chỉ dẫn cho AI): http://127.0.0.1:18899/#/contacts
+//   Trang Cron (lịch agent tự tạo khi chat):     http://127.0.0.1:18899/#/cron
 import { createServer, type IncomingMessage } from "node:http";
 import { BrandingSchema } from "../packages/shared/src/index.js";
 import { composeSystemPrompt } from "../packages/core/src/agent-loop.js";
+import { describeSchedule, formatInZone } from "../packages/core/src/cron.js";
 import { INDEX_HTML } from "../apps/server/src/ui.js";
 import { defaultLogoSvg, renderIndexHtml } from "../apps/server/src/branding.js";
 import { PERSON_LIMITS, renderPersonContext } from "../apps/server/src/person-context.js";
@@ -48,6 +50,42 @@ const profiles: Record<string, Record<string, unknown>> = {
 };
 const principalTags: Record<string, string[]> = { p1: [tags[0]!.id], p2: [tags[1]!.id] };
 const userMd: Record<string, string> = { p1: "# Ghi nhớ về người dùng này\n\n- Thích câu trả lời có gạch đầu dòng.\n- Đang triển khai PenAI cho IM GROUP.\n" };
+
+// ===== Dữ liệu mẫu Cron: 1 lịch quản trị viên tạo + 2 lịch agent tạo khi chat =====
+const TZ = "Asia/Ho_Chi_Minh";
+const inMin = (minutes: number) => new Date(now + minutes * 60_000).toISOString();
+const cronJobs = [
+  {
+    id: "3f9a1c2e-0000-4000-8000-000000000001", agentId: "a1", name: "Nhắc gọi anh Nam", kind: "cron",
+    schedule: "at 2026-09-28 08:00", prompt: "Nhắc anh Đức gọi cho anh Nam về hợp đồng ABC trước 10h.",
+    enabled: true, nextRun: "2026-09-28T01:00:00.000Z", lastRun: null, createdAt: iso(10), timezone: TZ,
+    createdVia: "agent", ownerKey: "telegram-1068263601",
+    creatorText: "IMGROUP Đức · PenAI Main", deliverText: "PenAI Main · IMGROUP Đức",
+  },
+  {
+    id: "7b21d0aa-0000-4000-8000-000000000002", agentId: "a1", name: "Tóm tắt tin AI sáng thứ Hai", kind: "cron",
+    schedule: "0 8 * * 1", prompt: "Tìm 5 tin AI nổi bật trong tuần qua, mỗi tin 1 câu kèm link.",
+    enabled: true, nextRun: "2026-09-28T01:00:00.000Z", lastRun: iso(60 * 24 * 6), createdAt: iso(60 * 24 * 7), timezone: TZ,
+    createdVia: "agent", ownerKey: "web-u1",
+    creatorText: "Quản trị · Chat web", deliverText: "trang Chat trên web của Quản trị",
+  },
+  {
+    id: "c0ffee00-0000-4000-8000-000000000003", agentId: "a1", name: "Báo cáo doanh thu", kind: "cron",
+    schedule: "every 1d", prompt: "Tổng hợp doanh thu hôm qua.", enabled: false, nextRun: inMin(600),
+    lastRun: iso(60 * 30), createdAt: iso(60 * 24 * 30), timezone: null, createdVia: "dashboard", ownerKey: null,
+    creatorText: null, deliverText: null,
+  },
+];
+const cronView = () => ({
+  timezone: TZ,
+  jobs: cronJobs.map((j) => ({
+    ...j,
+    agentKey: "tro-ly",
+    scheduleText: describeSchedule(j.schedule, j.timezone),
+    nextRunText: formatInZone(new Date(j.nextRun), j.timezone ?? TZ),
+    lastRunText: j.lastRun ? formatInZone(new Date(j.lastRun), j.timezone ?? TZ) : null,
+  })),
+});
 
 const tagRefs = (pid: string) => tags.filter((t) => (principalTags[pid] ?? []).includes(t.id));
 const overview = (c: (typeof contacts)[number]) => ({
@@ -93,6 +131,29 @@ createServer(async (req, res) => {
   if (path === "/auth/me") return json(me);
   if (path === "/v1/users") return json({ users, agents });
   if (path === "/v1/agents") return json({ agents });
+
+  // ----- Cron -----
+  if (path === "/v1/cron" && method === "GET") return json(cronView());
+  const cronM = /^\/v1\/cron\/([^/]+)(\/runs)?$/.exec(path);
+  if (cronM) {
+    const i = cronJobs.findIndex((j) => j.id === cronM[1]);
+    if (i < 0) return json({ error: "Cron job không tồn tại" }, 404);
+    if (cronM[2]) {
+      return json({
+        runs: [
+          { id: "r1", status: "ok", runAt: iso(60 * 24 * 6), output: "Chào anh Đức, đây là 5 tin AI nổi bật tuần này:\n1. …\n\n— đã lưu vào trang Chat của người đặt lịch" },
+          { id: "r2", status: "error", runAt: iso(60 * 24 * 13), output: "Kênh \"PenAI Main\" chưa sẵn sàng gửi tin — bỏ qua lượt này." },
+        ],
+      });
+    }
+    if (method === "DELETE") {
+      cronJobs.splice(i, 1);
+      return json({ deleted: true });
+    }
+    const b = await readBody(req);
+    if (typeof b.enabled === "boolean") cronJobs[i]!.enabled = b.enabled;
+    return json({ ok: true, job: cronJobs[i] });
+  }
 
   // ----- Contacts -----
   if (path === "/v1/contacts") return json({ contacts: contacts.map(overview) });

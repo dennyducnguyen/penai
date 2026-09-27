@@ -5,21 +5,24 @@ const schema = z.object({
   timezone: z
     .string()
     .optional()
-    .describe("IANA timezone, ví dụ Asia/Ho_Chi_Minh. Mặc định giờ hệ thống."),
+    .describe("IANA timezone, ví dụ Asia/Ho_Chi_Minh. Mặc định múi giờ của hệ thống PenAI."),
 });
 
 export const currentTimeTool: ToolHandler<typeof schema> = {
   name: "current_time",
   description: "Lấy ngày giờ hiện tại.",
   schema,
-  async execute(args) {
-    if (args.timezone) {
-      return new Intl.DateTimeFormat("vi-VN", {
+  async execute(args, toolCtx) {
+    const now = new Date();
+    const timeZone = args.timezone ?? toolCtx.timezone;
+    if (timeZone) {
+      const local = new Intl.DateTimeFormat("vi-VN", {
         dateStyle: "full",
         timeStyle: "long",
-        timeZone: args.timezone,
-      }).format(new Date());
+        timeZone,
+      }).format(now);
+      return `${local} (${timeZone}) — ISO ${now.toISOString()}`;
     }
-    return new Date().toISOString();
+    return now.toISOString();
   },
 };

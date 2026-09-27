@@ -20,7 +20,7 @@ Mỗi bản cài PenAI là **một tiến trình Node.js** (chạy TypeScript tr
   │ penai.service — một tiến trình Node.js                                                 │
   │   apps/server   : API /v1/*, Dashboard, webhook kênh, xác thực, thương hiệu            │
   │   core          : vòng lặp agent (nghĩ → gọi tool → quan sát), hàng đợi, trần đồng thời │
-  │   tools         : 38 tool có sẵn + custom tool + tool từ MCP                          │
+  │   tools         : 42 tool có sẵn + custom tool + tool từ MCP                          │
   │   providers     : kết nối mô hình AI      channels : 8 kênh chat      mcp : máy chủ MCP │
   └───────┬──────────────────────────┬──────────────────────────────┬────────────────────┘
           │                          │                              │
@@ -45,13 +45,14 @@ Monorepo pnpm (nhiều gói trong một kho mã), TypeScript strict, ESM.
 | `apps/server/src/web-auth.ts`, `web-chat.ts` | Đăng nhập Dashboard (email + mật khẩu, cookie), trang Chat web có gửi/nhận file |
 | `apps/server/src/api/` | API tương thích OpenAI: `/v1/chat/completions`, `/v1/models`, `/v1/images/generations` |
 | `apps/server/src/library*.ts`, `vault-*.ts` | Thư viện file theo agent; kho tri thức (chia đoạn, tạo vector, tìm kiếm) |
-| `apps/server/src/cron-runner.ts`, `memory-worker.ts`, `mcp-manager.ts` | Chạy agent theo lịch; tóm tắt hội thoại cũ thành trí nhớ; kết nối và tự nối lại MCP |
+| `apps/server/src/cron-runner.ts`, `cron-tools.ts` | Chạy agent theo lịch và gửi kết quả về cuộc trò chuyện đã đặt lịch; phần runtime của tool `cron_*` (agent tự đặt lịch khi chat — [lich-hen.md](lich-hen.md)) |
+| `apps/server/src/memory-worker.ts`, `mcp-manager.ts` | Tóm tắt hội thoại cũ thành trí nhớ; kết nối và tự nối lại MCP |
 | `apps/server/src/version.ts` | Phiên bản đang chạy (đọc `release.json` do lệnh cài/cập nhật ghi) |
 | `packages/shared` | Đọc/kiểm tra cấu hình (`config.ts`), mã hóa AES-256-GCM (`crypto.ts`), logger, kiểu dùng chung |
 | `packages/db` | Schema, migration SQL viết tay, hàm truy vấn theo từng nhóm (`*-repo.ts`), lệnh `cli-*` (migrate, tạo quản trị, đặt lại mật khẩu) — **nơi duy nhất có SQL** |
-| `packages/core` | `agent-loop.ts` (vòng lặp agent), `scheduler.ts` (làn xử lý song song), `provider-gate.ts` (trần số lời gọi cùng lúc theo provider) |
+| `packages/core` | `agent-loop.ts` (vòng lặp agent), `scheduler.ts` (làn xử lý song song), `provider-gate.ts` (trần số lời gọi cùng lúc theo provider), `cron.ts` (tính lịch theo múi giờ) |
 | `packages/providers` | `codex/` (ChatGPT, nhiều tài khoản xoay vòng), `claude-code/`, `antigravity/`, `acp/`, `openai-compat.ts`, `gemini.ts`, `dashscope.ts` (Qwen), `anthropic.ts`, `images/` (tạo ảnh), `mock-llm.ts` |
-| `packages/tools` | `builtin/` (38 tool: file, exec, web, trí nhớ, skill, landing page, tài liệu, vault, KG, tạo ảnh, thẻ duyệt…), `exec-sandbox.ts` (cách ly lệnh bằng bubblewrap), `custom-tool.ts` |
+| `packages/tools` | `builtin/` (42 tool: file, exec, web, trí nhớ, skill, landing page, tài liệu, vault, KG, tạo ảnh, thẻ duyệt, lịch hẹn `cron_*`…), `exec-sandbox.ts` (cách ly lệnh bằng bubblewrap), `custom-tool.ts` |
 | `packages/channels` | `telegram.ts`, `zalo.ts` (Zalo OA), `zalo-personal.ts`, `teams.ts`, `discord.ts`, `slack.ts`, `whatsapp.ts`, `feishu.ts`; `format.ts` (Markdown → HTML Telegram) |
 | `packages/mcp` | Kết nối MCP server qua stdio/SSE/HTTP, đăng nhập OAuth |
 | `deploy/` | `install.sh` (cài), `penai` (lệnh quản trị), `templates/` (cấu hình, systemd, nginx, tự cập nhật) |
@@ -68,6 +69,8 @@ Ví dụ khách nhắn bot Telegram:
 4. **agent-loop** gọi mô hình AI qua **ProviderGate** (giới hạn số lời gọi cùng lúc cho mỗi provider — Claude Code/Antigravity mỗi tiến trình tốn ~220 MB RAM). Mô hình muốn dùng tool → chạy tool → đưa kết quả lại → lặp tới khi có câu trả lời.
 5. **Trả lời** về kênh (có stream chữ nếu kênh và provider hỗ trợ), gửi file bằng tool `send_file`; lượt chạy được ghi vào `traces` (theo dõi) và thống kê token.
 
+**Lịch hẹn**: người dùng nhờ "nhắc tôi 8h sáng mai…" → agent gọi tool `cron_create` → dòng mới trong `cron_jobs` kèm nơi tạo (kênh, cuộc trò chuyện, người nhờ) và múi giờ. **CronRunner** kiểm tra mỗi 20 giây, chạy lại agent bằng thư mục + quyền hiện tại của người nhờ, rồi gửi câu trả lời về đúng cuộc trò chuyện đó (và ghi vào hội thoại để người dùng trả lời tiếp). Chi tiết: [lich-hen.md](lich-hen.md).
+
 ## 4. Dữ liệu và bảo mật
 
 - **Cách ly workspace bằng RLS** (Row-Level Security — PostgreSQL tự lọc dòng theo workspace): mọi bảng theo workspace có `workspace_id`; thiếu ngữ cảnh workspace thì truy vấn trả 0 dòng (an toàn mặc định). Ứng dụng kết nối bằng role `penai_app` không có quyền vượt RLS.
@@ -81,7 +84,7 @@ Ví dụ khách nhắn bot Telegram:
 
 | Nguồn | Nội dung | Đổi xong |
 |---|---|---|
-| `/etc/penai/penai.config.json5` (đường dẫn qua biến `PENAI_CONFIG`) | `providers` (codex, claude-code, antigravity), `api` (tên gọi tắt model, trần đồng thời), `branding` (tên, màu, logo), `port`, `dataDir` | `providers`, trần đồng thời, `branding` tự nạp lại; phần khác cần `sudo penai restart` |
+| `/etc/penai/penai.config.json5` (đường dẫn qua biến `PENAI_CONFIG`) | `providers` (codex, claude-code, antigravity), `api` (tên gọi tắt model, trần đồng thời), `branding` (tên, màu, logo), `timezone` (múi giờ lịch hẹn, mặc định `Asia/Ho_Chi_Minh`), `port`, `dataDir` | `providers`, trần đồng thời, `branding`, `timezone` tự nạp lại; phần khác cần `sudo penai restart` |
 | `/etc/penai/penai.env` | `DATABASE_URL`, `PENAI_MASTER_KEY`, `PENAI_PUBLIC_URL`, `PENAI_EXEC_SANDBOX`, `PENAI_LANE_MAIN`, `LOG_LEVEL` | `sudo penai restart` |
 | Database | Agent, kênh, provider API key, skill, MCP, người dùng, kho tri thức… | Có hiệu lực ngay (qua Dashboard) |
 

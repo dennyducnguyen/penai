@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "@penai/shared";
+import { loadConfig, PenaiConfigSchema } from "@penai/shared";
 
 // Mẫu cấu hình học viên nhận lúc cài (deploy/templates/penai.config.json5).
 // Sai cú pháp JSON5 hay sai schema ở đây = cài xong dịch vụ không khởi động được.
@@ -26,5 +26,12 @@ describe("mẫu cấu hình deploy/templates/penai.config.json5", () => {
     );
     expect(cfg.api.queue.cliTotal).toBe(1);
     expect(cfg.branding).toMatchObject({ name: "PenAI", theme: "xanh-duong" });
+    expect(cfg.timezone).toBe("Asia/Ho_Chi_Minh");
+  });
+
+  it("file cấu hình cũ không có timezone → giờ Việt Nam; múi giờ sai → báo lỗi ngay", () => {
+    expect(PenaiConfigSchema.parse({}).timezone).toBe("Asia/Ho_Chi_Minh");
+    expect(PenaiConfigSchema.parse({ timezone: "UTC" }).timezone).toBe("UTC");
+    expect(() => PenaiConfigSchema.parse({ timezone: "Viet Nam" })).toThrow(/múi giờ không hợp lệ/);
   });
 });

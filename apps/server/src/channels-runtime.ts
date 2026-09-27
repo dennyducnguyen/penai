@@ -741,6 +741,22 @@ function makeInboundHandler(
       person: { channelKind: channel.kind, peerKind: msg.peerKind === "group" ? "group" : "direct" },
       sourceKind: "channel",
       accessRole: null,
+      // Tool đặt lịch (cron_*): tới giờ chạy bằng quyền người này, gửi kết quả về chat này
+      cronOrigin: {
+        kind: "channel",
+        deliver: true,
+        channelId: channel.id,
+        channelKind: channel.kind,
+        channelName: channel.name,
+        chatKey: msg.chatKey,
+        peerKind: msg.peerKind === "group" ? "group" : "direct",
+        senderId: msg.senderId,
+        ...(msg.senderName ? { senderName: msg.senderName } : {}),
+        ...(channelIdentity
+          ? { principalId: channelIdentity.principalId, channelIdentityId: channelIdentity.contactId }
+          : {}),
+        ...(conversationId ? { conversationId } : {}),
+      },
       attachFile: (p) => {
         explicitAttach = true;
         if (!mediaOut.includes(p)) mediaOut.push(p);

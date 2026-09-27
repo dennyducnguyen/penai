@@ -9,7 +9,7 @@ import type {
   Provider,
   ProviderChatMessage,
 } from "@penai/providers";
-import type { ExecSandboxOptions, ToolRegistry } from "@penai/tools";
+import type { ExecSandboxOptions, ToolContext, ToolRegistry } from "@penai/tools";
 
 export interface MessageStore {
   loadMessages(
@@ -107,6 +107,10 @@ export interface AgentLoopDeps {
     list(query?: string): Promise<string>;
     get(slug: string): Promise<{ html: string; url: string; title: string; version: number } | null>;
   };
+  /** Múi giờ của doanh nghiệp — forward vào ToolContext (current_time, lịch hẹn). */
+  timezone?: string;
+  /** Lịch hẹn agent tự đặt khi chat (tool cron_*) — chỉ có khi đang chat với người dùng. */
+  cron?: ToolContext["cron"];
   delegate?: (toAgentKey: string, task: string) => Promise<string>;
   team?: {
     addTask(title: string, description: string): Promise<string>;
@@ -358,6 +362,8 @@ export async function* runAgent(
         ...(deps.memory ? { memory: deps.memory } : {}),
         ...(deps.skills ? { skills: deps.skills } : {}),
         ...(deps.landingPages ? { landingPages: deps.landingPages } : {}),
+        ...(deps.timezone ? { timezone: deps.timezone } : {}),
+        ...(deps.cron ? { cron: deps.cron } : {}),
         ...(deps.delegate ? { delegate: deps.delegate } : {}),
         ...(deps.team ? { team: deps.team } : {}),
         ...(deps.vault ? { vault: deps.vault } : {}),

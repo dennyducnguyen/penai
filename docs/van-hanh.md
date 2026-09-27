@@ -49,6 +49,8 @@ sudo penai restore /var/backups/penai/20260926-101500
 
 ## File cấu hình
 
-`/etc/penai/penai.config.json5` (định dạng JSON5 — cho phép chú thích `//` và dấu phẩy cuối). Phần `providers`, trần đồng thời (`api.queue`) và `branding` tự nạp lại khi lưu file; phần khác cần `sudo penai restart`.
+`/etc/penai/penai.config.json5` (định dạng JSON5 — cho phép chú thích `//` và dấu phẩy cuối). Phần `providers`, trần đồng thời (`api.queue`), `branding` và `timezone` tự nạp lại khi lưu file; phần khác cần `sudo penai restart`.
+
+`timezone` (từ bản 1.2.0, mặc định `Asia/Ho_Chi_Minh`): múi giờ của lịch hẹn và ngày "hôm nay" của agent — không phụ thuộc giờ của VPS. File cấu hình cài từ bản cũ không có khóa này vẫn dùng giờ Việt Nam. Xem [lich-hen.md](lich-hen.md).
 
 `/etc/penai/penai.env` chứa bí mật. Sửa xong cần `sudo penai restart`. **Không đổi `PENAI_MASTER_KEY`.**

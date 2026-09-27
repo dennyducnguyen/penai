@@ -1,8 +1,8 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, or, sql, type SQL } from "drizzle-orm";
 import type { WorkspaceContext } from "@penai/shared";
 import type { Db } from "./client.js";
 import { withWorkspace } from "./context.js";
-import { cronJobs, cronRuns } from "./schema.js";
+import { cronJobs, cronRuns, type CronOrigin } from "./schema.js";
 
 export type CronJobRow = typeof cronJobs.$inferSelect;
 
@@ -26,6 +26,10 @@ export async function createCronJob(
     prompt: string;
     kind?: string;
     nextRun: Date;
+    timezone?: string | null;
+    createdVia?: "dashboard" | "agent";
+    ownerKey?: string | null;
+    origin?: CronOrigin | null;
   },
 ): Promise<CronJobRow> {
   const rows = await withWorkspace(db, ctx, (tx) =>
@@ -39,6 +43,10 @@ export async function createCronJob(
         prompt: input.prompt,
         kind: input.kind ?? "cron",
         nextRun: input.nextRun,
+        timezone: input.timezone ?? null,
+        createdVia: input.createdVia ?? "dashboard",
+        ownerKey: input.ownerKey ?? null,
+        origin: input.origin ?? null,
       })
       .returning(),
   );
@@ -49,6 +57,97 @@ export async function listCronJobs(db: Db, ctx: WorkspaceContext) {
   return withWorkspace(db, ctx, (tx) =>
     tx.select().from(cronJobs).orderBy(desc(cronJobs.createdAt)),
   );
+}
+
+export async function getCronJob(
+  db: Db,
+  ctx: WorkspaceContext,
+  id: string,
+): Promise<CronJobRow | null> {
+  const rows = await withWorkspace(db, ctx, (tx) =>
+    tx.select().from(cronJobs).where(eq(cronJobs.id, id)).limit(1),
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Lịch của một agent mà người đang chat được xem/sửa (tool cron_list...):
+ * - all: mọi lịch của agent (quản trị viên chat trên web);
+ * - còn lại: lịch người đó nhờ tạo + lịch gửi về chính cuộc trò chuyện này
+ *   (nhóm chat: thành viên quản lý chung lịch của nhóm).
+ */
+export async function listCronJobsForAgent(
+  db: Db,
+  ctx: WorkspaceContext,
+  agentId: string,
+  scope: { all: true } | { ownerKey: string; chat?: { channelId: string; chatKey: string } },
+  opts: { includeDisabled?: boolean; limit?: number } = {},
+): Promise<CronJobRow[]> {
+  const conds: SQL[] = [eq(cronJobs.agentId, agentId)];
+  if (!("all" in scope)) {
+    const mine = eq(cronJobs.ownerKey, scope.ownerKey);
+    conds.push(
+      scope.chat
+        ? or(
+            mine,
+            sql`(${cronJobs.origin}->>'channelId' = ${scope.chat.channelId}
+                 AND ${cronJobs.origin}->>'chatKey' = ${scope.chat.chatKey})`,
+          )!
+        : mine,
+    );
+  }
+  if (!opts.includeDisabled) conds.push(eq(cronJobs.enabled, true));
+  return withWorkspace(db, ctx, (tx) =>
+    tx
+      .select()
+      .from(cronJobs)
+      .where(and(...conds))
+      .orderBy(desc(cronJobs.createdAt))
+      .limit(opts.limit ?? 50),
+  );
+}
+
+/** Số lịch ĐANG BẬT của một người (giới hạn mỗi người). */
+export async function countActiveCronJobsByOwner(
+  db: Db,
+  ctx: WorkspaceContext,
+  ownerKey: string,
+): Promise<number> {
+  const rows = await withWorkspace(db, ctx, (tx) =>
+    tx
+      .select({ n: count() })
+      .from(cronJobs)
+      .where(and(eq(cronJobs.ownerKey, ownerKey), eq(cronJobs.enabled, true))),
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** Sửa lịch (tên, lịch, nội dung, bật/tắt, lần chạy kế tiếp). Trả bản ghi mới. */
+export async function updateCronJob(
+  db: Db,
+  ctx: WorkspaceContext,
+  id: string,
+  patch: {
+    name?: string;
+    schedule?: string;
+    prompt?: string;
+    enabled?: boolean;
+    nextRun?: Date;
+    timezone?: string | null;
+  },
+): Promise<CronJobRow | null> {
+  const set: Partial<typeof cronJobs.$inferInsert> = {};
+  if (patch.name !== undefined) set.name = patch.name;
+  if (patch.schedule !== undefined) set.schedule = patch.schedule;
+  if (patch.prompt !== undefined) set.prompt = patch.prompt;
+  if (patch.enabled !== undefined) set.enabled = patch.enabled;
+  if (patch.nextRun !== undefined) set.nextRun = patch.nextRun;
+  if (patch.timezone !== undefined) set.timezone = patch.timezone;
+  if (Object.keys(set).length === 0) return getCronJob(db, ctx, id);
+  const rows = await withWorkspace(db, ctx, (tx) =>
+    tx.update(cronJobs).set(set).where(eq(cronJobs.id, id)).returning(),
+  );
+  return rows[0] ?? null;
 }
 
 export async function setCronEnabled(

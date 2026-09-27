@@ -163,6 +163,19 @@ export const BrandingSchema = z.object({
 });
 export type Branding = z.infer<typeof BrandingSchema>;
 
+/** Múi giờ mặc định: lịch hẹn, "hôm nay" của agent, giờ hiển thị. */
+export const DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh";
+
+/** Tên múi giờ IANA (vd "Asia/Ho_Chi_Minh") có dùng được trên máy này không. */
+export function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const PenaiConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).default(18800),
   host: z.string().default("127.0.0.1"),
@@ -174,6 +187,16 @@ export const PenaiConfigSchema = z.object({
   providers: z.record(z.string(), ProviderConfigSchema).default({}),
   api: ApiConfigSchema.prefault({}),
   branding: BrandingSchema.prefault({}),
+  /**
+   * Múi giờ của doanh nghiệp: giờ trong lịch hẹn ("at 2026-09-28 08:00", cron
+   * "0 8 * * *"), ngày "hôm nay" agent thấy, giờ hiển thị. Không phụ thuộc giờ
+   * của VPS (nhiều VPS để UTC — lệch 7 tiếng so với Việt Nam).
+   */
+  timezone: z
+    .string()
+    .trim()
+    .default(DEFAULT_TIMEZONE)
+    .refine(isValidTimeZone, { message: 'múi giờ không hợp lệ — dùng tên IANA, vd "Asia/Ho_Chi_Minh"' }),
 })
   // Alias model chỉ được trỏ vào provider trong danh sách trắng — sai cấu hình
   // phải chết ngay lúc khởi động, đừng để tới lúc app gọi mới lỗi.

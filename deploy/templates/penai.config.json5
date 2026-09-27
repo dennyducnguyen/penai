@@ -74,4 +74,8 @@
     tagline: "Nền tảng AI Agent cho doanh nghiệp",
     theme: "xanh-duong",
   },
+
+  // Múi giờ của doanh nghiệp: giờ trong lịch hẹn ("nhắc tôi 8h sáng mai", cron "0 8 * * *")
+  // và ngày "hôm nay" của agent. Không phụ thuộc giờ của VPS. Tên theo chuẩn IANA.
+  timezone: "Asia/Ho_Chi_Minh",
 }

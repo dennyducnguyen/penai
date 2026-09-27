@@ -927,7 +927,43 @@ export const cronJobs = pgTable("cron_jobs", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+  /** Múi giờ IANA của lịch; null = job cũ, hiểu theo giờ máy chủ (0030). */
+  timezone: text("timezone"),
+  /** "dashboard" | "agent" (agent tạo khi chat). */
+  createdVia: text("created_via").notNull().default("dashboard"),
+  /** Người nhờ agent đặt lịch: "<kênh>-<id người gửi>" | "web-<user id>". */
+  ownerKey: text("owner_key"),
+  /** Nơi tạo lịch + nơi gửi kết quả. */
+  origin: jsonb("origin").$type<CronOrigin | null>(),
 });
+
+/**
+ * Lịch do agent tạo khi đang chat: nhớ cuộc trò chuyện để tới giờ chạy đúng
+ * quyền của người nhờ và gửi kết quả về đúng chỗ.
+ */
+export type CronOrigin =
+  | {
+      kind: "channel";
+      /** Gửi kết quả về cuộc trò chuyện (false = chỉ chạy, xem kết quả ở Dashboard). */
+      deliver: boolean;
+      channelId: string;
+      channelKind: string;
+      channelName?: string;
+      chatKey: string;
+      peerKind: "direct" | "group";
+      senderId: string;
+      senderName?: string;
+      principalId?: string;
+      channelIdentityId?: string;
+      conversationId?: string;
+    }
+  | {
+      kind: "web";
+      deliver: boolean;
+      userId: string;
+      userName?: string;
+      principalId?: string;
+    };
 
 export const cronRuns = pgTable("cron_runs", {
   id: uuid("id").primaryKey().defaultRandom(),

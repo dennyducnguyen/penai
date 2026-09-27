@@ -282,7 +282,7 @@ export const INDEX_HTML = `<!doctype html>
     { id: "agents", icon: "🤖", label: "Agents" },
     { id: "providers", icon: "🔌", label: "Providers" },
     { id: "channels", icon: "📡", label: "Channels" },
-    { id: "cron", icon: "⏰", label: "Cron & Heartbeat" },
+    { id: "cron", icon: "⏰", label: "Cron & lịch hẹn" },
     { id: "users", icon: "👤", label: "Người dùng", admin: true },
     { id: "apikeys", icon: "🔑", label: "Khóa API (tích hợp)", admin: true },
     { grp: "Năng lực" },
@@ -1636,14 +1636,88 @@ export const INDEX_HTML = `<!doctype html>
     load();
   };
 
-  PAGES.cron = crudPage({
-    title: "Cron & Heartbeat", sub: 'Lịch: "every 5m", "at 2026-07-10T09:00", hoặc cron "0 9 * * *"',
-    list: "/v1/cron", key: "jobs", cols: ["Tên", "Lịch", "Kind", "Next run", ""],
-    formHtml: '<div class="row"><input id="jName" placeholder="Tên"><input id="jAgent" placeholder="agent key" value="tro-ly"><input id="jSched" placeholder="every 1h"></div><label>Prompt chạy mỗi lần</label><textarea id="jPrompt" rows="2" style="width:100%"></textarea>',
-    collect: function () { var s = $("#jSched").value.trim(), p = $("#jPrompt").value.trim(); if (!s || !p) return null; return { agentKey: $("#jAgent").value.trim(), name: $("#jName").value.trim(), schedule: s, prompt: p }; },
-    rowHtml: function (r) { return "<td>" + esc(r.name) + "</td><td><code>" + esc(r.schedule) + "</code></td><td>" + esc(r.kind) + "</td><td class='muted'>" + esc((r.nextRun || "").slice(0, 16)) + "</td>"; },
-    del: function (r) { return "/v1/cron/" + r.id; }
-  });
+  // ---- Cron: lịch chạy agent — quản trị viên tạo ở đây, hoặc agent tự tạo khi chat (tool cron_*) ----
+  PAGES.cron = function () {
+    var m = page("Cron & lịch hẹn", "Agent chạy theo lịch: báo cáo định kỳ, nhắc việc. Người dùng cũng có thể nhờ agent đặt lịch ngay trong lúc chat.");
+    var info = card(m);
+    info.innerHTML =
+      '<div style="font-size:.86rem;line-height:1.55">💡 <b>Agent tự đặt lịch khi chat</b>: người dùng nhắn kiểu <i>"nhắc tôi 8h sáng mai gọi anh Nam"</i>, <i>"30 phút nữa báo tôi"</i>, <i>"sáng thứ Hai hằng tuần gửi tôi tóm tắt tin tức"</i> — agent tạo lịch bằng tool <code>cron_create</code>, tới giờ tự chạy và <b>gửi kết quả về đúng cuộc trò chuyện</b> đó (Telegram, Zalo… hoặc trang Chat). Lịch agent tạo hiện ở bảng dưới với cột "Tạo bởi" / "Gửi về". ' +
+      'Giới hạn: lịch lặp tối thiểu 5 phút một lần, mỗi người tối đa 20 lịch đang bật. Tắt tính năng cho một agent: Agents → Sửa → bỏ tick <code>cron_create</code>.</div>';
+    var c = card(m, "Tạo lịch (quản trị viên)");
+    c.innerHTML += '<div class="row"><input id="jName" placeholder="Tên lịch, vd Báo cáo sáng" style="flex:1"><select id="jAgent" style="flex:1"></select><input id="jSched" placeholder="0 8 * * 1-5" style="flex:1"></div>' +
+      '<div class="muted" id="jHint" style="font-size:.78rem;margin-top:4px">Lịch: <code>in 30m</code> (sau 30 phút) · <code>at 2026-10-01 08:00</code> (một lần) · <code>every 2h</code> (mỗi 2 giờ) · cron <code>0 8 * * *</code> (8:00 hằng ngày), <code>30 17 * * 1-5</code> (17:30 thứ Hai–thứ Sáu).</div>' +
+      '<label>Việc agent làm mỗi lần chạy (kết quả xem ở nút "Lịch sử")</label><textarea id="jPrompt" rows="2" style="width:100%"></textarea>' +
+      '<div class="row" style="margin-top:8px"><button id="jCreate">Tạo</button><span id="jMsg" class="muted"></span></div>';
+    fillAgentSelect(c, "#jAgent", null);
+    var listC = card(m, "Danh sách");
+
+    function openRuns(r) {
+      api("/v1/cron/" + r.id + "/runs").then(function (j) {
+        var d = el("dialog", { style: "width:760px;max-width:95vw;padding:18px" });
+        d.innerHTML = "<h3 style='margin:0 0 4px'>Lịch sử chạy: " + esc(r.name) + "</h3><div class='muted' style='font-size:.8rem;margin-bottom:8px'>20 lần gần nhất</div><div id='rList' style='max-height:60vh;overflow:auto'></div><div class='row' style='margin-top:10px'><button class='ghost' id='rClose'>Đóng</button></div>";
+        document.body.appendChild(d); d.showModal();
+        $("#rClose", d).onclick = function () { d.close(); d.remove(); };
+        var box = $("#rList", d);
+        if (!j.runs.length) { box.innerHTML = '<span class="muted">Chưa chạy lần nào.</span>'; return; }
+        j.runs.forEach(function (run) {
+          var item = el("div", { style: "border-bottom:1px solid var(--border);padding:6px 0" });
+          item.innerHTML = (run.status === "ok" ? '<span class="pill ok">ok</span>' : '<span class="pill" style="color:#dc2626">lỗi</span>') +
+            ' <span class="muted">' + esc(new Date(run.runAt).toLocaleString("vi-VN")) + "</span>";
+          var pre = el("div", { style: "white-space:pre-wrap;font-size:.82rem;margin-top:4px" });
+          pre.textContent = run.output || "";
+          item.appendChild(pre); box.appendChild(item);
+        });
+      }).catch(function (e) { toast(e.message, 1); });
+    }
+
+    function load() {
+      api("/v1/cron").then(function (j) {
+        $("#jHint").innerHTML = $("#jHint").innerHTML.replace(/ \\(múi giờ[^)]*\\)$/, "") + " (múi giờ " + esc(j.timezone || "") + ")";
+        listC.innerHTML = "<h3>Danh sách</h3>";
+        listC.appendChild(table(["Tên", "Agent", "Lịch", "Lần chạy kế tiếp", "Tạo bởi", "Gửi về", "Trạng thái", ""], j.jobs, function (r) {
+          var tr = el("tr");
+          var once = /^at\\s/i.test(r.schedule);
+          var state = r.enabled ? '<span class="pill ok">đang bật</span>' : (once && r.lastRun ? '<span class="pill">đã chạy xong</span>' : '<span class="pill">tạm dừng</span>');
+          tr.innerHTML =
+            "<td>" + esc(r.name) + "</td>" +
+            "<td><code>" + esc(r.agentKey || "") + "</code></td>" +
+            "<td>" + esc(r.scheduleText || r.schedule) + '<div class="muted" style="font-size:.72rem"><code>' + esc(r.schedule) + "</code>" + (r.timezone ? " · " + esc(r.timezone) : " · giờ máy chủ") + "</div></td>" +
+            "<td class='muted'>" + (r.enabled ? esc(r.nextRunText || "") : (r.lastRunText ? "lần cuối " + esc(r.lastRunText) : "")) + "</td>" +
+            "<td>" + (r.createdVia === "agent" ? "🤖 " + esc(r.creatorText || "agent") : '<span class="muted">quản trị viên</span>') + "</td>" +
+            "<td>" + (r.deliverText ? esc(r.deliverText) : '<span class="muted">—</span>') + "</td>" +
+            "<td>" + state + "</td>";
+          var td = el("td");
+          var runs = el("button", { "class": "ghost sm" }, "Lịch sử");
+          runs.onclick = function () { openRuns(r); };
+          td.appendChild(runs);
+          if (isAdmin()) {
+            var tog = el("button", { "class": "ghost sm" }, r.enabled ? "Tạm dừng" : "Bật");
+            tog.onclick = function () {
+              api("/v1/cron/" + r.id, { method: "PATCH", body: { enabled: !r.enabled } })
+                .then(function () { toast(r.enabled ? "Đã tạm dừng" : "Đã bật lại"); load(); })
+                .catch(function (e) { toast(e.message, 1); });
+            };
+            var del = el("button", { "class": "ghost sm" }, "Xóa");
+            del.onclick = function () {
+              if (confirm('Xóa lịch "' + r.name + '"?')) api("/v1/cron/" + r.id, { method: "DELETE" }).then(load).catch(function (e) { toast(e.message, 1); });
+            };
+            td.appendChild(document.createTextNode(" ")); td.appendChild(tog);
+            td.appendChild(document.createTextNode(" ")); td.appendChild(del);
+          }
+          tr.appendChild(td); return tr;
+        }));
+      }).catch(function (e) { listC.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    }
+
+    $("#jCreate").onclick = function () {
+      var name = $("#jName").value.trim(), sched = $("#jSched").value.trim(), prompt = $("#jPrompt").value.trim();
+      if (!name || !sched || !prompt) { $("#jMsg").innerHTML = '<span class="err">Nhập đủ tên, lịch và việc cần làm</span>'; return; }
+      api("/v1/cron", { method: "POST", body: { agentKey: $("#jAgent").value, name: name, schedule: sched, prompt: prompt } })
+        .then(function () { $("#jMsg").innerHTML = ""; $("#jName").value = ""; $("#jSched").value = ""; $("#jPrompt").value = ""; toast("Đã tạo lịch"); load(); })
+        .catch(function (e) { $("#jMsg").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    };
+    load();
+  };
 
   // ---- Dialog phụ trợ cho trang Skills ----
   function skillDlg(html) {

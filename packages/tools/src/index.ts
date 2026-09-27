@@ -44,6 +44,7 @@ export { browserTool } from "./builtin/browser.js";
 export { imageGenTool } from "./builtin/image-gen.js";
 export { publishFileTool } from "./builtin/publish-file.js";
 export { approvalCardTool } from "./builtin/approval-card.js";
+export { cronCreateTool, cronListTool, cronUpdateTool, cronDeleteTool } from "./builtin/cron.js";
 export * from "./custom-tool.js";
 
 import { ToolRegistry } from "./registry.js";
@@ -88,6 +89,7 @@ import { browserTool } from "./builtin/browser.js";
 import { imageGenTool } from "./builtin/image-gen.js";
 import { publishFileTool } from "./builtin/publish-file.js";
 import { approvalCardTool } from "./builtin/approval-card.js";
+import { cronCreateTool, cronListTool, cronUpdateTool, cronDeleteTool } from "./builtin/cron.js";
 
 /** Registry với toàn bộ tool built-in mặc định. */
 export function createDefaultToolRegistry(): ToolRegistry {
@@ -129,5 +131,9 @@ export function createDefaultToolRegistry(): ToolRegistry {
     .register(browserTool)
     .register(imageGenTool)
     .register(publishFileTool)
-    .register(approvalCardTool);
+    .register(approvalCardTool)
+    .register(cronCreateTool)
+    .register(cronListTool)
+    .register(cronUpdateTool)
+    .register(cronDeleteTool);
 }

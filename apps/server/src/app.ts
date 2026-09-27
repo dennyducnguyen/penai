@@ -12,6 +12,7 @@ import {
   decryptSecret,
   canChat,
   hasRole,
+  isValidTimeZone,
   logger,
   type WorkspaceContext,
   type WorkspaceRole,
@@ -60,7 +61,8 @@ import {
 import {
   createCronJob,
   listCronJobs,
-  setCronEnabled,
+  getCronJob,
+  updateCronJob,
   deleteCronJob,
   listCronRuns,
   addMemory,
@@ -170,7 +172,14 @@ import {
   listAudit,
 } from "@penai/db";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { nextRun, validateSchedule } from "@penai/core";
+import {
+  describeSchedule,
+  formatInZone,
+  minIntervalMs,
+  nextRun,
+  normalizeSchedule,
+} from "@penai/core";
+import { CRON_MIN_INTERVAL_MS, deliverLabel } from "./cron-tools.js";
 import {
   isChannelKindSupported,
   supportedChannelKinds,
@@ -425,6 +434,15 @@ const CreateCronBody = z.object({
   schedule: z.string().min(1),
   prompt: z.string().min(1),
   kind: z.enum(["cron", "heartbeat"]).default("cron"),
+  /** Múi giờ IANA của lịch; bỏ trống = config.timezone. */
+  timezone: z.string().trim().min(1).optional(),
+});
+
+const UpdateCronBody = z.object({
+  enabled: z.boolean().optional(),
+  name: z.string().trim().min(1).max(200).optional(),
+  schedule: z.string().trim().min(1).max(100).optional(),
+  prompt: z.string().trim().min(1).optional(),
 });
 
 const CreateChannelBody = z.object({
@@ -2295,8 +2313,29 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   // ===== Cron jobs =====
+  // Lịch do quản trị viên tạo ở đây, hoặc agent tự tạo khi chat (tool cron_*,
+  // xem cron-tools.ts). Giờ tính theo múi giờ của job (config.timezone lúc tạo).
   app.get("/v1/cron", async (req) => {
-    return { jobs: await listCronJobs(db, req.authCtx) };
+    const [jobs, agents] = await Promise.all([listCronJobs(db, req.authCtx), listAgents(db, req.authCtx)]);
+    const agentKeyOf = new Map(agents.map((a) => [a.id, a.key]));
+    const tz = deps.config.timezone;
+    return {
+      timezone: tz,
+      jobs: jobs.map(({ origin, ...j }) => ({
+        ...j,
+        agentKey: agentKeyOf.get(j.agentId) ?? null,
+        scheduleText: describeSchedule(j.schedule, j.timezone),
+        nextRunText: formatInZone(j.nextRun, j.timezone ?? tz),
+        lastRunText: j.lastRun ? formatInZone(j.lastRun, j.timezone ?? tz) : null,
+        // Không trả id thô của cuộc trò chuyện — chỉ nhãn để hiển thị
+        creatorText: origin
+          ? origin.kind === "channel"
+            ? `${origin.senderName ?? origin.senderId} · ${origin.channelName ?? origin.channelKind}${origin.peerKind === "group" ? " (nhóm)" : ""}`
+            : `${origin.userName ?? "người dùng"} · Chat web`
+          : null,
+        deliverText: j.createdVia === "agent" ? deliverLabel(origin ?? null) : null,
+      })),
+    };
   });
 
   app.post("/v1/cron", async (req, reply) => {
@@ -2304,22 +2343,33 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const parsed = CreateCronBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: zodMessage(parsed.error) });
     const body = parsed.data;
+    const tz = body.timezone ?? deps.config.timezone;
+    if (!isValidTimeZone(tz)) return reply.code(400).send({ error: `Múi giờ không hợp lệ: ${tz}` });
+    const now = new Date();
+    let schedule: string;
+    let first: Date | null;
     try {
-      validateSchedule(body.schedule);
+      schedule = normalizeSchedule(body.schedule, now, tz);
+      first = nextRun(schedule, now, tz);
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
+    if (!first) {
+      return reply
+        .code(400)
+        .send({ error: `Lịch đã qua, không có lần chạy nào (bây giờ là ${formatInZone(now, tz)})` });
+    }
     const agent = await getAgentByKey(db, req.authCtx, body.agentKey);
     if (!agent) return reply.code(404).send({ error: "Agent không tồn tại" });
-    const first = nextRun(body.schedule, new Date());
-    if (!first) return reply.code(400).send({ error: "Lịch đã qua, không có lần chạy nào" });
     const job = await createCronJob(db, req.authCtx, {
       agentId: agent.id,
       name: body.name,
-      schedule: body.schedule,
+      schedule,
       prompt: body.prompt,
       kind: body.kind,
       nextRun: first,
+      timezone: tz,
+      createdVia: "dashboard",
     });
     return reply.code(201).send({ job });
   });
@@ -2327,11 +2377,45 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.patch("/v1/cron/:id", async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { id } = req.params as { id: string };
-    const body = req.body as { enabled?: boolean };
-    if (typeof body.enabled === "boolean") {
-      await setCronEnabled(db, req.authCtx, id, body.enabled);
+    const parsed = UpdateCronBody.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: zodMessage(parsed.error) });
+    const body = parsed.data;
+    const job = await getCronJob(db, req.authCtx, id);
+    if (!job) return reply.code(404).send({ error: "Cron job không tồn tại" });
+    const now = new Date();
+    const patch: Parameters<typeof updateCronJob>[3] = {};
+    if (body.name) patch.name = body.name;
+    if (body.prompt) patch.prompt = body.prompt;
+    let schedule = job.schedule;
+    let tz = job.timezone;
+    try {
+      if (body.schedule) {
+        tz = job.timezone ?? deps.config.timezone;
+        schedule = normalizeSchedule(body.schedule, now, tz);
+        // Lịch agent tạo giữ đúng giới hạn như khi tạo qua chat
+        if (job.createdVia === "agent" && minIntervalMs(schedule, now, tz) < CRON_MIN_INTERVAL_MS) {
+          return reply.code(400).send({ error: "Lịch lặp lại dày quá — tối thiểu 5 phút một lần." });
+        }
+        patch.schedule = schedule;
+        patch.timezone = tz;
+      }
+      // Bật lại / đổi lịch → tính lại lần chạy kế tiếp (không chạy bù lượt đã lỡ)
+      const enable = body.enabled ?? (body.schedule ? true : undefined);
+      if (enable === true && (body.schedule || !job.enabled)) {
+        const next = nextRun(schedule, now, tz);
+        if (!next) {
+          return reply.code(400).send({ error: "Lịch một lần đã qua thời điểm chạy — đổi lịch trước khi bật lại." });
+        }
+        patch.enabled = true;
+        patch.nextRun = next;
+      } else if (enable === false) {
+        patch.enabled = false;
+      }
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
     }
-    return { ok: true };
+    const updated = await updateCronJob(db, req.authCtx, id, patch);
+    return { ok: true, job: updated };
   });
 
   app.delete("/v1/cron/:id", async (req, reply) => {
@@ -3964,6 +4048,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         attachFile: (p) => collector.attachFile(p),
         // Người đăng nhập Dashboard là người thật đang chat → khối "Người đang chat"
         ...(req.authInfo?.kind === "web" ? { person: { channelKind: "web", peerKind: "direct" as const } } : {}),
+        // Tool đặt lịch (cron_*): tới giờ chạy bằng quyền hiện tại của người này,
+        // kết quả thành phiên chat mới "⏰ <tên lịch>" của họ.
+        cronOrigin: { kind: "web", deliver: true, userId: req.authCtx.userId },
       });
     } catch (err) {
       return reply.code(500).send({ error: (err as Error).message });

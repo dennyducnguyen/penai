@@ -227,6 +227,28 @@ export async function isWorkspaceMember(
   return rows.length > 0;
 }
 
+/**
+ * Vai trò HIỆN TẠI của một người trong workspace; null nếu đã bị gỡ khỏi
+ * workspace hoặc tài khoản bị khóa. Dùng khi chạy việc thay mặt người đó về sau
+ * (lịch hẹn) — quyền phải theo hiện tại, không theo lúc tạo.
+ */
+export async function getActiveMemberRole(
+  db: Db,
+  ctx: WorkspaceContext,
+  userId: string,
+): Promise<WorkspaceRole | null> {
+  const rows = await withWorkspace(db, ctx, (tx) =>
+    tx
+      .select({ role: workspaceMembers.role, isActive: users.isActive })
+      .from(workspaceMembers)
+      .innerJoin(users, eq(users.id, workspaceMembers.userId))
+      .where(eq(workspaceMembers.userId, userId))
+      .limit(1),
+  );
+  const row = rows[0];
+  return row && row.isActive !== false ? (row.role as WorkspaceRole) : null;
+}
+
 export async function updateMemberRole(
   db: Db,
   ctx: WorkspaceContext,

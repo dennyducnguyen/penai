@@ -16,4 +16,6 @@
   },
 
   branding: { name: "PenAI", theme: "xanh-duong" },
+  // Múi giờ cho lịch hẹn và ngày "hôm nay" của agent (mặc định Asia/Ho_Chi_Minh)
+  timezone: "Asia/Ho_Chi_Minh",
 }
