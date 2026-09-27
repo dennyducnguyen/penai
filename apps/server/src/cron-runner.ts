@@ -35,7 +35,8 @@ const MEDIA_MARKER_RE = /\[\[media:[^\]]+\]\]/g;
 export const CRON_NO_REPLY = "NO_REPLY";
 
 export function isNoReply(text: string): boolean {
-  return text.replace(/[\s.!*_`"'“”]/g, "").toUpperCase() === CRON_NO_REPLY;
+  // Bỏ dấu trang trí ở hai đầu (**NO_REPLY**, "NO_REPLY.") — giữ nguyên dấu "_" ở giữa
+  return text.replace(/^[\s.!*`"'“”]+|[\s.!*`"'“”]+$/g, "").toUpperCase() === CRON_NO_REPLY;
 }
 
 /**
