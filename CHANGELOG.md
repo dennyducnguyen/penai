@@ -4,6 +4,17 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.2.0 — 2026-09-27
+
+- **Agent tự đặt lịch ngay trong lúc chat**: người dùng nhắn *"nhắc tôi 8h sáng mai gọi anh Nam"*, *"30 phút nữa báo tôi…"*, *"sáng thứ Hai hằng tuần gửi tôi tóm tắt tin AI"* là agent tự tạo lịch (4 tool mới: `cron_create`, `cron_list`, `cron_update`, `cron_delete`). Tới giờ, agent chạy lại và **gửi kết quả về đúng cuộc trò chuyện** đó — Telegram, Zalo, Discord… (chat riêng hoặc nhóm) hoặc trang Chat trên web. Người dùng cũng hỏi được "tôi đang có lịch nào", nhờ đổi giờ, tạm dừng, hủy. Chi tiết: `docs/lich-hen.md`.
+- An toàn: lịch chạy bằng đúng thư mục và quyền của người nhờ đặt lịch; lịch lặp tối thiểu 5 phút, mỗi người tối đa 20 lịch đang bật; người bị gỡ duyệt/gỡ khỏi workspace → lịch tự tắt. Không muốn agent nào tự đặt lịch: Agents → Sửa → bỏ tick `cron_create`.
+- **Múi giờ**: khóa cấu hình mới `timezone` (mặc định `Asia/Ho_Chi_Minh`). Giờ trong lịch và ngày "hôm nay" của agent theo múi giờ này thay vì giờ của VPS (VPS để UTC từng lệch 7 tiếng). Lịch tạo trước bản này vẫn chạy như cũ.
+- Trang **Cron & lịch hẹn** (trước là "Cron & Heartbeat"): thấy lịch nào do agent tạo, ai nhờ, gửi về đâu, múi giờ; nút Tạm dừng/Bật và Lịch sử chạy. Bật lại lịch không còn chạy bù ngay lượt đã lỡ.
+- Sửa lỗi: lượt chạy theo lịch dài hơn 20 giây có thể bị chạy lặp (nhắc hai lần).
+- Lịch nhận thêm cách viết `in 30m` (sau 30 phút), `at 28/09/2026 8h30`, `every 2 giờ`.
+
+Cập nhật: `sudo penai update` (có migration `0030` thêm 4 cột vào bảng `cron_jobs`, tự chạy — không phải làm gì thêm; file cấu hình cũ không có `timezone` vẫn dùng giờ Việt Nam). Nếu sau này cần `penai rollback` về 1.1.x: xóa trước các lịch do agent tạo (cột "Tạo bởi" có 🤖) — bản cũ không biết gửi kết quả và chạy chúng như lịch của quản trị viên.
+
 ## 1.1.0 — 2026-09-26
 
 - **Hồ sơ contact và chỉ dẫn cho AI theo từng người** (Dashboard → Contacts): mỗi người nhắn tới bot có hồ sơ riêng — tên, cách xưng hô, vai trò, ngôn ngữ, trường tùy chỉnh, nhãn (VIP, Đại lý…) và **chỉ dẫn riêng cho AI**. AI biết đang nói chuyện với ai ngay từ tin nhắn đầu tiên. Nhãn có chỉ dẫn chung cho cả nhóm người. Trong nhóm chat mặc định chỉ dùng tên và cách xưng hô. Trang hồ sơ còn cho xem/sửa file `USER.md` AI ghi về người đó, các ghi nhớ, hội thoại, file, quyền, và **xem trước ngữ cảnh** AI sẽ nhận. Chi tiết: `docs/ho-so-contact.md`.
