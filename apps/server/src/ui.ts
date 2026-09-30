@@ -3736,6 +3736,11 @@ export const INDEX_HTML = `<!doctype html>
         renderThreads();
         if (S.cur && S.cur.threadId === d.thread.threadId) { S.cur = d.thread; renderHead(); }
       });
+      es.addEventListener("message_update", function (ev) {
+        var d; try { d = JSON.parse(ev.data); } catch (e) { return; }
+        if (d.channelId !== S.ch || !S.cur || S.cur.threadId !== d.threadId) return;
+        S.msgs.forEach(function (x) { if (x.id === d.message.id) { x.canReact = d.message.canReact; x.meta = d.message.meta; } });
+      });
       es.addEventListener("reaction", function (ev) {
         var d; try { d = JSON.parse(ev.data); } catch (e) { return; }
         if (d.channelId !== S.ch || !S.cur || S.cur.threadId !== d.threadId) return;

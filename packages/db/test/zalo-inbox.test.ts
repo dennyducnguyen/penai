@@ -23,6 +23,7 @@ import {
   upsertZaloReaction,
   getZaloMessageById,
   latestIncomingZaloMessages,
+  setZaloMessageCliId,
   lookupMcpGrantPrincipal,
   markMcpRefreshUsed,
   markZaloThreadRead,
@@ -152,6 +153,9 @@ describe("Zalo Inbox (0031)", () => {
     expect(one?.reactions?.length).toBe(2);
     const latest = await latestIncomingZaloMessages(dbh.db, ctxA(), chA, "1001", 3);
     expect(latest.map((m) => m.msgId)).toEqual(["m-rx"]);
+    // tin PenAI gửi: bổ sung cliMsgId từ bản dội lại → thả được
+    expect((await setZaloMessageCliId(dbh.db, ctxA(), chA, "m-3", "c-3"))?.canReact).toBe(true);
+    expect(await setZaloMessageCliId(dbh.db, ctxA(), chA, "khong-co", "c")).toBeNull();
     rx = await upsertZaloReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "me", reactorName: "", icon: "", source: "web" });
     expect(rx.map((r) => r.reactorId)).toEqual(["1001"]);
     expect(await upsertZaloReaction(dbh.db, ctxB(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "x", reactorName: "", icon: "", source: "web" })).toEqual([]);

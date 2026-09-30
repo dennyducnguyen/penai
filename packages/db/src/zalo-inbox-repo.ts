@@ -405,6 +405,22 @@ export async function getZaloMessageById(
   return r ? mapMessage(r) : null;
 }
 
+/** Bổ sung cliMsgId vào meta của tin đã lưu (bản dội lại của tin PenAI gửi). Trả tin sau cập nhật. */
+export async function setZaloMessageCliId(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+  msgId: string,
+  cliMsgId: string,
+): Promise<ZaloMessageRow | null> {
+  const res = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`UPDATE zalo_messages SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('cliMsgId', ${cliMsgId}::text)
+      WHERE channel_id = ${channelId} AND msg_id = ${msgId} AND msg_id <> '' RETURNING *`),
+  );
+  const r = res.rows[0] as Raw | undefined;
+  return r ? mapMessage(r) : null;
+}
+
 /** N tin mới nhất KHÁCH gửi (direction in) còn thả cảm xúc được, mới nhất trước. */
 export async function latestIncomingZaloMessages(
   db: Db,

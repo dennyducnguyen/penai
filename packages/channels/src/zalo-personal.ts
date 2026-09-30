@@ -1068,6 +1068,9 @@ export class ZaloPersonalChannel implements Channel {
       if (!this.sentMsgIds.has(msgId)) await new Promise((r) => setTimeout(r, 1_500));
       if (this.sentMsgIds.has(msgId)) {
         this.sentMsgIds.delete(msgId);
+        // Tin đã ghi lúc gửi nhưng thiếu cliMsgId (kết quả gửi không có) → bổ sung để thả cảm xúc được.
+        const cli = (message.data as { cliMsgId?: unknown }).cliMsgId;
+        if (cli != null && String(cli) !== "") this.deps.onMessageCliId?.(msgId, String(cli));
         return;
       }
     }

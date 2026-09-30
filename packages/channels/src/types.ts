@@ -146,6 +146,8 @@ export interface ChannelDeps {
   onThreadName?: (threadId: string, name: string) => void;
   /** Zalo Personal — có người thả/gỡ cảm xúc vào một tin (khách, chủ tài khoản, hoặc PenAI vừa thả). */
   onReaction?: (r: ChannelReaction) => void;
+  /** Zalo Personal — bản dội lại của tin PenAI vừa gửi mang cliMsgId → bổ sung vào tin đã lưu. */
+  onMessageCliId?: (msgId: string, cliMsgId: string) => void;
 }
 
 /** Một lượt thả/gỡ cảm xúc vào tin nhắn. icon rỗng = gỡ. */

@@ -32,6 +32,7 @@ import {
   setZaloThreadName,
   updateChannel,
   upsertZaloReaction,
+  setZaloMessageCliId,
   getZaloMessageById,
   latestIncomingZaloMessages,
   upsertZaloContacts,
@@ -203,6 +204,17 @@ export function zaloInboxHooks(
     },
     onThreadName: (threadId: string, name: string) => {
       void setZaloThreadName(db, ctx, ch.id, threadId, name).catch(() => {});
+    },
+    onMessageCliId: (msgId: string, cliMsgId: string) => {
+      // Bản dội lại có thể tới trước khi tin kịp ghi DB → thử lại sau 3 giây nếu chưa thấy.
+      const apply = (retry: boolean) =>
+        setZaloMessageCliId(db, ctx, ch.id, msgId, cliMsgId)
+          .then((m) => {
+            if (m) broadcast(ch.workspaceId, ch.id, "message_update", { channelId: ch.id, threadId: m.threadId, message: publicMessage(m, ch.workspaceId) });
+            else if (retry) setTimeout(() => void apply(false), 3_000).unref?.();
+          })
+          .catch((err) => logger.warn(`zalo.cli_id_store lỗi: ${(err as Error).message}`));
+      void apply(true);
     },
     onReaction: (r: ChannelReaction) => {
       void upsertZaloReaction(db, ctx, ch.id, {

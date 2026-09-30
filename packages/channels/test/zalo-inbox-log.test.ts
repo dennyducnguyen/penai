@@ -159,6 +159,23 @@ describe("Reaction: tự thả cảm xúc + thả tay", () => {
     expect(ZALO_REACTIONS.none).toBe("");
   });
 
+  it("bản dội lại của tin PenAI gửi → báo cliMsgId để bổ sung (thả cảm xúc được)", async () => {
+    const ids: Array<[string, string]> = [];
+    const channel = new ZaloPersonalChannel({
+      id: "zp-cli", name: "x", token: "{}", config: {}, requirePairing: true,
+      onInbound: async () => ({ kind: "ignore" }),
+      onMessageLog: () => {},
+      onMessageCliId: (m, c) => ids.push([m, c]),
+    });
+    const c = channel as unknown as Record<string, unknown>;
+    c.api = { sendMessage: async () => ({ message: { msgId: 777 }, attachment: [] }) };
+    c.account = { id: "me-1", name: "Shop" };
+    await channel.sendManual({ threadId: "g-1", peerKind: "group", text: "hi", source: "mcp" });
+    const handle = (channel as unknown as { handleMessage: (m: unknown) => Promise<void> }).handleMessage.bind(channel);
+    await handle({ type: 1, threadId: "g-1", isSelf: true, data: { msgId: "777", cliMsgId: "c777", uidFrom: "0", content: "hi", msgType: "webchat", ts: "1" } });
+    expect(ids).toEqual([["777", "c777"]]);
+  });
+
   it("tin khách lưu kèm cliMsgId (để thả cảm xúc về sau)", async () => {
     const { logs, inbound } = setup({});
     await inbound("u-7", "m1");
