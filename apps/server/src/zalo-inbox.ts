@@ -334,9 +334,28 @@ export interface ZaloSendRequest {
   peerKind: "direct" | "group";
   text?: string;
   image?: string;
+  /** Ảnh đã nạp + lưu sẵn (prepareOutboundImage) — MCP kiểm tra ảnh trước khi chiếm lượt gửi. */
+  filePaths?: string[];
   source: ZaloSendSource;
   webUserId?: string;
   threadName?: string;
+}
+
+/** Nạp + kiểm tra + lưu ảnh gửi đi. Lỗi → ImageInputError (chưa gửi gì). */
+export async function prepareOutboundImage(
+  dataDir: string,
+  workspaceId: string,
+  channelId: string,
+  src: string,
+): Promise<string> {
+  const img = await loadImageInput(src);
+  return saveOutboundImage(dataDir, workspaceId, channelId, img);
+}
+
+/** Lỗi do Zalo trả về (tham số sai, bị chặn…) → chắc chắn tin CHƯA gửi. */
+export function isZaloRejected(err: unknown): boolean {
+  const e = err as { name?: string; zaloRejected?: boolean } | null;
+  return !!e && (e.name === "ZcaApiError" || e.zaloRejected === true);
 }
 
 export async function sendZalo(dataDir: string, req: ZaloSendRequest): Promise<{ msgIds: string[] }> {
@@ -346,10 +365,9 @@ export async function sendZalo(dataDir: string, req: ZaloSendRequest): Promise<{
     err.code = "NOT_CONNECTED";
     throw err;
   }
-  const filePaths: string[] = [];
+  const filePaths: string[] = [...(req.filePaths ?? [])];
   if (req.image) {
-    const img = await loadImageInput(req.image);
-    filePaths.push(await saveOutboundImage(dataDir, req.workspaceId, req.channelId, img));
+    filePaths.push(await prepareOutboundImage(dataDir, req.workspaceId, req.channelId, req.image));
   }
   const msgIds = await runtime.sendManual({
     threadId: req.threadId,
@@ -398,6 +416,7 @@ function sendError(reply: FastifyReply, err: unknown) {
   const e = err as Error & { code?: string };
   if (e instanceof ImageInputError) return reply.code(400).send({ error: e.message });
   if (e.code === "NOT_CONNECTED") return reply.code(409).send({ error: e.message, code: "NOT_CONNECTED" });
+  if (isZaloRejected(e)) return reply.code(422).send({ error: `Zalo từ chối: ${e.message}`, code: "ZALO_REJECTED" });
   logger.warn(`zalo.inbox_send lỗi: ${e.message}`);
   return reply.code(502).send({ error: `Gửi Zalo lỗi: ${e.message}` });
 }

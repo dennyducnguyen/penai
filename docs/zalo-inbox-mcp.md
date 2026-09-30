@@ -76,6 +76,7 @@ Trình duyệt mở **trang cấp quyền của PenAI**: đăng nhập bằng em
 | `NOT_CONNECTED` | Kênh Zalo mất kết nối — quét QR lại trong Channels |
 | `USER_NOT_FOUND` | SĐT chưa dùng Zalo hoặc chặn tìm kiếm |
 | `RATE_LIMITED` / `SEND_IN_PROGRESS` | Chờ rồi thử lại cùng `request_id` |
+| `ZALO_REJECTED` | Zalo trả lỗi, tin **chưa** gửi (sai uid/loại nhóm, gửi cho chính tài khoản đang kết nối…) |
 | `SEND_OUTCOME_UNKNOWN` | Có thể đã gửi — kiểm tra Inbox, không tự gửi lại bằng mã mới |
 | `IDEMPOTENCY_CONFLICT` | `request_id` đã dùng cho tin khác |
 | `IMAGE_INVALID` | Ảnh sai định dạng / quá lớn / URL nội bộ |

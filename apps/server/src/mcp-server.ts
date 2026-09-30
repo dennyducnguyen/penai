@@ -59,7 +59,14 @@ import {
 } from "@penai/db";
 import { McpServer, WebStandardStreamableHTTPServerTransport } from "@penai/mcp";
 import { parseCookies, SESSION_COOKIE, clientIp } from "./web-auth.js";
-import { allowedZaloChannelIds, ImageInputError, sendZalo, zaloRuntimeFor } from "./zalo-inbox.js";
+import {
+  allowedZaloChannelIds,
+  ImageInputError,
+  isZaloRejected,
+  prepareOutboundImage,
+  sendZalo,
+  zaloRuntimeFor,
+} from "./zalo-inbox.js";
 
 export const MCP_SCOPES = ["zalo:read", "zalo:send"] as const;
 type Scope = (typeof MCP_SCOPES)[number];
@@ -350,13 +357,27 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string): Mcp
     if (!rt?.isConnected()) return fail("NOT_CONNECTED", "Kênh Zalo chưa kết nối — vào PenAI quét QR lại.", { connection_lost: true });
     const lock = sendLocks.get(ch.id) ?? { busy: false, nextAt: 0 };
     sendLocks.set(ch.id, lock);
-    if (lock.busy || Date.now() < lock.nextAt) {
-      return fail("RATE_LIMITED", "Gửi tuần tự từng tin — chờ rồi thử lại với cùng request_id.", {
-        retry_after_seconds: Math.max(2, Math.ceil((lock.nextAt - Date.now()) / 1000)),
-      });
+    const rateLimited = () =>
+      lock.busy || Date.now() < lock.nextAt
+        ? fail("RATE_LIMITED", "Gửi tuần tự từng tin — chờ rồi thử lại với cùng request_id.", {
+            retry_after_seconds: Math.max(2, Math.ceil((lock.nextAt - Date.now()) / 1000)),
+          })
+        : null;
+    const early = rateLimited();
+    if (early) return early;
+    // Kiểm tra ảnh TRƯỚC khi chiếm lượt gửi: ảnh hỏng/URL nội bộ không làm tin kế tiếp bị chờ.
+    let filePaths: string[] = [];
+    if (args.image_url) {
+      try {
+        filePaths = [await prepareOutboundImage(deps.dataDir, p.ctx.workspaceId, ch.id, args.image_url)];
+      } catch (err) {
+        if (err instanceof ImageInputError) return fail("IMAGE_INVALID", err.message);
+        throw err;
+      }
     }
+    const late = rateLimited();
+    if (late) return late;
     lock.busy = true;
-    lock.nextAt = Date.now() + SEND_INTERVAL_MS;
     let recorded = false;
     let attempted = false;
     let result: ToolResult;
@@ -398,13 +419,14 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string): Mcp
       }
       recipient = threadId;
       attempted = true;
+      lock.nextAt = Date.now() + SEND_INTERVAL_MS;
       const out = await sendZalo(deps.dataDir, {
         channelId: ch.id,
         workspaceId: p.ctx.workspaceId,
         threadId,
         peerKind,
         ...(args.message?.trim() ? { text: args.message } : {}),
-        ...(args.image_url ? { image: args.image_url } : {}),
+        ...(filePaths.length ? { filePaths } : {}),
         source: "mcp",
         webUserId: p.ctx.userId,
         ...(args.phone && name ? { threadName: name } : {}),
@@ -423,6 +445,8 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string): Mcp
       const e = err as Error & { code?: string };
       if (e instanceof ImageInputError) result = fail("IMAGE_INVALID", e.message);
       else if (e.code === "NOT_CONNECTED") result = fail("NOT_CONNECTED", e.message, { connection_lost: true });
+      else if (isZaloRejected(e))
+        result = fail("ZALO_REJECTED", `Zalo từ chối, tin chưa được gửi: ${e.message}. Kiểm tra lại người nhận (uid/nhóm) — không gửi được cho chính tài khoản đang kết nối.`);
       else if (attempted)
         result = fail("SEND_OUTCOME_UNKNOWN", `Chưa xác định tin đã tới Zalo hay chưa (${e.message}). Kiểm tra Inbox; không tự gửi lại bằng mã mới.`, {
           request_id: args.request_id ?? null,

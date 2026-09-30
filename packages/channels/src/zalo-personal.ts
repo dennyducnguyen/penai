@@ -1277,7 +1277,11 @@ export class ZaloPersonalChannel implements Channel {
         });
         all.push(...ids);
       } catch (error) {
-        const err = new Error(`Không gửi được file "${name}" qua Zalo: ${errorMessage(error)}`);
+        const err = new Error(`Không gửi được file "${name}" qua Zalo: ${errorMessage(error)}`) as Error & {
+          zaloRejected?: boolean;
+        };
+        // ZaloApiError (name "ZcaApiError") = Zalo đã trả lỗi → chắc chắn chưa gửi.
+        if ((error as Error)?.name === "ZcaApiError") err.zaloRejected = true;
         if (throwOnError) throw err;
         this.deps.onError?.(err);
       }
