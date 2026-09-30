@@ -4,6 +4,17 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.7.0 — 2026-10-01
+
+- **Agent dùng trình duyệt thật**: tool `browser` nâng cấp từ "chỉ đọc chữ một trang" thành trình duyệt **giữ trang mở suốt cuộc trò chuyện**. Agent mở trang, đọc danh sách nút/ô nhập/link (mỗi phần tử một mã như `e12`), rồi **bấm, gõ, chọn, cuộn, quay lại, nhấn phím**, và **chụp màn hình để tự xem** (mô hình đọc được ảnh như ChatGPT/codex). Ảnh chụp cũng lưu vào thư mục làm việc để gửi cho người dùng. Chạy được trang cần JavaScript (Tiki, Lazada, trang quản trị…). Agent được dặn hỏi lại trước khi bấm nút có hậu quả thật (đặt hàng, thanh toán, gửi, xóa) và dừng lại khi gặp CAPTCHA.
+- **Dashboard → 🌐 Trình duyệt** (quản trị viên): trạng thái Chromium, các phiên đang mở, và **hồ sơ trình duyệt** là bộ cookie đăng nhập sẵn để agent vào trang không cần đăng nhập. Nhập cookie bằng cách dán JSON từ tiện ích Chrome Cookie-Editor, file cookies.txt, hoặc chuỗi `ten=gia-tri`. Xem cookie theo tên miền và hạn, xóa từng cookie / theo tên miền / xóa hết, **Thử truy cập** (mở trang bằng hồ sơ, xem ảnh chụp). Gán hồ sơ ở Agents → Cấu hình → Hồ sơ trình duyệt.
+- Cookie **mã hóa** bằng `PENAI_MASTER_KEY`; Dashboard và agent không bao giờ thấy giá trị cookie; mọi lần sửa ghi Audit log. Đóng phiên thì tự lưu lại cookie mới của các tên miền trong hồ sơ, giúp lượt đăng nhập kéo dài hơn.
+- An toàn: trình duyệt **chặn mọi truy cập vào mạng nội bộ** (localhost, IP riêng, metadata đám mây), không tải file, không phát video. RAM được giữ trong tầm: tối đa 2 phiên cùng lúc, phiên rảnh 10 phút tự đóng, không còn phiên thì Chromium tắt hẳn (chỉnh bằng `PENAI_BROWSER_MAX_SESSIONS`, `PENAI_BROWSER_IDLE_MIN`).
+- Lệnh mới `sudo penai install-browser`; `sudo penai doctor` kiểm tra thêm Chromium.
+- Giới hạn đã biết: **Shopee** chặn trình duyệt tự động bằng trang xác minh (CAPTCHA), kể cả khi có cookie. PenAI không vượt CAPTCHA. Dữ liệu shop của bạn nên lấy qua API chính thức.
+
+Chi tiết: `docs/trinh-duyet.md`. Cập nhật: `sudo penai update`. Migration `0033` thêm 1 bảng + 1 cột, tự chạy. **Chromium (~170 MB) tự cài chạy nền trong vài phút** ngay sau khi cập nhật, không phải làm gì thêm. Muốn cài ngay hoặc xem lỗi: `sudo penai install-browser`.
+
 ## 1.6.0 — 2026-09-30
 
 - **Contacts ghi đủ người nhắn Zalo cá nhân**: mỗi khi có người nhắn tới (tin riêng, người gửi trong nhóm) và **cả nhóm Zalo**, hệ thống ghi ngay vào Contacts — không còn phụ thuộc việc chỉ định thread demo hay bật agent. Trước đây Contacts trống với Zalo cá nhân vì chỉ ghi người được agent xử lý.

@@ -111,6 +111,8 @@ export interface AgentLoopDeps {
   timezone?: string;
   /** Lịch hẹn agent tự đặt khi chat (tool cron_*) — chỉ có khi đang chat với người dùng. */
   cron?: ToolContext["cron"];
+  /** Trình duyệt của lượt chạy (tool browser) — forward vào ToolContext. */
+  browser?: ToolContext["browser"];
   delegate?: (toAgentKey: string, task: string) => Promise<string>;
   team?: {
     addTask(title: string, description: string): Promise<string>;
@@ -335,6 +337,9 @@ export async function* runAgent(
       toolCalls: response.toolCalls,
     });
 
+    // Ảnh tool muốn mô hình xem (vd chụp màn hình trình duyệt) — gắn sau các kết
+    // quả tool của vòng này, chỉ trong lượt chạy hiện tại (không lưu lịch sử).
+    const toolImages: string[] = [];
     for (const tc of response.toolCalls as ToolCallData[]) {
       yield { type: "tool_call", id: tc.id, name: tc.name, args: tc.args };
       if (deps.onEvent) {
@@ -364,6 +369,10 @@ export async function* runAgent(
         ...(deps.landingPages ? { landingPages: deps.landingPages } : {}),
         ...(deps.timezone ? { timezone: deps.timezone } : {}),
         ...(deps.cron ? { cron: deps.cron } : {}),
+        ...(deps.browser ? { browser: deps.browser } : {}),
+        showImage: (dataUrl: string) => {
+          if (toolImages.length < 4) toolImages.push(dataUrl);
+        },
         ...(deps.delegate ? { delegate: deps.delegate } : {}),
         ...(deps.team ? { team: deps.team } : {}),
         ...(deps.vault ? { vault: deps.vault } : {}),
@@ -397,6 +406,15 @@ export async function* runAgent(
         role: "tool",
         toolCallId: tc.id,
         content: res.result,
+      });
+    }
+    if (toolImages.length) {
+      transcript.push({
+        role: "user",
+        content:
+          "[Hệ thống] Ảnh chụp màn hình trình duyệt từ tool vừa chạy (không phải tin nhắn của người dùng). " +
+          "Nếu không thấy ảnh thì mô hình này không xem được ảnh — dùng browser snapshot/text.",
+        images: toolImages,
       });
     }
   }

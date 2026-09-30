@@ -225,4 +225,41 @@ describe("Agent loop (spec-agent-loop)", () => {
       "Bạn là trợ lý test.\n\nCONTEXT\n\n# Người đang chat\n- Tên: An",
     );
   });
+
+  it("ảnh tool đưa ra (chụp màn hình trình duyệt) tới mô hình ở vòng sau nhưng không lưu lịch sử", async () => {
+    const tools = new ToolRegistry().register({
+      name: "chup",
+      description: "chụp màn hình giả",
+      schema: z.object({}),
+      async execute(_args, toolCtx) {
+        toolCtx.showImage?.("data:image/jpeg;base64,AAAA");
+        const r = await toolCtx.browser?.act({ action: "snapshot" });
+        return r?.text ?? "không có trình duyệt";
+      },
+    });
+    const provider = new ScriptedProvider([toolResponse("call_img", "chup"), textResponse("Đã xem ảnh")]);
+    const acts: string[] = [];
+    const deps: AgentLoopDeps = {
+      ...makeDeps(provider, tools),
+      browser: {
+        act: async (a) => {
+          acts.push(a.action);
+          return { text: "Trang: Shopee" };
+        },
+      },
+    };
+    const sessionId = await newSession();
+    const events = await collect(runAgent(deps, { ctx: ctx(), agent: AGENT, sessionId, userMessage: "chụp đi" }));
+    expect(events.at(-1)!.type).toBe("done");
+    expect(acts).toEqual(["snapshot"]);
+    const second = provider.requests[1]!.messages;
+    expect(second.map((m) => m.role)).toEqual(["user", "assistant", "tool", "user"]);
+    const toolMsg = second[2]!;
+    expect(toolMsg.role === "tool" && toolMsg.content).toBe("Trang: Shopee");
+    const imgMsg = second[3]!;
+    expect(imgMsg.role === "user" && imgMsg.images).toEqual(["data:image/jpeg;base64,AAAA"]);
+    // Ảnh chỉ sống trong lượt chạy: lịch sử DB không có tin "user" giả
+    const msgs = await loadMessages(dbh.db, ctx(), sessionId);
+    expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
+  });
 });

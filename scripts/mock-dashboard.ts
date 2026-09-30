@@ -3,6 +3,7 @@
 //   pnpm exec tsx scripts/mock-dashboard.ts   → http://127.0.0.1:18899/#/users
 //   Trang Contacts (hồ sơ, nhãn, chỉ dẫn cho AI): http://127.0.0.1:18899/#/contacts
 //   Trang Cron (lịch agent tự tạo khi chat):     http://127.0.0.1:18899/#/cron
+//   Trang Trình duyệt (hồ sơ cookie):            http://127.0.0.1:18899/#/browser
 import { createServer, type IncomingMessage } from "node:http";
 import { BrandingSchema } from "../packages/shared/src/index.js";
 import { composeSystemPrompt } from "../packages/core/src/agent-loop.js";
@@ -50,6 +51,42 @@ const profiles: Record<string, Record<string, unknown>> = {
 };
 const principalTags: Record<string, string[]> = { p1: [tags[0]!.id], p2: [tags[1]!.id] };
 const userMd: Record<string, string> = { p1: "# Ghi nhớ về người dùng này\n\n- Thích câu trả lời có gạch đầu dòng.\n- Đang triển khai PenAI cho IM GROUP.\n" };
+
+// ===== Dữ liệu mẫu Trình duyệt =====
+const exp = (days: number) => Math.floor(now / 1000 + days * 86400);
+const ck = (name: string, domain: string, days: number, len: number) => ({ name, domain, path: "/", expires: days ? exp(days) : -1, httpOnly: true, secure: true, valueLength: len });
+const browserProfiles: Array<{ id: string; name: string; description: string; userAgent: string; locale: string; timezone: string; autoSave: boolean; cookies: ReturnType<typeof ck>[]; updatedAt: string }> = [
+  {
+    id: "bp1", name: "Shopee – shop A", description: "Tài khoản người bán shop A (xem sản phẩm, đơn hàng)", userAgent: "", locale: "vi-VN", timezone: "Asia/Ho_Chi_Minh", autoSave: true, updatedAt: iso(30),
+    cookies: [ck("SPC_EC", ".shopee.vn", 25, 200), ck("SPC_F", ".shopee.vn", 360, 32), ck("SPC_ST", ".shopee.vn", 25, 180), ck("SPC_U", ".shopee.vn", 25, 10), ck("SPC_SI", "shopee.vn", 3, 40), ck("_hjSession_868286", ".shopee.vn", -1, 120)],
+  },
+  { id: "bp2", name: "Trang quản trị nội bộ", description: "", userAgent: "", locale: "vi-VN", timezone: "Asia/Ho_Chi_Minh", autoSave: false, updatedAt: iso(3000), cookies: [] },
+];
+function browserView() {
+  return {
+    status: {
+      installed: true, setup: { state: "ok", version: "1.61.1" }, running: true, maxSessions: 2, idleMin: 10,
+      sessions: [{ agent: "Trợ lý", user: "telegram-1068263601", url: "https://shopee.vn/search?keyword=tr%C3%A1i%20c%C3%A2y%20s%E1%BA%A5y", idleSec: 42 }],
+    },
+    profiles: browserProfiles.map((p) => {
+      const byDom = new Map<string, { count: number; expired: number; soonest: number | null }>();
+      for (const c of p.cookies) {
+        const d = c.domain.replace(/^\./, "");
+        const x = byDom.get(d) ?? { count: 0, expired: 0, soonest: null };
+        x.count++;
+        if (c.expires !== -1 && c.expires < now / 1000) x.expired++;
+        else if (c.expires !== -1 && (x.soonest === null || c.expires < x.soonest)) x.soonest = c.expires;
+        byDom.set(d, x);
+      }
+      return {
+        id: p.id, name: p.name, description: p.description, userAgent: p.userAgent, locale: p.locale, timezone: p.timezone, autoSave: p.autoSave,
+        cookieCount: p.cookies.length, cookiesUpdatedAt: p.cookies.length ? p.updatedAt : null, updatedAt: p.updatedAt,
+        domains: [...byDom.entries()].map(([domain, v]) => ({ domain, ...v })),
+        agents: p.id === "bp1" ? [{ id: "a1", key: "tro-ly", name: "Trợ lý" }] : [],
+      };
+    }),
+  };
+}
 
 // ===== Dữ liệu mẫu Cron: 1 lịch quản trị viên tạo + 2 lịch agent tạo khi chat =====
 const TZ = "Asia/Ho_Chi_Minh";
@@ -131,6 +168,26 @@ createServer(async (req, res) => {
   if (path === "/auth/me") return json(me);
   if (path === "/v1/users") return json({ users, agents });
   if (path === "/v1/agents") return json({ agents });
+
+  // ----- Trình duyệt (hồ sơ cookie — giá trị cookie không bao giờ trả ra) -----
+  if (path === "/v1/browser" && method === "GET") return json(browserView());
+  const bpM = /^\/v1\/browser\/profiles\/([^/]+)(\/cookies|\/cookies\/delete|\/test)?$/.exec(path);
+  if (path === "/v1/browser/profiles" && method === "POST") {
+    const b = await readBody(req);
+    const id = "bp" + (browserProfiles.length + 1);
+    browserProfiles.push({ id, name: String(b.name ?? "Hồ sơ mới"), description: String(b.description ?? ""), userAgent: "", locale: "vi-VN", timezone: TZ, autoSave: true, cookies: [], updatedAt: iso(0) });
+    return json({ profile: { id, name: b.name } }, 201);
+  }
+  if (bpM) {
+    const bp = browserProfiles.find((x) => x.id === bpM[1]);
+    if (!bp) return json({ error: "Hồ sơ không tồn tại" }, 404);
+    if (bpM[2] === "/cookies" && method === "GET") return json({ cookies: bp.cookies });
+    if (bpM[2] === "/cookies") return json({ imported: 14, expiredSkipped: 0, total: bp.cookies.length, domains: ["shopee.vn"], closedSessions: 0 });
+    if (bpM[2] === "/cookies/delete") return json({ removed: 1, total: bp.cookies.length - 1 });
+    if (bpM[2] === "/test") return json({ error: "Dashboard giả không chạy trình duyệt" }, 502);
+    return json({ ok: true });
+  }
+  if (path === "/v1/browser/sessions/close") return json({ closed: 1 });
 
   // ----- Cron -----
   if (path === "/v1/cron" && method === "GET") return json(cronView());

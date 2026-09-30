@@ -86,6 +86,7 @@ import {
 import { readFile, writeFile, readdir, stat } from "node:fs/promises";
 import type { McpAccess, McpManager } from "./mcp-manager.js";
 import { makeCronToolApi } from "./cron-tools.js";
+import { browserForRun } from "./browser-runtime.js";
 import { makeHookDispatcher } from "./hooks.js";
 import { agentLibraryDir, execSandboxFor } from "./library-paths.js";
 import { moveToTrash } from "./library-trash.js";
@@ -390,6 +391,8 @@ export async function buildLoopDeps(
     workspaceMemoryEnabled?: boolean;
     /** Agent được ghi vào thư viện file của chính nó (mặc định chỉ đọc). */
     libraryWritable?: boolean;
+    /** Hồ sơ trình duyệt (cookie đăng nhập sẵn) cho tool browser. */
+    browserProfileId?: string | null;
     /** Model của agent — dùng làm model nền khi tạo ảnh native qua codex. */
     agentModel?: string;
     /** Khóa người dùng kênh (vd "telegram-123456") → thư mục làm việc riêng. */
@@ -728,6 +731,16 @@ return res.text || "(agent không trả về nội dung)";
     }
   }
 
+  // Trình duyệt (tool browser): phiên theo agent + người đang chat, mang cookie
+  // của hồ sơ trình duyệt gán cho agent. Chỉ dựng khi tool browser còn bật.
+  const browser = tools.has("browser")
+    ? browserForRun(db, ctx, {
+        ...(agentId ? { agentId } : {}),
+        ...(opts.userKey ? { userKey: opts.userKey } : {}),
+        profileId: opts.browserProfileId ?? null,
+      })
+    : undefined;
+
   return {
     provider,
     tools,
@@ -746,6 +759,7 @@ return res.text || "(agent không trả về nội dung)";
     ...(landingPages ? { landingPages } : {}),
     timezone: rt.config.timezone,
     ...(cron ? { cron } : {}),
+    ...(browser ? { browser } : {}),
     mcpGuard,
     requestApproval: async () => opts.autoApproveExec === true,
     inputGuard: (text) => { const g = checkInput(text, "warn"); return { blocked: g.blocked, matches: g.matches }; },
@@ -1265,12 +1279,14 @@ export function agentOpts(agent: {
   disabledTools?: unknown;
   workspaceMemoryEnabled?: boolean | null;
   libraryWritable?: boolean | null;
+  browserProfileId?: string | null;
 }): {
   agentId: string;
   providerFallback: Array<{ provider: string; model: string }>;
   disabledTools: string[];
   workspaceMemoryEnabled: boolean;
   libraryWritable: boolean;
+  browserProfileId: string | null;
   agentModel?: string;
 } {
   return {
@@ -1281,6 +1297,7 @@ export function agentOpts(agent: {
     disabledTools: Array.isArray(agent.disabledTools) ? (agent.disabledTools as string[]) : [],
     workspaceMemoryEnabled: agent.workspaceMemoryEnabled !== false,
     libraryWritable: agent.libraryWritable === true,
+    browserProfileId: agent.browserProfileId ?? null,
     ...(agent.model ? { agentModel: agent.model } : {}),
   };
 }

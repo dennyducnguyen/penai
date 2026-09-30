@@ -13,6 +13,10 @@ Group={{APP_USER}}
 WorkingDirectory={{APP_DIR}}
 EnvironmentFile={{ETC_DIR}}/penai.env
 Environment=PATH={{NODE_BIN}}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Chromium cho tool trình duyệt của agent (cài bởi: penai install-browser, dùng chung mọi bản cài)
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/penai-browsers
+# Chạy bằng root (+), chỉ kiểm tra rồi thoát ngay: thiếu Chromium thì bật việc cài chạy nền
+ExecStartPre=-+/bin/bash {{APP_DIR}}/deploy/browser-autosetup.sh {{INSTANCE}}
 ExecStart={{NODE_BIN}}/node --import tsx apps/server/src/index.ts
 Restart=on-failure
 RestartSec=5

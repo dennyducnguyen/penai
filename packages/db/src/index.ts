@@ -22,3 +22,4 @@ export * from "./seed.js";
 export * from "./api-repo.js";
 export * from "./zalo-inbox-repo.js";
 export * from "./mcp-oauth-repo.js";
+export * from "./browser-repo.js";

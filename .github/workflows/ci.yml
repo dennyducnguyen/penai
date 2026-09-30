@@ -32,7 +32,7 @@ jobs:
         run: |
           bash -n deploy/install.sh
           bash -n deploy/penai
-          shellcheck -S warning deploy/install.sh deploy/penai
+          shellcheck -S warning deploy/install.sh deploy/penai deploy/browser-autosetup.sh
 
   test:
     runs-on: ubuntu-24.04
