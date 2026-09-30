@@ -34,6 +34,8 @@ Có từ PenAI **1.3.0**. Hai tính năng dùng chung một kênh `zalo_personal
 - Nhân viên trả lời (từ Inbox **hoặc** từ app Zalo trên điện thoại) → AI **tự im 30 phút** trong hội thoại đó để không chen ngang. Đổi số phút ở ⚙️ Cài đặt (0 = không tạm dừng). Bấm **Cho AI trả lời lại** để bỏ tạm dừng ngay.
 - Ô **AI trả lời** trên đầu hội thoại: "Tắt cho hội thoại này" → AI không bao giờ trả lời người/nhóm này.
 
+**Contacts (từ 1.6.0):** mỗi khi có người nhắn tới Zalo cá nhân — tin riêng, người gửi trong nhóm — và **cả nhóm** đó, hệ thống ghi ngay vào Dashboard → Contacts (không phụ thuộc thread demo hay công tắc agent; chỉ tên + UID). Cột **Loại** (👤 Cá nhân / 👥 Nhóm), cột **UID / ID** có nút 📋 sao chép để gửi tin lại (Inbox → Nhắn tin mới, hoặc MCP `zalo_send_message`). Nút **⬇ Xuất Excel** (Vận hành trở lên): chọn kênh rồi tải file .xlsx đầy đủ thông tin contact + hồ sơ; kênh Zalo cá nhân kèm sheet "Danh bạ Zalo" (toàn bộ bạn bè + nhóm đã đồng bộ).
+
 **Ai được vào:**
 
 | Vai trò | Inbox |

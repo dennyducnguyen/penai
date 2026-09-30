@@ -24,6 +24,10 @@ import {
   getZaloMessageById,
   latestIncomingZaloMessages,
   setZaloMessageCliId,
+  upsertContact,
+  listContactsOverview,
+  exportContacts,
+  listAllZaloThreads,
   lookupMcpGrantPrincipal,
   markMcpRefreshUsed,
   markZaloThreadRead,
@@ -159,6 +163,24 @@ describe("Zalo Inbox (0031)", () => {
     rx = await upsertZaloReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "me", reactorName: "", icon: "", source: "web" });
     expect(rx.map((r) => r.reactorId)).toEqual(["1001"]);
     expect(await upsertZaloReaction(dbh.db, ctxB(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "x", reactorName: "", icon: "", source: "web" })).toEqual([]);
+  });
+
+  it("Contacts Zalo: người + nhóm có loại, SĐT từ danh bạ Zalo, xuất Excel theo kênh", async () => {
+    await upsertContact(dbh.db, ctxA(), { channelId: chA, channelKind: "zalo_personal", externalId: "1001", displayName: "Chị Lan", metadata: { zalo_kind: "user" } });
+    await upsertContact(dbh.db, ctxA(), { channelId: chA, channelKind: "zalo_personal", externalId: "g-9", metadata: { zalo_kind: "group" } });
+    // tên nhóm tra được sau → cập nhật, metadata giữ nguyên
+    await upsertContact(dbh.db, ctxA(), { channelId: chA, channelKind: "zalo_personal", externalId: "g-9", displayName: "Nhóm đại lý" });
+    const ov = await listContactsOverview(dbh.db, ctxA());
+    const lan = ov.find((o) => o.externalId === "1001")!;
+    const grp = ov.find((o) => o.externalId === "g-9")!;
+    expect(lan).toMatchObject({ peerKind: "direct", zaloPhone: "0901234567", channelId: chA });
+    expect(grp).toMatchObject({ peerKind: "group", displayName: "Nhóm đại lý" });
+    const rows = await exportContacts(dbh.db, ctxA(), chA);
+    expect(rows.map((r) => r.externalId).sort()).toEqual(["1001", "g-9"]);
+    expect(rows.find((r) => r.externalId === "1001")).toMatchObject({ zaloPhone: "0901234567", userKey: "zalo_personal-1001" });
+    expect(await exportContacts(dbh.db, ctxA(), chB)).toEqual([]);
+    const threads = await listAllZaloThreads(dbh.db, ctxA(), chA);
+    expect(threads.length).toBeGreaterThanOrEqual(3);
   });
 
   it("cách ly workspace: workspace B không thấy hội thoại của A", async () => {
