@@ -213,6 +213,15 @@ export const INDEX_HTML = `<!doctype html>
   .ibx-photo { max-width: 260px; max-height: 260px; border-radius: 8px; display: block; }
   .ibx-sticker { width: 90px; height: 90px; object-fit: contain; }
   .ibx-compose { border-top: 1px solid var(--border); padding: 8px 10px; }
+  .ibx-msg { position: relative; }
+  .ibx-react { display: none; position: absolute; top: -14px; right: -6px; background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 1px 4px; box-shadow: 0 2px 8px rgba(0,0,0,.12); z-index: 2; white-space: nowrap; }
+  .ibx-msg.in .ibx-react { right: auto; left: 30px; }
+  .ibx-msg:hover .ibx-react { display: block; }
+  .ibx-react button { background: transparent; border: 0; padding: 2px 3px; font-size: 1rem; line-height: 1; color: inherit; border-radius: 6px; }
+  .ibx-react button:hover { background: rgba(128,128,128,.18); }
+  .ibx-react button.mine { background: rgba(37,99,235,.18); }
+  .ibx-rx { display: flex; gap: 3px; flex-wrap: wrap; margin: 2px 4px 0; }
+  .ibx-rx span { font-size: .78rem; background: rgba(128,128,128,.14); border-radius: 999px; padding: 0 6px; cursor: default; }
   .ibx-compose textarea { flex: 1; resize: vertical; min-height: 42px; }
   @media (max-width: 860px) { .ibx { flex-direction: column; height: auto; } .ibx-list { width: 100%; max-height: 300px; border-right: 0; border-bottom: 1px solid var(--border); } .ibx-msgs { min-height: 360px; } .ibx-msg { max-width: 90%; } }
 </style>
@@ -1337,7 +1346,9 @@ export const INDEX_HTML = `<!doctype html>
       '<div style="flex:1"><label>Microsoft App ID *</label><input id="cAppId" placeholder="00000000-0000-0000-0000-000000000000" style="width:100%" value="' + (isEdit ? esc((existing.config || {}).appId || "") : "") + '"></div>' +
       '<div style="flex:1"><label>Tenant ID <span class="muted">(bot Single Tenant; Multi Tenant để trống)</span></label><input id="cTenant" placeholder="35ee052b-..." style="width:100%" value="' + (isEdit ? esc((existing.config || {}).tenantId || "") : "") + '"></div></div></div>' +
       '<div class="muted" id="cHint" style="font-size:.78rem;margin-top:4px"></div>' +
-      '<div class="row" style="margin-top:10px"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cPair"' + (isEdit ? (existing.requirePairing ? " checked" : "") : " checked") + "> Yêu cầu pairing</label>" +
+      '<div class="row" style="margin-top:10px"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cAgentReply"' + (isEdit && (existing.config || {}).agent_reply === false ? "" : " checked") + "> Agent tự trả lời</label>" +
+      '<span class="muted" style="font-size:.78rem">Bỏ tick: kênh vẫn kết nối và lưu tin (Inbox Zalo), AI không trả lời; lịch hẹn vẫn gửi</span></div>' +
+      '<div class="row" style="margin-top:6px"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cPair"' + (isEdit ? (existing.requirePairing ? " checked" : "") : " checked") + "> Yêu cầu pairing</label>" +
       '<span class="muted" style="font-size:.78rem">Người lạ nhắn lần đầu phải được admin duyệt mã (an toàn, nên bật)</span></div>' +
       (isEdit ? '<div class="row" style="margin-top:6px"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cEnabled"' + (existing.enabled ? " checked" : "") + "> Đang hoạt động</label><span class='muted' style='font-size:.78rem'>Bỏ tick để tạm dừng kênh</span></div>" : "") +
       '<div class="row" style="margin-top:14px"><button id="cSave">' + (isEdit ? "Lưu & khởi động lại" : "Tạo kênh") + '</button><button class="ghost" id="cCancel">Hủy</button><span id="cMsg" class="muted"></span></div>';
@@ -1375,6 +1386,7 @@ export const INDEX_HTML = `<!doctype html>
       if (kind === "msteams") {
         body.config = { appId: $("#cAppId", dlg).value.trim(), tenantId: $("#cTenant", dlg).value.trim() };
       }
+      body.config = Object.assign(body.config || {}, { agent_reply: $("#cAgentReply", dlg).checked });
       var req = isEdit
         ? api("/v1/channels/" + existing.id, { method: "PATCH", body: body })
         : api("/v1/channels", { method: "POST", body: body });
@@ -3501,6 +3513,9 @@ export const INDEX_HTML = `<!doctype html>
   function ibxNl(s) { return esc(s).split(String.fromCharCode(10)).join("<br>"); }
   function ibxInitial(name) { var n = String(name || "?").trim(); return esc((n.split(" ").pop() || "?").charAt(0).toUpperCase() || "?"); }
   var IBX_SRC = { agent: "🤖 AI", web: "👤 Nhân viên", app: "📱 Điện thoại", mcp: "🔌 Ứng dụng AI", api: "🔌 API" };
+  var IBX_RX = [["heart", "/-heart", "❤️"], ["like", "/-strong", "👍"], ["haha", ":>", "😆"], ["wow", ":o", "😮"], ["cry", ":-((", "😢"], ["angry", ":-h", "😡"]];
+  function ibxRxEmoji(icon) { for (var i = 0; i < IBX_RX.length; i++) if (IBX_RX[i][1] === icon) return IBX_RX[i][2]; return "💬"; }
+  var IBX_RX_SRC = { web: "nhân viên", auto: "tự thả", mcp: "ứng dụng AI", app: "điện thoại", zalo: "" };
 
   PAGES.inbox = function () {
     var m = page("Inbox Zalo", "Nhiều người cùng xem và trả lời khách trên Zalo cá nhân. Nhân viên trả lời thì AI tự tạm im trong hội thoại đó.");
@@ -3524,7 +3539,9 @@ export const INDEX_HTML = `<!doctype html>
       if (!c) { st.innerHTML = ""; return; }
       st.innerHTML = (c.connected ? '<span class="pill ok">đã kết nối</span> ' + esc(c.account ? c.account.name : "") : '<span class="pill err">chưa kết nối</span> <span class="muted">— quản trị vào Channels → Kết nối QR</span>') +
         (c.inbox ? "" : ' · <span class="err">đang TẮT lưu nội dung</span>') +
-        (c.mcpReadMessages ? ' · <span class="pill" title="Ứng dụng AI bên ngoài (MCP) được đọc hội thoại của kênh này">🔓 AI ngoài đọc được tin</span>' : "");
+        (c.mcpReadMessages ? ' · <span class="pill" title="Ứng dụng AI bên ngoài (MCP) được đọc hội thoại của kênh này">🔓 AI ngoài đọc được tin</span>' : "") +
+        (c.agentReply === false ? ' · <span class="pill" title="Channels → Sửa → Agent tự trả lời">🤖 AI đang tắt</span>' : "") +
+        (c.autoReaction ? ' · <span class="pill" title="Tự thả cảm xúc khi khách nhắn">' + (c.autoReaction === "like" ? "👍" : "❤️") + " tự thả</span>" : "");
       $("#ibxSync").style.display = S.canManage ? "" : "none";
       $("#ibxSet").style.display = isAdmin() ? "" : "none";
     }
@@ -3572,8 +3589,37 @@ export const INDEX_HTML = `<!doctype html>
       if (out && x.source === "mcp" && x.webUserName) who = "🔌 Ứng dụng AI (" + x.webUserName + ")";
       var q = x.meta && x.meta.quote && x.meta.quote.text ? '<div class="ibx-quote">↪ ' + esc(x.meta.quote.text) + "</div>" : "";
       var d = el("div", { "class": "ibx-msg " + (out ? "out" : "in"), "data-id": x.id });
-      d.innerHTML = (who ? '<div class="ibx-who">' + esc(who) + "</div>" : "") + '<div class="ibx-bubble">' + q + msgBody(x) + '</div><div class="ibx-time">' + esc(ibxTime(x.sentAt)) + "</div>";
+      d.innerHTML = (who ? '<div class="ibx-who">' + esc(who) + "</div>" : "") + '<div class="ibx-bubble">' + q + msgBody(x) + "</div>" + rxHtml(x) + '<div class="ibx-time">' + esc(ibxTime(x.sentAt)) + "</div>";
+      if (x.canReact && !out) {
+        var mine = myReaction(x);
+        var bar = el("div", { "class": "ibx-react" });
+        IBX_RX.forEach(function (r) {
+          var b = el("button", { type: "button", title: r[0], "class": mine === r[1] ? "mine" : "" }, r[2]);
+          b.onclick = function (e) { e.stopPropagation(); react(x, mine === r[1] ? "none" : r[0]); };
+          bar.appendChild(b);
+        });
+        d.appendChild(bar);
+      }
       return d;
+    }
+    function myId() { var c = chInfo(); return c && c.account ? String(c.account.id) : ""; }
+    function myReaction(x) { var me = myId(), r = (x.reactions || []).filter(function (y) { return y.reactorId === me; })[0]; return r ? r.icon : ""; }
+    function rxHtml(x) {
+      var list = x.reactions || [];
+      if (!list.length) return "";
+      return '<div class="ibx-rx">' + list.map(function (r) {
+        var who = r.reactorName || r.reactorId, src = IBX_RX_SRC[r.source] || "";
+        if (r.webUserName && (r.source === "web" || r.source === "mcp")) src += " " + r.webUserName;
+        return '<span title="' + esc(who + (src ? " (" + src.trim() + ")" : "")) + '">' + ibxRxEmoji(r.icon) + "</span>";
+      }).join("") + "</div>";
+    }
+    function react(x, key) {
+      api("/v1/zalo-inbox/" + S.ch + "/threads/" + S.cur.threadId + "/messages/" + x.id + "/react", { method: "POST", body: { reaction: key } })
+        .catch(function (e) { toast(e.message, true); });
+    }
+    function replaceMsg(x) {
+      var node = document.querySelector('.ibx-msg[data-id="' + x.id + '"]');
+      if (node) node.parentNode.replaceChild(msgEl(x), node);
     }
     function renderHead() {
       var t = S.cur, h = $("#ibxHead");
@@ -3690,6 +3736,11 @@ export const INDEX_HTML = `<!doctype html>
         renderThreads();
         if (S.cur && S.cur.threadId === d.thread.threadId) { S.cur = d.thread; renderHead(); }
       });
+      es.addEventListener("reaction", function (ev) {
+        var d; try { d = JSON.parse(ev.data); } catch (e) { return; }
+        if (d.channelId !== S.ch || !S.cur || S.cur.threadId !== d.threadId) return;
+        S.msgs.forEach(function (x) { if (x.msgId === d.msgId) { x.reactions = d.reactions; replaceMsg(x); } });
+      });
       es.addEventListener("contacts", function (ev) { var d; try { d = JSON.parse(ev.data); } catch (e) { return; } if (d.channelId === S.ch) toast("Đã đồng bộ " + d.count + " liên hệ/nhóm"); });
     }
     var qTimer = null;
@@ -3709,15 +3760,17 @@ export const INDEX_HTML = `<!doctype html>
         '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem"><input type="checkbox" id="isOn" style="width:auto"> Lưu nội dung tin nhắn (bật Inbox)</label>' +
         '<div class="muted" style="margin:4px 0 10px">Tắt thì tin mới không được lưu/hiện trong Inbox (tin cũ giữ nguyên). Lưu ý: bật là lưu cả tin riêng tư của tài khoản Zalo này.</div>' +
         '<label>AI tạm im bao nhiêu phút sau khi nhân viên trả lời (0 = không tạm dừng)</label><input id="isPause" type="number" min="0" max="1440" style="width:120px">' +
+        '<label style="margin-top:14px">Tự thả cảm xúc khi khách nhắn (cá nhân + nhóm)</label><select id="isAutoRx" style="width:200px"><option value="off">Tắt</option><option value="heart">❤️ Thả tim</option><option value="like">👍 Thích</option></select>' +
+        '<div class="muted" style="margin:4px 0 0">Thả vào tin cuối mỗi đợt khách nhắn, sau 1–4 giây. Nhóm đông người nhắn nhiều thì tài khoản thả rất nhiều — Zalo có thể giới hạn tài khoản.</div>' +
         '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem;margin-top:14px"><input type="checkbox" id="isMcpRead" style="width:auto"> Cho ứng dụng AI bên ngoài (MCP) đọc hội thoại và nội dung tin nhắn</label>' +
         '<div class="muted" style="margin:4px 0 0">Mặc định TẮT. Bật thì Claude/ChatGPT… đã kết nối (và được cấp quyền đọc tin nhắn) xem được danh sách hội thoại, toàn bộ lịch sử tin nhắn cá nhân + nhóm của kênh này, tìm kiếm trong tin nhắn để làm báo cáo và trả lời vào hội thoại.</div>' +
         '<div class="dialog-actions"><button class="ghost" id="isX">Hủy</button><button id="isOk">Lưu</button></div>';
       document.body.appendChild(dlg);
-      $("#isOn", dlg).checked = !!c.inbox; $("#isPause", dlg).value = c.pauseMinutes; $("#isMcpRead", dlg).checked = !!c.mcpReadMessages;
+      $("#isOn", dlg).checked = !!c.inbox; $("#isPause", dlg).value = c.pauseMinutes; $("#isMcpRead", dlg).checked = !!c.mcpReadMessages; $("#isAutoRx", dlg).value = c.autoReaction || "off";
       $("#isX", dlg).onclick = function () { dlg.close(); dlg.remove(); };
       $("#isOk", dlg).onclick = function () {
-        api("/v1/zalo-inbox/" + c.id + "/settings", { method: "PUT", body: { enabled: $("#isOn", dlg).checked, pauseMinutes: Number($("#isPause", dlg).value) || 0, mcpReadMessages: $("#isMcpRead", dlg).checked } })
-          .then(function (j) { c.inbox = j.enabled; c.pauseMinutes = j.pauseMinutes; c.mcpReadMessages = j.mcpReadMessages; renderStatus(); dlg.close(); dlg.remove(); toast("Đã lưu"); })
+        api("/v1/zalo-inbox/" + c.id + "/settings", { method: "PUT", body: { enabled: $("#isOn", dlg).checked, pauseMinutes: Number($("#isPause", dlg).value) || 0, mcpReadMessages: $("#isMcpRead", dlg).checked, autoReaction: $("#isAutoRx", dlg).value } })
+          .then(function (j) { c.inbox = j.enabled; c.pauseMinutes = j.pauseMinutes; c.mcpReadMessages = j.mcpReadMessages; c.autoReaction = j.autoReaction; renderStatus(); dlg.close(); dlg.remove(); toast("Đã lưu"); })
           .catch(function (e) { toast(e.message, true); });
       };
       dlg.showModal();
@@ -3779,7 +3832,7 @@ export const INDEX_HTML = `<!doctype html>
             "<li><b>ChatGPT</b>: Settings → Apps &amp; Connectors → Advanced → bật Developer mode → Create → dán địa chỉ, chọn OAuth.</li>" +
             "<li><b>" + esc(BRAND.name) + "</b> (cho agent dùng): trang <a href='#/mcp'>MCP</a> → Thêm → transport http, URL là địa chỉ trên → Đăng nhập OAuth.</li>" +
             "<li>Trình duyệt mở trang cấp quyền của " + esc(BRAND.name) + ": đăng nhập bằng tài khoản Dashboard, chọn quyền (xem danh bạ / gửi tin) → Cấp quyền.</li></ol>" +
-            '<div class="muted" style="margin-top:8px">Công cụ: zalo_list_channels, zalo_list_contacts, zalo_list_groups, zalo_find_user_by_phone, zalo_send_message (theo uid, kèm ảnh — cũng để trả lời vào hội thoại), zalo_send_message_by_phone. Quyền theo tài khoản: Vận hành trở lên dùng mọi kênh Zalo; Thành viên chỉ kênh được gán.</div>' +
+            '<div class="muted" style="margin-top:8px">Công cụ: zalo_list_channels, zalo_list_contacts, zalo_list_groups, zalo_find_user_by_phone, zalo_send_message (theo uid, kèm ảnh — cũng để trả lời vào hội thoại), zalo_send_message_by_phone, zalo_react_latest / zalo_react_message (thả cảm xúc). Quyền theo tài khoản: Vận hành trở lên dùng mọi kênh Zalo; Thành viên chỉ kênh được gán.</div>' +
             '<div style="margin-top:10px"><b>Đọc hội thoại + nội dung tin nhắn</b> (zalo_list_conversations, zalo_get_messages, zalo_search_messages): mặc định TẮT, quản trị bật riêng từng kênh ở Inbox Zalo → ⚙️ Cài đặt; kết nối phải được cấp quyền <code>zalo:messages</code> (kết nối cũ cần kết nối lại).<div style="margin-top:4px">' +
             (j.channels || []).map(function (c) { return '<span class="pill' + (c.mcpReadMessages ? " ok" : "") + '" style="margin-right:4px">' + esc(c.name) + ": " + (c.mcpReadMessages ? "đang BẬT" : "tắt") + "</span>"; }).join("") + "</div></div>";
           $("#msCopy").onclick = function () { try { navigator.clipboard.writeText(j.url); toast("Đã sao chép"); } catch (e) {} };

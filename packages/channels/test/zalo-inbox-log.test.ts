@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThreadType } from "zca-js";
-import type { ChannelContact, ChannelMessageLog } from "../src/types.js";
-import { describeZaloContent, ZaloPersonalChannel } from "../src/zalo-personal.js";
+import type { ChannelContact, ChannelMessageLog, ChannelReaction } from "../src/types.js";
+import { describeZaloContent, parseAutoReaction, ZALO_REACTIONS, ZaloPersonalChannel } from "../src/zalo-personal.js";
 
 describe("describeZaloContent — nội dung tin cho Inbox", () => {
   it("text thường", () => {
@@ -117,4 +117,94 @@ describe("Inbox: ghi tin đi/đến + bỏ bản dội lại", () => {
       code: "NOT_CONNECTED",
     });
   });
+});
+
+describe("Reaction: tự thả cảm xúc + thả tay", () => {
+  afterEach(() => vi.useRealTimers());
+
+  function setup(config: Record<string, unknown>) {
+    const logs: ChannelMessageLog[] = [];
+    const reactions: ChannelReaction[] = [];
+    const calls: Array<{ icon: unknown; dest: { data: { msgId: string; cliMsgId: string }; threadId: string; type: unknown } }> = [];
+    const channel = new ZaloPersonalChannel({
+      id: "zp-rx",
+      name: "Zalo rx",
+      token: "{}",
+      config,
+      requirePairing: true,
+      onInbound: async () => ({ kind: "ignore" }),
+      onMessageLog: (e) => logs.push(e),
+      onReaction: (r) => reactions.push(r),
+    });
+    const c = channel as unknown as Record<string, unknown>;
+    c.api = { addReaction: async (icon: unknown, dest: never) => (calls.push({ icon, dest }), { msgIds: [1] }) };
+    c.account = { id: "me-1", name: "Shop" };
+    const handle = (channel as unknown as { handleMessage: (m: unknown) => Promise<void> }).handleMessage.bind(channel);
+    const inbound = (threadId: string, msgId: string, group = false) =>
+      handle({
+        type: group ? 1 : 0,
+        threadId,
+        isSelf: false,
+        data: { msgId, cliMsgId: "c" + msgId, uidFrom: "u-7", dName: "Khách", content: "alo", msgType: "webchat", ts: String(Date.now()) },
+      });
+    return { channel, logs, reactions, calls, inbound };
+  }
+
+  it("parseAutoReaction: chỉ heart/like, còn lại = tắt", () => {
+    expect(parseAutoReaction({})).toBeNull();
+    expect(parseAutoReaction({ auto_reaction: "heart" })).toBe("heart");
+    expect(parseAutoReaction({ auto_reaction: "like" })).toBe("like");
+    expect(parseAutoReaction({ auto_reaction: "off" })).toBeNull();
+    expect(ZALO_REACTIONS.heart).toBe("/-heart");
+    expect(ZALO_REACTIONS.none).toBe("");
+  });
+
+  it("tin khách lưu kèm cliMsgId (để thả cảm xúc về sau)", async () => {
+    const { logs, inbound } = setup({});
+    await inbound("u-7", "m1");
+    expect(logs[0]?.meta).toMatchObject({ cliMsgId: "cm1" });
+  });
+
+  it("mặc định TẮT: không tự thả", async () => {
+    vi.useFakeTimers();
+    const { calls, inbound } = setup({});
+    await inbound("u-7", "m1");
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("bật ❤️: khách nhắn dồn → chỉ thả tin cuối; nhóm cũng thả; báo onReaction nguồn auto", async () => {
+    vi.useFakeTimers();
+    const { calls, reactions, inbound } = setup({ auto_reaction: "heart" });
+    await inbound("u-7", "m1");
+    await vi.advanceTimersByTimeAsync(500);
+    await inbound("u-7", "m2");
+    await inbound("g-1", "m3", true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls.map((c) => c.dest.data.msgId).sort()).toEqual(["m2", "m3"]);
+    expect(calls.every((c) => c.icon === "/-heart")).toBe(true);
+    expect(calls.find((c) => c.dest.data.msgId === "m3")?.dest.type).toBe(1);
+    expect(reactions.map((r) => [r.targetMsgId, r.source, r.reactorId])).toContainEqual(["m2", "auto", "me-1"]);
+  });
+
+  it("tắt nóng: hẹn giờ đang chờ bị hủy", async () => {
+    vi.useFakeTimers();
+    const { channel, calls, inbound } = setup({ auto_reaction: "like" });
+    await inbound("u-7", "m1");
+    channel.setAutoReaction(null);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("thả tay (web) + gỡ; thiếu cliMsgId thì báo lỗi rõ", async () => {
+    const { channel, calls, reactions } = setup({});
+    await channel.react({ threadId: "u-7", peerKind: "direct", msgId: "m9", cliMsgId: "c9", reaction: "wow", source: "web", webUserId: "user-1" });
+    expect(calls[0]).toMatchObject({ icon: ":o", dest: { data: { msgId: "m9", cliMsgId: "c9" }, threadId: "u-7", type: 0 } });
+    expect(reactions[0]).toMatchObject({ source: "web", webUserId: "user-1", icon: ":o" });
+    await channel.react({ threadId: "u-7", peerKind: "direct", msgId: "m9", cliMsgId: "c9", reaction: "none", source: "web" });
+    expect(calls[1]?.icon).toBe("");
+    await expect(
+      channel.react({ threadId: "u-7", peerKind: "direct", msgId: "m9", cliMsgId: "", reaction: "heart", source: "web" }),
+    ).rejects.toThrow(/thiếu mã/);
+  }, 10_000);
 });

@@ -20,6 +20,9 @@ import {
   listZaloThreads,
   countZaloMessages,
   searchZaloMessages,
+  upsertZaloReaction,
+  getZaloMessageById,
+  latestIncomingZaloMessages,
   lookupMcpGrantPrincipal,
   markMcpRefreshUsed,
   markZaloThreadRead,
@@ -127,6 +130,31 @@ describe("Zalo Inbox (0031)", () => {
     expect(await searchZaloMessages(dbh.db, ctxB(), chA, "báo giá")).toEqual([]);
     const big = await listZaloMessages(dbh.db, ctxA(), chA, "1001", { limit: 1500, maxLimit: 2000 });
     expect(big).toHaveLength(3);
+  });
+
+  it("cảm xúc: thả, đổi, dội lại giữ nguồn, gỡ; tin có cliMsgId mới thả được", async () => {
+    await recordZaloMessage(dbh.db, ctxA(), chA, msg({ msgId: "m-rx", text: "cho em hỏi giá", meta: { cliMsgId: "c-rx" } }));
+    let rx = await upsertZaloReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "me", reactorName: "Shop", icon: "/-heart", source: "web", webUserId: fx.userId });
+    expect(rx).toHaveLength(1);
+    expect(rx[0]).toMatchObject({ icon: "/-heart", source: "web" });
+    expect(rx[0]?.webUserName).toBeTruthy();
+    // bản dội lại từ điện thoại (app) cùng icon → giữ nguồn web
+    rx = await upsertZaloReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "me", reactorName: "", icon: "/-heart", source: "app" });
+    expect(rx[0]).toMatchObject({ source: "web", reactorName: "Shop" });
+    rx = await upsertZaloReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "1001", reactorName: "Chị Lan", icon: "/-strong", source: "zalo" });
+    expect(rx.map((r) => r.icon)).toEqual(["/-heart", "/-strong"]);
+    const all = await listZaloMessages(dbh.db, ctxA(), chA, "1001");
+    const target = all.find((m) => m.msgId === "m-rx")!;
+    expect(target.canReact).toBe(true);
+    expect(target.reactions?.length).toBe(2);
+    expect(all.find((m) => m.msgId === "m-1")?.canReact).toBe(false);
+    const one = await getZaloMessageById(dbh.db, ctxA(), chA, "1001", target.id);
+    expect(one?.reactions?.length).toBe(2);
+    const latest = await latestIncomingZaloMessages(dbh.db, ctxA(), chA, "1001", 3);
+    expect(latest.map((m) => m.msgId)).toEqual(["m-rx"]);
+    rx = await upsertZaloReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "me", reactorName: "", icon: "", source: "web" });
+    expect(rx.map((r) => r.reactorId)).toEqual(["1001"]);
+    expect(await upsertZaloReaction(dbh.db, ctxB(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "x", reactorName: "", icon: "", source: "web" })).toEqual([]);
   });
 
   it("cách ly workspace: workspace B không thấy hội thoại của A", async () => {

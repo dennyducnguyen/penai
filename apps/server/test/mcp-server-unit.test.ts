@@ -45,8 +45,10 @@ describe("MCP server — OAuth helpers", () => {
 
 describe("Inbox — cấu hình + ảnh gửi đi", () => {
   it("readInboxConfig: mặc định bật lưu, tạm dừng 30 phút", () => {
-    expect(readInboxConfig({})).toEqual({ enabled: true, pauseMinutes: 30, mcpReadMessages: false });
-    expect(readInboxConfig({ inbox: false, inbox_pause_minutes: 0 })).toEqual({ enabled: false, pauseMinutes: 0, mcpReadMessages: false });
+    expect(readInboxConfig({})).toEqual({ enabled: true, pauseMinutes: 30, mcpReadMessages: false, autoReaction: null, agentReply: true });
+    expect(readInboxConfig({ inbox: false, inbox_pause_minutes: 0 })).toMatchObject({ enabled: false, pauseMinutes: 0, mcpReadMessages: false });
+    // Tự thả cảm xúc mặc định tắt; công tắc Agent tự trả lời mặc định bật
+    expect(readInboxConfig({ auto_reaction: "heart", agent_reply: false })).toMatchObject({ autoReaction: "heart", agentReply: false });
     // Cho AI ngoài đọc tin: chỉ bật khi đặt đúng true
     expect(readInboxConfig({ mcp_read_messages: true }).mcpReadMessages).toBe(true);
     expect(readInboxConfig({ mcp_read_messages: "true" }).mcpReadMessages).toBe(false);

@@ -41,6 +41,14 @@ export interface ZaloThread {
   pausedUntil: string | null;
 }
 
+export interface ZaloReactionRow {
+  icon: string;
+  reactorId: string;
+  reactorName: string;
+  source: string;
+  webUserName: string | null;
+}
+
 export interface ZaloMessageRow {
   id: string;
   threadId: string;
@@ -56,6 +64,10 @@ export interface ZaloMessageRow {
   media: Record<string, unknown> | null;
   meta: Record<string, unknown> | null;
   sentAt: string;
+  /** Cảm xúc trên tin (chỉ có khi truy vấn kèm reactions). */
+  reactions?: ZaloReactionRow[];
+  /** Thả cảm xúc được không (có đủ msgId + cliMsgId — tin lưu từ bản 1.5.0). */
+  canReact?: boolean;
 }
 
 type Raw = Record<string, unknown>;
@@ -83,7 +95,19 @@ function mapThread(r: Raw): ZaloThread {
   };
 }
 
+function mapReactions(v: unknown): ZaloReactionRow[] {
+  if (!Array.isArray(v)) return [];
+  return (v as Raw[]).map((x) => ({
+    icon: String(x.icon ?? ""),
+    reactorId: String(x.reactor_id ?? ""),
+    reactorName: String(x.reactor_name ?? ""),
+    source: String(x.source ?? ""),
+    webUserName: (x.web_user_name as string | null) ?? null,
+  }));
+}
+
 function mapMessage(r: Raw): ZaloMessageRow {
+  const meta = (r.meta as Record<string, unknown> | null) ?? null;
   return {
     id: String(r.id),
     threadId: String(r.thread_id),
@@ -97,10 +121,17 @@ function mapMessage(r: Raw): ZaloMessageRow {
     contentType: String(r.content_type ?? "text"),
     text: String(r.text ?? ""),
     media: (r.media as Record<string, unknown> | null) ?? null,
-    meta: (r.meta as Record<string, unknown> | null) ?? null,
+    meta,
     sentAt: iso(r.sent_at) ?? new Date().toISOString(),
+    ...(r.reactions !== undefined ? { reactions: mapReactions(r.reactions) } : {}),
+    canReact: !!r.msg_id && typeof meta?.cliMsgId === "string" && meta.cliMsgId !== "",
   };
 }
+
+const REACTIONS_SUBQUERY = sql`(SELECT COALESCE(json_agg(json_build_object('icon', zr.icon, 'reactor_id', zr.reactor_id,
+    'reactor_name', zr.reactor_name, 'source', zr.source, 'web_user_name', zu.name) ORDER BY zr.updated_at), '[]'::json)
+  FROM zalo_reactions zr LEFT JOIN users zu ON zu.id = zr.web_user_id
+  WHERE zr.channel_id = m.channel_id AND zr.msg_id = m.msg_id AND m.msg_id <> '')`;
 
 const PREVIEW_LABEL: Record<string, string> = {
   photo: "[Hình ảnh]",
@@ -308,7 +339,7 @@ export async function listZaloMessages(
   const before = opts.beforeId && /^\d+$/.test(opts.beforeId) ? sql`AND m.id < ${opts.beforeId}::bigint` : sql``;
   const res = await withWorkspace(db, ctx, (tx) =>
     tx.execute(sql`
-      SELECT m.*, u.name AS web_user_name FROM zalo_messages m
+      SELECT m.*, u.name AS web_user_name, ${REACTIONS_SUBQUERY} AS reactions FROM zalo_messages m
       LEFT JOIN users u ON u.id = m.web_user_id
       WHERE m.channel_id = ${channelId} AND m.thread_id = ${threadId} ${before}
       ORDER BY m.id DESC LIMIT ${limit}`),
@@ -354,6 +385,84 @@ export async function searchZaloMessages(
     threadName: String(r.thread_name ?? ""),
     threadKind: r.thread_kind === "group" ? "group" : "direct",
   }));
+}
+
+/** 1 tin theo id nội bộ (kèm cảm xúc). */
+export async function getZaloMessageById(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+  threadId: string,
+  id: string,
+): Promise<ZaloMessageRow | null> {
+  if (!/^\d{1,19}$/.test(id)) return null;
+  const res = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`SELECT m.*, u.name AS web_user_name, ${REACTIONS_SUBQUERY} AS reactions FROM zalo_messages m
+      LEFT JOIN users u ON u.id = m.web_user_id
+      WHERE m.channel_id = ${channelId} AND m.thread_id = ${threadId} AND m.id = ${id}::bigint`),
+  );
+  const r = res.rows[0] as Raw | undefined;
+  return r ? mapMessage(r) : null;
+}
+
+/** N tin mới nhất KHÁCH gửi (direction in) còn thả cảm xúc được, mới nhất trước. */
+export async function latestIncomingZaloMessages(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+  threadId: string,
+  count: number,
+): Promise<ZaloMessageRow[]> {
+  const res = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`SELECT m.* FROM zalo_messages m
+      WHERE m.channel_id = ${channelId} AND m.thread_id = ${threadId} AND m.direction = 'in'
+        AND m.msg_id <> '' AND COALESCE(m.meta->>'cliMsgId', '') <> ''
+      ORDER BY m.id DESC LIMIT ${Math.min(Math.max(count, 1), 20)}`),
+  );
+  return (res.rows as Raw[]).map(mapMessage);
+}
+
+/**
+ * Ghi cảm xúc: icon rỗng = gỡ. Nguồn PenAI (web/auto/mcp) giữ nguyên khi bản dội lại
+ * từ listener (app) tới sau với cùng icon. Trả danh sách cảm xúc hiện tại của tin.
+ */
+export async function upsertZaloReaction(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+  input: {
+    threadId: string;
+    msgId: string;
+    reactorId: string;
+    reactorName: string;
+    icon: string;
+    source: string;
+    webUserId?: string | null;
+  },
+): Promise<ZaloReactionRow[]> {
+  return withWorkspace(db, ctx, async (tx) => {
+    if (!input.icon) {
+      await tx.execute(sql`DELETE FROM zalo_reactions WHERE channel_id = ${channelId}
+        AND msg_id = ${input.msgId} AND reactor_id = ${input.reactorId}`);
+    } else {
+      await tx.execute(sql`INSERT INTO zalo_reactions (workspace_id, channel_id, thread_id, msg_id, reactor_id,
+          reactor_name, icon, source, web_user_id, updated_at)
+        VALUES (${ctx.workspaceId}, ${channelId}, ${input.threadId}, ${input.msgId}, ${input.reactorId},
+          ${input.reactorName}, ${input.icon}, ${input.source}, ${input.webUserId ?? null}, now())
+        ON CONFLICT (channel_id, msg_id, reactor_id) DO UPDATE SET
+          reactor_name = CASE WHEN EXCLUDED.reactor_name <> '' THEN EXCLUDED.reactor_name ELSE zalo_reactions.reactor_name END,
+          source = CASE WHEN EXCLUDED.source = 'app' AND zalo_reactions.icon = EXCLUDED.icon
+                        THEN zalo_reactions.source ELSE EXCLUDED.source END,
+          web_user_id = CASE WHEN EXCLUDED.source = 'app' AND zalo_reactions.icon = EXCLUDED.icon
+                        THEN zalo_reactions.web_user_id ELSE EXCLUDED.web_user_id END,
+          icon = EXCLUDED.icon,
+          updated_at = now()`);
+    }
+    const res = await tx.execute(sql`SELECT zr.icon, zr.reactor_id, zr.reactor_name, zr.source, zu.name AS web_user_name
+      FROM zalo_reactions zr LEFT JOIN users zu ON zu.id = zr.web_user_id
+      WHERE zr.channel_id = ${channelId} AND zr.msg_id = ${input.msgId} ORDER BY zr.updated_at`);
+    return mapReactions(res.rows);
+  });
 }
 
 export async function markZaloThreadRead(

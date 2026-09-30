@@ -4,6 +4,17 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.5.0 — 2026-09-30
+
+- **Tắt agent mà vẫn giữ kênh**: Channels → Sửa kênh có ô mới **"Agent tự trả lời"** (trên cùng, mặc định có tick). Bỏ tick → AI không trả lời trên kênh đó nhưng kênh vẫn kết nối, Inbox Zalo vẫn lưu/hiện tin, nhân viên vẫn chat tay, MCP vẫn chạy; lịch hẹn agent đã đặt vẫn gửi. Dùng được cho mọi loại kênh.
+- **Thả cảm xúc (reaction) Zalo cá nhân**:
+  - Trong Inbox: rê chuột vào tin khách → ❤️ 👍 😆 😮 😢 😡 (bấm lại để gỡ); cảm xúc của khách và của mình hiện dưới tin, cập nhật tức thì.
+  - Tự thả khi khách nhắn (cả tin riêng và nhóm): Inbox → ⚙️ Cài đặt, **mặc định tắt**, chọn ❤️ hoặc 👍. Thả vào tin cuối mỗi đợt nhắn, có giãn cách để tránh bị Zalo coi là spam.
+  - MCP: `zalo_react_latest` (thả vào tin mới nhất của khách trong 1 hội thoại — vd "tìm nhóm X và thả tim tin mới nhất") và `zalo_react_message` (thả vào 1 tin cụ thể). `zalo_get_messages` trả thêm cảm xúc trên từng tin.
+- Lưu ý: chỉ thả được vào tin lưu từ bản này trở đi.
+
+Chi tiết: `docs/zalo-inbox-mcp.md`. Cập nhật: `sudo penai update` (migration `0032` thêm 1 bảng, tự chạy — không phải làm gì thêm).
+
 ## 1.4.0 — 2026-09-30
 
 - **Ứng dụng AI bên ngoài (Claude, ChatGPT…) đọc được hội thoại Zalo cá nhân qua MCP** — để tra thông tin, làm báo cáo và trả lời vào đúng hội thoại (cá nhân hoặc nhóm). 3 công cụ mới: `zalo_list_conversations` (danh sách hội thoại + tin cuối + số chưa đọc), `zalo_get_messages` (toàn bộ lịch sử tin nhắn của một hội thoại, lấy theo từng đợt tới hết), `zalo_search_messages` (tìm từ khóa trong tin nhắn). Trả lời: `zalo_send_message` với `to` = `thread_id`.
