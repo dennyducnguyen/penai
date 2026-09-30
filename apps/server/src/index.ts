@@ -10,6 +10,7 @@ import { CronRunner } from "./cron-runner.js";
 import { MemoryWorker } from "./memory-worker.js";
 import { McpManager } from "./mcp-manager.js";
 import { syncAllSkillsToDisk } from "./skills-fs.js";
+import { shutdownBrowser } from "./browser-runtime.js";
 
 try {
   process.loadEnvFile(".env");
@@ -125,6 +126,8 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     await memoryWorker.stop();
     if (channelManager) await channelManager.stopAll();
     await mcp.stopAll();
+    // Đóng trình duyệt của agent (lưu lại cookie hồ sơ) trước khi đóng database
+    await shutdownBrowser();
     await app.close();
     await db.close();
     process.exit(0);

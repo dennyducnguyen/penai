@@ -204,6 +204,7 @@ Cách dùng: sudo penai [--instance <tên>] <lệnh> [tùy chọn]
   doctor                      Kiểm tra sức khỏe hệ thống
   reset-password <email>      Đặt lại mật khẩu đăng nhập Dashboard
   install-cli claude|agy|all  Cài/nâng cấp CLI cho provider Claude / Antigravity
+  install-browser [--force]   Cài/nâng cấp Chromium cho tool trình duyệt của agent
   auto-update on|off [--channel stable|main] [--every 5min]
   set-repo <url>              Đổi kho mã nguồn (vd bản fork của bạn)
   version                     In phiên bản lệnh và ứng dụng
@@ -424,6 +425,72 @@ cmd_install_cli() {
   echo "Tiếp theo: Dashboard → Providers → bấm Đăng nhập ở dòng Claude / Antigravity."
 }
 
+# Chromium cho tool browser của agent — dùng chung mọi bản cài trên máy (thư mục
+# chỉ đọc với dịch vụ). Dịch vụ tự gọi lệnh này chạy nền khi khởi động mà thấy
+# thiếu (deploy/browser-autosetup.sh), nên học viên chỉ cần `penai update`.
+BROWSERS_DIR="/opt/penai-browsers"
+
+cmd_install_browser() {
+  need_root install-browser
+  local force=0 opt
+  while [[ $# -gt 0 ]]; do
+    opt="$1"; shift
+    case "$opt" in
+      --force) force=1 ;;
+      --quiet) QUIET=1 ;;
+      *) die "Tùy chọn không hiểu: $opt" ;;
+    esac
+  done
+  load_conf
+  local rel pw cli ver status log
+  rel="$(current_release)"; [[ -n $rel ]] || die "Chưa có bản PenAI nào đang chạy"
+  pw="$rel/packages/tools/node_modules/playwright-core"
+  cli="$pw/cli.js"
+  [[ -f $cli ]] || die "Bản đang chạy chưa hỗ trợ trình duyệt (thiếu playwright-core) — cập nhật PenAI trước: sudo penai update"
+  ver="$("$NODE_BIN/node" -p 'require(process.argv[1]).version' "$pw/package.json" 2>/dev/null || echo "?")"
+  status="$DATA_HOME/browser-setup.json"
+  install -d -m 0750 "$LOG_DIR"
+  log="$LOG_DIR/browser-setup-$(date -u +%Y%m%dT%H%M%SZ).log"
+  browser_status() { # browser_status <state> <thông báo>
+    printf '{"state":"%s","message":"%s","playwright":"%s","at":"%s"}\n' "$1" "$2" "$ver" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$status"
+    chown "$APP_USER:$APP_USER" "$status" 2>/dev/null || true; chmod 0640 "$status"
+  }
+  local exe
+  exe="$(PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" "$NODE_BIN/node" -e 'process.stdout.write(require(process.argv[1]).chromium.executablePath())' "$pw" 2>/dev/null || true)"
+  if [[ $force == 0 && -n $exe && -x $exe ]] && browser_launch_ok "$pw"; then
+    browser_status ok "Chromium sẵn sàng"
+    ok "Chromium đã cài và chạy được ($exe)"
+    return 0
+  fi
+  browser_status installing "Đang cài Chromium"
+  info "Cài thư viện hệ thống cho Chromium (apt) — nhật ký: $log"
+  if ! PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" "$NODE_BIN/node" "$cli" install-deps chromium >>"$log" 2>&1; then
+    tail -n 15 "$log" >&2 || true
+    browser_status failed "Cài thư viện hệ thống (apt) lỗi — xem $log"
+    die "Cài thư viện hệ thống cho Chromium thất bại (apt đang bận? mạng?) — thử lại: sudo penai install-browser"
+  fi
+  info "Tải Chromium (~170 MB, dùng chung mọi bản cài trên máy: $BROWSERS_DIR)"
+  install -d -m 0755 "$BROWSERS_DIR"
+  if ! PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" "$NODE_BIN/node" "$cli" install --no-shell chromium >>"$log" 2>&1; then
+    tail -n 15 "$log" >&2 || true
+    browser_status failed "Tải Chromium lỗi — xem $log"
+    die "Tải Chromium thất bại (mạng?) — thử lại: sudo penai install-browser"
+  fi
+  chmod -R a+rX "$BROWSERS_DIR"
+  if ! browser_launch_ok "$pw"; then
+    browser_status failed "Đã cài nhưng Chromium không khởi động được — xem $log"
+    die "Chromium đã cài nhưng không khởi động được dưới user $APP_USER (xem $log)"
+  fi
+  browser_status ok "Chromium sẵn sàng"
+  ok "Đã cài Chromium cho agent — Dashboard → Trình duyệt"
+}
+
+browser_launch_ok() { # browser_launch_ok <thư mục playwright-core> — mở thử Chromium bằng user dịch vụ
+  as_app env PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" timeout 60 "$NODE_BIN/node" -e '
+    require(process.argv[1]).chromium.launch({ channel: "chromium", args: ["--disable-dev-shm-usage"] })
+      .then((b) => b.close()).then(() => process.exit(0), (e) => { console.error(e.message); process.exit(1); });' "$1" >>"${log:-/dev/null}" 2>&1
+}
+
 cmd_auto_update() {
   need_root auto-update
   local action="${1:-}" every="5min" ch=""
@@ -469,6 +536,10 @@ cmd_doctor() {
   check "Extension pgvector" "sudo -u postgres psql -h /var/run/postgresql -p $DB_PORT -d $DB_NAME -tAc \"select 1 from pg_extension where extname='vector'\" | grep -q 1"
   check "Sandbox bubblewrap cho lệnh exec của agent" "sudo -u $APP_USER bwrap --ro-bind / / --dev /dev --proc /proc true" "agent chạy lệnh không cách ly"
   for b in claude agy; do check "CLI $b đã cài" "test -x $DATA_HOME/.local/bin/$b" "sudo penai install-cli $b"; done
+  local pwdir; pwdir="$(current_release)/packages/tools/node_modules/playwright-core"
+  if [[ -d $pwdir ]]; then
+    check "Trình duyệt Chromium cho agent" "browser_launch_ok $pwdir" "sudo penai install-browser"
+  fi
   if [[ -n $DOMAIN ]]; then
     check "nginx cấu hình hợp lệ" "nginx -t"
     check "Truy cập được $PUBLIC_URL" "curl -fsS --max-time 10 $PUBLIC_URL/healthz"
@@ -495,6 +566,7 @@ case "$cmd" in
   doctor) cmd_doctor ;;
   reset-password) cmd_reset_password "$@" ;;
   install-cli) cmd_install_cli "$@" ;;
+  install-browser) cmd_install_browser "$@" ;;
   auto-update) cmd_auto_update "$@" ;;
   set-repo) cmd_set_repo "$@" ;;
   *) cmd_help; die "Không có lệnh '$cmd'" ;;

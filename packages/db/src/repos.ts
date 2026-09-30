@@ -120,6 +120,7 @@ export async function updateAgent(
     thinkingLevel: string;
     workspaceMemoryEnabled: boolean;
     libraryWritable: boolean;
+    browserProfileId: string | null;
   }>,
 ): Promise<AgentRow | null> {
   const rows = await withWorkspace(db, ctx, (tx) =>

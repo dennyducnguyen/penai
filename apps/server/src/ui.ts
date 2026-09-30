@@ -333,6 +333,7 @@ export const INDEX_HTML = `<!doctype html>
     { id: "tools", icon: "🛠️", label: "Custom Tools" },
     { id: "mcp", icon: "🧩", label: "MCP" },
     { id: "mcpserver", icon: "🔗", label: "Kết nối AI bên ngoài" },
+    { id: "browser", icon: "🌐", label: "Trình duyệt", admin: true },
     { id: "vault", icon: "🗄️", label: "Kho tri thức (Vault)" },
     { id: "library", icon: "📁", label: "Thư viện file" },
     { id: "kg", icon: "🕸️", label: "Knowledge Graph" },
@@ -768,6 +769,7 @@ export const INDEX_HTML = `<!doctype html>
         '<span class="muted">Max vòng lặp:</span><input id="dIter" type="number" min="1" max="50" style="width:80px;flex:0"></div>' +
         '<label style="display:flex;align-items:center;gap:7px;margin-top:9px"><input id="dWsMem" type="checkbox" style="flex:0"> Dùng Workspace Semantic <span class="muted">— tắt nếu agent không được dùng kiến thức chung</span></label>' +
         '<label style="display:flex;align-items:center;gap:7px;margin-top:6px"><input id="dLibW" type="checkbox" style="flex:0"> Cho agent ghi vào Thư viện file của mình <span class="muted">— mặc định chỉ đọc · <a href="#/library?agent=' + esc(a.id) + '" id="dLibLink">mở thư viện của agent</a></span></label>' +
+        '<div id="dBrWrap" hidden><label>Hồ sơ trình duyệt <span class="muted">— cookie đăng nhập sẵn cho tool browser (quản lý ở <a href="#/browser" id="dBrLink">Trình duyệt</a>)</span></label><select id="dBr" style="width:100%"><option value="">(trình duyệt trống — không đăng nhập sẵn)</option></select></div>' +
         '<label>System prompt</label><textarea id="dPrompt" rows="8" style="width:100%;font-size:.85rem"></textarea>' +
         '<label>Fallback (JSON: [{"provider":"...","model":"..."}])</label><input id="dFb" style="width:100%">' +
         '<label>Tools (bỏ tick = tắt cho agent này)</label><div id="dTools" class="row" style="max-height:150px;overflow:auto"></div>' +
@@ -783,6 +785,14 @@ export const INDEX_HTML = `<!doctype html>
       $("#dWsMem", dlg).checked = a.workspaceMemoryEnabled !== false;
       $("#dLibW", dlg).checked = a.libraryWritable === true;
       $("#dLibLink", dlg).onclick = function () { dlg.close(); dlg.remove(); };
+      $("#dBrLink", dlg).onclick = function () { dlg.close(); dlg.remove(); };
+      var brLoaded = false;
+      if (isAdmin()) api("/v1/browser").then(function (j) {
+        var sel = $("#dBr", dlg);
+        j.profiles.forEach(function (p) { sel.appendChild(el("option", { value: p.id }, esc(p.name) + " (" + p.cookieCount + " cookie)")); });
+        sel.value = a.browserProfileId || "";
+        $("#dBrWrap", dlg).hidden = false; brLoaded = true;
+      }).catch(function () {});
       $("#dPrompt", dlg).value = a.systemPrompt || "";
       $("#dFb", dlg).value = JSON.stringify(a.providerFallback || []);
       var disabled = a.disabledTools || [];
@@ -826,6 +836,7 @@ export const INDEX_HTML = `<!doctype html>
           workspaceMemoryEnabled: $("#dWsMem", dlg).checked,
           libraryWritable: $("#dLibW", dlg).checked
         };
+        if (brLoaded) patch.browserProfileId = $("#dBr", dlg).value || null;
         var ops = [api("/v1/agents/" + a.id, { method: "PATCH", body: patch })];
         dlg.querySelectorAll(".sk").forEach(function (cb) {
           var was = grantsInit[cb.value];
@@ -2627,6 +2638,216 @@ export const INDEX_HTML = `<!doctype html>
     $("#kCreate").onclick = function () { api("/v1/api-keys", { method: "POST", body: { name: $("#kName").value.trim(), role: $("#kRole").value } }).then(function (r) { $("#kMsg").innerHTML = 'Key (lưu ngay): <code>' + esc(r.apiKey) + "</code>"; load(); }).catch(function (e) { $("#kMsg").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }); };
     var listC = card(m, "Danh sách");
     function load() { api("/v1/api-keys").then(function (j) { listC.innerHTML = "<h3>Danh sách</h3>"; listC.appendChild(table(["Tên", "Prefix", "Role", "Trạng thái", ""], j.keys, function (r) { var tr = el("tr"); tr.innerHTML = "<td>" + esc(r.name) + "</td><td><code>" + esc(r.keyPrefix) + "…</code></td><td>" + esc(r.role) + "</td><td>" + (r.revokedAt ? '<span class="err">thu hồi</span>' : '<span class="ok">hoạt động</span>') + "</td>"; var td = el("td"); if (!r.revokedAt) { var b = el("button", { "class": "ghost sm" }, "Thu hồi"); b.onclick = function () { if (confirm("Thu hồi key?")) api("/v1/api-keys/" + r.id, { method: "DELETE" }).then(load); }; td.appendChild(b); } tr.appendChild(td); return tr; })); }).catch(function (e) { listC.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }); }
+    load();
+  };
+
+  // ---- Trình duyệt của agent (1.7.0): trạng thái Chromium, phiên đang mở, hồ sơ
+  // cookie đăng nhập sẵn. Giá trị cookie KHÔNG bao giờ về tới trình duyệt quản trị.
+  PAGES.browser = function () {
+    var m = page("Trình duyệt", "Agent dùng trình duyệt thật (chạy ngầm trên máy chủ) để xem và thao tác trang web. Hồ sơ = bộ cookie đăng nhập sẵn, lưu mã hóa; gán cho agent ở Agents → Cấu hình.");
+    var stC = card(m, "Trạng thái");
+    var top = card(m);
+    top.innerHTML = '<div class="row" style="justify-content:space-between;align-items:center"><span class="muted">Mỗi hồ sơ giống một trình duyệt đã đăng nhập sẵn (Shopee, Lazada, trang quản trị…). Agent chỉ dùng cookie, không đọc được giá trị.</span><button id="bpNew">＋ Tạo hồ sơ</button></div>';
+    var listC = card(m, "Hồ sơ trình duyệt");
+    $("#bpNew").onclick = function () { editProfile(null); };
+
+    function fmtExp(sec) {
+      if (sec == null || sec === -1) return "phiên";
+      var d = new Date(sec * 1000);
+      return isNaN(d.getTime()) ? "" : d.toLocaleDateString("vi-VN");
+    }
+    function closeDlg(dlg) { dlg.close(); dlg.remove(); }
+    function niceUrl(u) { try { return decodeURI(u); } catch (e) { return u; } }
+
+    function load() {
+      api("/v1/browser").then(function (j) {
+        var s = j.status || {};
+        var setup = s.setup || {};
+        var inst;
+        if (s.installed) inst = '<span class="ok">✅ Đã cài Chromium</span>';
+        else if (setup.state === "installing") inst = '<span>⏳ Đang tự cài Chromium (vài phút)…</span>';
+        else inst = '<span class="err">❌ Chưa cài Chromium</span> <span class="muted">— trên máy chủ chạy <code>sudo penai install-browser</code></span>' +
+          (setup.state === "failed" ? '<div class="err" style="margin-top:4px">Lần cài gần nhất lỗi: ' + esc(setup.message || "") + "</div>" : "");
+        stC.innerHTML = "<h3>Trạng thái</h3>" +
+          '<div class="row" style="gap:18px">' + inst +
+          '<span>Phiên đang mở: <b>' + (s.sessions || []).length + "</b> / tối đa " + esc(s.maxSessions) + "</span>" +
+          '<span class="muted">Phiên rảnh ' + esc(s.idleMin) + " phút tự đóng và lưu lại cookie</span></div>";
+        if ((s.sessions || []).length) {
+          stC.appendChild(table(["Agent", "Người dùng", "Trang đang mở", "Rảnh"], s.sessions, function (x) {
+            var tr = el("tr");
+            tr.innerHTML = "<td>" + esc(x.agent) + "</td><td><code>" + esc(x.user) + "</code></td><td class='muted' style='max-width:420px;word-break:break-all'>" + esc(niceUrl(x.url)) + "</td><td>" + esc(x.idleSec) + " giây</td>";
+            return tr;
+          }));
+          var cb = el("button", { "class": "ghost sm", style: "margin-top:8px" }, "Đóng tất cả phiên");
+          cb.onclick = function () { api("/v1/browser/sessions/close", { method: "POST", body: {} }).then(function (r) { toast("Đã đóng " + r.closed + " phiên"); load(); }).catch(function (e) { toast(e.message, 1); }); };
+          stC.appendChild(cb);
+        }
+        listC.innerHTML = "<h3>Hồ sơ trình duyệt</h3>";
+        if (!j.profiles.length) {
+          listC.innerHTML += '<div class="muted">Chưa có hồ sơ nào. Agent vẫn dùng được trình duyệt (không đăng nhập sẵn). Bấm "＋ Tạo hồ sơ" để thêm cookie cho các trang cần đăng nhập.</div>';
+          return;
+        }
+        listC.appendChild(table(["Hồ sơ", "Cookie theo tên miền", "Agent dùng", ""], j.profiles, function (p) {
+          var tr = el("tr");
+          var doms = p.domains.length ? p.domains.map(function (d) {
+            var warn = d.expired ? ' <span class="err">' + d.expired + " hết hạn</span>" : "";
+            var soon = d.soonest ? " · hết hạn sớm nhất " + fmtExp(d.soonest) : "";
+            return '<div><span class="pill">' + esc(d.domain) + "</span> " + d.count + " cookie" + warn + '<span class="muted">' + esc(soon) + "</span></div>";
+          }).join("") : '<span class="muted">(chưa có cookie)</span>';
+          var ags = p.agents.length ? p.agents.map(function (a) { return '<span class="pill">' + esc(a.name) + "</span>"; }).join(" ") : '<span class="muted">chưa gán</span>';
+          tr.innerHTML = "<td><b>" + esc(p.name) + "</b>" + (p.description ? '<div class="muted">' + esc(p.description) + "</div>" : "") +
+            '<div class="muted">' + (p.autoSave ? "Tự lưu cookie mới" : "Không tự lưu cookie") + (p.cookiesUpdatedAt ? " · cập nhật " + esc(new Date(p.cookiesUpdatedAt).toLocaleString("vi-VN")) : "") + "</div></td>" +
+            "<td>" + doms + "</td><td>" + ags + "</td>";
+          var td = el("td", { style: "white-space:nowrap" });
+          var b1 = el("button", { "class": "sm" }, "🍪 Cookie"); b1.onclick = function () { cookieDialog(p); };
+          var b2 = el("button", { "class": "ghost sm" }, "Thử truy cập"); b2.onclick = function () { testDialog(p); };
+          var b3 = el("button", { "class": "ghost sm" }, "Sửa"); b3.onclick = function () { editProfile(p); };
+          var b4 = el("button", { "class": "ghost sm" }, "Xóa");
+          b4.onclick = function () {
+            if (!confirm('Xóa hồ sơ "' + p.name + '" và toàn bộ cookie của nó?' + (p.agents.length ? " Agent đang dùng sẽ về trình duyệt trống." : ""))) return;
+            api("/v1/browser/profiles/" + p.id, { method: "DELETE" }).then(function () { toast("Đã xóa hồ sơ"); load(); }).catch(function (e) { toast(e.message, 1); });
+          };
+          [b1, b2, b3, b4].forEach(function (b) { td.appendChild(b); td.appendChild(document.createTextNode(" ")); });
+          tr.appendChild(td);
+          return tr;
+        }));
+      }).catch(function (e) { stC.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    }
+
+    function editProfile(p) {
+      var dlg = el("dialog", { style: "width:560px;max-width:95vw;padding:18px" });
+      dlg.innerHTML = '<h3 style="margin:0 0 10px">' + (p ? "Sửa hồ sơ" : "Tạo hồ sơ trình duyệt") + "</h3>" +
+        '<label>Tên hồ sơ</label><input id="bpName" style="width:100%" placeholder="vd Shopee người bán – shop A">' +
+        '<label>Ghi chú</label><input id="bpDesc" style="width:100%" placeholder="Tài khoản nào, dùng cho việc gì">' +
+        '<label>User-Agent <span class="muted">(bỏ trống = Chrome mặc định; muốn giống hệt máy lấy cookie thì dán User-Agent của máy đó)</span></label><input id="bpUa" style="width:100%" placeholder="Mozilla/5.0 (Windows NT 10.0; Win64; x64) …">' +
+        '<div class="row"><div style="flex:1"><label>Ngôn ngữ</label><input id="bpLoc" style="width:100%" placeholder="vi-VN"></div><div style="flex:1"><label>Múi giờ</label><input id="bpTz" style="width:100%" placeholder="Asia/Ho_Chi_Minh"></div></div>' +
+        '<label style="display:flex;align-items:center;gap:7px;margin-top:10px"><input id="bpAuto" type="checkbox" style="flex:0"> Tự lưu cookie mới khi đóng phiên <span class="muted">— trang web hay tự làm mới cookie, bật để giữ đăng nhập lâu hơn</span></label>' +
+        '<div class="dialog-actions"><span id="bpMsg" class="muted" style="margin-right:auto"></span><button class="ghost" id="bpCancel">Hủy</button><button id="bpSave">Lưu</button></div>';
+      document.body.appendChild(dlg); dlg.showModal();
+      $("#bpName", dlg).value = p ? p.name : "";
+      $("#bpDesc", dlg).value = p ? p.description : "";
+      $("#bpUa", dlg).value = p ? p.userAgent : "";
+      $("#bpLoc", dlg).value = p ? p.locale : "vi-VN";
+      $("#bpTz", dlg).value = p ? p.timezone : "Asia/Ho_Chi_Minh";
+      $("#bpAuto", dlg).checked = p ? p.autoSave : true;
+      $("#bpCancel", dlg).onclick = function () { closeDlg(dlg); };
+      $("#bpSave", dlg).onclick = function () {
+        var body = {
+          name: $("#bpName", dlg).value.trim(),
+          description: $("#bpDesc", dlg).value.trim(),
+          userAgent: $("#bpUa", dlg).value.trim(),
+          locale: $("#bpLoc", dlg).value.trim() || "vi-VN",
+          timezone: $("#bpTz", dlg).value.trim() || "Asia/Ho_Chi_Minh",
+          autoSave: $("#bpAuto", dlg).checked
+        };
+        var req = p ? api("/v1/browser/profiles/" + p.id, { method: "PATCH", body: body }) : api("/v1/browser/profiles", { method: "POST", body: body });
+        req.then(function (r) {
+          closeDlg(dlg); load();
+          toast(p ? "Đã lưu hồ sơ" : "Đã tạo hồ sơ — thêm cookie ngay");
+          if (!p && r.profile) cookieDialog({ id: r.profile.id, name: r.profile.name });
+        }).catch(function (e) { $("#bpMsg", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+      };
+    }
+
+    function cookieDialog(p) {
+      var dlg = el("dialog", { style: "width:860px;max-width:96vw;padding:18px" });
+      dlg.innerHTML = '<h3 style="margin:0 0 6px">🍪 Cookie — ' + esc(p.name) + "</h3>" +
+        '<details style="margin-bottom:8px"><summary class="muted" style="cursor:pointer">Cách lấy cookie (bấm để xem)</summary><ol class="muted" style="margin:6px 0 0;padding-left:18px;line-height:1.6">' +
+        "<li>Trên Chrome máy tính, cài tiện ích <b>Cookie-Editor</b> (hoặc EditThisCookie).</li>" +
+        "<li>Mở trang cần dùng (vd shopee.vn) và <b>đăng nhập</b> như bình thường — nên dùng một cửa sổ riêng cho việc này.</li>" +
+        "<li>Bấm biểu tượng Cookie-Editor → <b>Export</b> → <b>JSON</b> (đã chép vào bộ nhớ tạm) → dán vào ô dưới đây, hoặc chọn file .json/.txt.</li>" +
+        "<li>Dùng xong trên máy mình thì <b>đừng bấm Đăng xuất</b> ở cửa sổ đó — đăng xuất làm cookie trên máy chủ mất hiệu lực. Khi agent báo bị đăng xuất/bị chặn: lấy cookie mới và nhập lại.</li>" +
+        "</ol><div class='muted' style='margin-top:6px'>Cũng nhận file cookies.txt (định dạng Netscape) hoặc chuỗi <code>ten=gia-tri; ten2=gia-tri2</code> chép từ DevTools (khi đó nhập thêm Tên miền).</div></details>" +
+        '<textarea id="ckIn" rows="6" style="width:100%;font-family:monospace;font-size:.8rem" placeholder="Dán JSON cookie ở đây…"></textarea>' +
+        '<div class="row" style="margin-top:6px"><input type="file" id="ckFile" accept=".json,.txt" style="flex:0 1 240px">' +
+        '<input id="ckDom" placeholder="Tên miền (chỉ cần với chuỗi ten=gia-tri), vd shopee.vn" style="flex:1">' +
+        '<select id="ckMode" style="flex:0 0 auto"><option value="merge">Gộp với cookie hiện có</option><option value="replace">Thay toàn bộ</option></select>' +
+        '<button id="ckImport">Nhập cookie</button></div><div id="ckMsg" class="muted" style="margin-top:6px"></div>' +
+        '<h3 style="margin:16px 0 6px">Cookie đang lưu <span class="muted">(chỉ hiện tên, tên miền, hạn — không hiện giá trị)</span></h3>' +
+        '<div id="ckList" style="max-height:320px;overflow:auto"><span class="muted">Đang tải…</span></div>' +
+        '<div class="row" style="margin-top:8px"><button class="ghost sm" id="ckDelSel">Xóa mục đã chọn</button><select id="ckDomSel" style="flex:0 1 220px"></select><button class="ghost sm" id="ckDelDom">Xóa cả tên miền</button><button class="ghost sm" id="ckDelAll">Xóa hết</button>' +
+        '<span style="flex:1"></span><button class="ghost" id="ckClose">Đóng</button></div>';
+      document.body.appendChild(dlg); dlg.showModal();
+      var rows = [];
+      function list() {
+        api("/v1/browser/profiles/" + p.id + "/cookies").then(function (j) {
+          rows = j.cookies;
+          var box = $("#ckList", dlg); box.innerHTML = "";
+          var now = Date.now() / 1000;
+          box.appendChild(table(["", "Tên", "Tên miền", "Đường dẫn", "Hết hạn", "Cờ", "Độ dài"], rows, function (c, i) {
+            var tr = el("tr");
+            var exp = c.expires !== -1 && c.expires <= now ? '<span class="err">đã hết hạn</span>' : esc(fmtExp(c.expires));
+            tr.innerHTML = '<td><input type="checkbox" class="ckSel"></td><td><code>' + esc(c.name) + "</code></td><td>" + esc(c.domain) + "</td><td>" + esc(c.path) + "</td><td>" + exp + "</td><td class='muted'>" + (c.httpOnly ? "httpOnly " : "") + (c.secure ? "secure" : "") + "</td><td class='muted'>" + esc(c.valueLength) + "</td>";
+            return tr;
+          }));
+          var doms = {};
+          rows.forEach(function (c) { doms[c.domain.replace(/^[.]/, "")] = 1; });
+          $("#ckDomSel", dlg).innerHTML = Object.keys(doms).map(function (d) { return '<option value="' + esc(d) + '">' + esc(d) + "</option>"; }).join("") || "<option value=''>(trống)</option>";
+        }).catch(function (e) { $("#ckList", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+      }
+      function del(body, what) {
+        if (!confirm("Xóa " + what + "? Các phiên trình duyệt đang mở bằng hồ sơ này sẽ được mở lại.")) return;
+        api("/v1/browser/profiles/" + p.id + "/cookies/delete", { method: "POST", body: body })
+          .then(function (r) { toast("Đã xóa " + r.removed + " cookie"); list(); load(); })
+          .catch(function (e) { toast(e.message, 1); });
+      }
+      $("#ckFile", dlg).onchange = function (ev) {
+        var f = ev.target.files && ev.target.files[0]; if (!f) return;
+        var rd = new FileReader();
+        rd.onload = function () { $("#ckIn", dlg).value = String(rd.result || ""); };
+        rd.readAsText(f);
+      };
+      $("#ckImport", dlg).onclick = function () {
+        var content = $("#ckIn", dlg).value;
+        if (!content.trim()) { $("#ckMsg", dlg).innerHTML = '<span class="err">Chưa dán nội dung cookie</span>'; return; }
+        var mode = $("#ckMode", dlg).value;
+        if (mode === "replace" && !confirm("Thay TOÀN BỘ cookie hiện có của hồ sơ bằng nội dung vừa dán?")) return;
+        var body = { content: content, mode: mode };
+        var d = $("#ckDom", dlg).value.trim(); if (d) body.domain = d;
+        $("#ckMsg", dlg).textContent = "Đang nhập…";
+        api("/v1/browser/profiles/" + p.id + "/cookies", { method: "POST", body: body }).then(function (r) {
+          $("#ckIn", dlg).value = "";
+          $("#ckMsg", dlg).innerHTML = '<span class="ok">Đã nhập ' + r.imported + " cookie (" + esc(r.domains.join(", ")) + ") — hồ sơ có " + r.total + " cookie.</span>" +
+            (r.expiredSkipped ? ' <span class="err">' + r.expiredSkipped + " cookie đã hết hạn bị bỏ qua.</span>" : "") +
+            (r.closedSessions ? ' <span class="muted">Đã đóng ' + r.closedSessions + " phiên dùng cookie cũ.</span>" : "");
+          list(); load();
+        }).catch(function (e) { $("#ckMsg", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+      };
+      $("#ckDelSel", dlg).onclick = function () {
+        var items = [];
+        dlg.querySelectorAll(".ckSel").forEach(function (cb, i) { if (cb.checked && rows[i]) items.push({ name: rows[i].name, domain: rows[i].domain, path: rows[i].path }); });
+        if (!items.length) { toast("Chưa chọn cookie nào", 1); return; }
+        del({ items: items }, items.length + " cookie đã chọn");
+      };
+      $("#ckDelDom", dlg).onclick = function () { var d = $("#ckDomSel", dlg).value; if (d) del({ domain: d }, "mọi cookie của " + d); };
+      $("#ckDelAll", dlg).onclick = function () { del({ all: true }, "TẤT CẢ cookie của hồ sơ"); };
+      $("#ckClose", dlg).onclick = function () { closeDlg(dlg); };
+      list();
+    }
+
+    function testDialog(p) {
+      var dlg = el("dialog", { style: "width:900px;max-width:96vw;padding:18px" });
+      var first = p.domains && p.domains.length ? "https://" + p.domains[0].domain + "/" : "https://";
+      dlg.innerHTML = '<h3 style="margin:0 0 10px">Thử truy cập — ' + esc(p.name) + "</h3>" +
+        '<div class="row"><input id="tsUrl" style="flex:1"><button id="tsGo">Mở trang</button><button class="ghost" id="tsClose">Đóng</button></div>' +
+        '<div class="muted" style="margin-top:6px">Mở trang bằng cookie của hồ sơ trên máy chủ rồi chụp màn hình — xem đã đăng nhập chưa, có bị chặn/bắt xác minh không. Phiên thử đóng ngay, không lưu cookie.</div>' +
+        '<div id="tsOut" style="margin-top:10px"></div>';
+      document.body.appendChild(dlg); dlg.showModal();
+      $("#tsUrl", dlg).value = first;
+      $("#tsClose", dlg).onclick = function () { closeDlg(dlg); };
+      $("#tsGo", dlg).onclick = function () {
+        var out = $("#tsOut", dlg);
+        out.innerHTML = '<span class="muted">Đang mở trang (5–30 giây)…</span>';
+        $("#tsGo", dlg).disabled = true;
+        api("/v1/browser/profiles/" + p.id + "/test", { method: "POST", body: { url: $("#tsUrl", dlg).value.trim() } }).then(function (r) {
+          out.innerHTML = "<div><b>" + esc(r.title || "(không tiêu đề)") + '</b></div><div class="muted" style="word-break:break-all">' + esc(r.url) + "</div>" +
+            (r.notes || []).map(function (n) { return '<div class="err" style="margin-top:4px">' + esc(n) + "</div>"; }).join("") +
+            (r.image ? '<img src="' + r.image + '" style="width:100%;margin-top:8px;border:1px solid var(--border);border-radius:8px">' : "");
+        }).catch(function (e) { out.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; })
+          .then(function () { $("#tsGo", dlg).disabled = false; });
+      };
+    }
+
     load();
   };
 

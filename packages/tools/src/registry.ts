@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { WorkspaceContext } from "@penai/shared";
 import type { ExecSandboxOptions } from "./exec-sandbox.js";
+import type { BrowserAction, BrowserActionResult } from "./browser/manager.js";
 
 /** Ngữ cảnh runtime khi tool chạy. */
 export interface ToolContext {
@@ -85,6 +86,18 @@ export interface ToolContext {
     /** Ép provider ("antigravity" | "codex"); bỏ trống = thứ tự mặc định. */
     provider?: string;
   }) => Promise<{ data: Buffer; mime: string; route?: string }>;
+  /**
+   * Trình duyệt của lượt chạy (tool browser): phiên riêng theo agent + người dùng,
+   * mang cookie của hồ sơ trình duyệt agent được gán. Không có → tool báo chưa bật.
+   */
+  browser?: {
+    act(action: BrowserAction): Promise<BrowserActionResult>;
+  };
+  /**
+   * Đưa một ảnh (data URL) cho mô hình xem ở bước kế tiếp — vd ảnh chụp màn hình
+   * trình duyệt. Chỉ trong lượt chạy hiện tại, không lưu vào lịch sử hội thoại.
+   */
+  showImage?: (dataUrl: string) => void;
   /** Truy cập memory của agent (nếu bật). */
   memory?: {
     add(content: string, opts?: { importance?: number }): Promise<void>;

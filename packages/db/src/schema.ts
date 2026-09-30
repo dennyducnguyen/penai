@@ -127,6 +127,8 @@ export const agents = pgTable(
     workspaceMemoryEnabled: boolean("workspace_memory_enabled").notNull().default(true),
     /** Agent được ghi vào thư viện file của chính nó (0028) — mặc định chỉ đọc. */
     libraryWritable: boolean("library_writable").notNull().default(false),
+    /** Hồ sơ trình duyệt (cookie đăng nhập sẵn) cho tool browser (0033). NULL = trình duyệt trống. */
+    browserProfileId: uuid("browser_profile_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -1088,3 +1090,30 @@ export const llmRouteState = pgTable("llm_route_state", {
   lastError: text("last_error"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Hồ sơ trình duyệt cho tool browser (0033): bộ cookie đăng nhập sẵn + dấu vân tay
+ * trình duyệt. Cookie mã hóa AES-256-GCM (cookiesEncrypted = JSON danh sách cookie
+ * định dạng Playwright) — API/Dashboard không bao giờ trả giá trị cookie.
+ */
+export const browserProfiles = pgTable(
+  "browser_profiles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    userAgent: text("user_agent").notNull().default(""),
+    locale: text("locale").notNull().default("vi-VN"),
+    timezone: text("timezone").notNull().default("Asia/Ho_Chi_Minh"),
+    cookiesEncrypted: text("cookies_encrypted"),
+    cookieCount: integer("cookie_count").notNull().default(0),
+    cookiesUpdatedAt: timestamp("cookies_updated_at", { withTimezone: true }),
+    autoSave: boolean("auto_save").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("browser_profiles_ws_name_uq").on(t.workspaceId, t.name)],
+);

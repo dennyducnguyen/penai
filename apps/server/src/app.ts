@@ -25,6 +25,7 @@ import {
   updateAgent,
   deleteAgent,
   getAgentById,
+  getBrowserProfile,
   getAgentByKey,
   getSession,
   listAgents,
@@ -270,6 +271,7 @@ import { registerLibraryRoutes } from "./library.js";
 import { registerZaloInboxRoutes } from "./zalo-inbox.js";
 import { buildXlsx, type XlsxCell } from "./xlsx.js";
 import { isMcpPublicPath, registerMcpServerRoutes } from "./mcp-server.js";
+import { registerBrowserRoutes } from "./browser-runtime.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -498,6 +500,8 @@ const UpdateAgentBody = z.object({
   workspaceMemoryEnabled: z.boolean().optional(),
   /** Cho agent ghi vào thư viện file của chính nó (mặc định chỉ đọc). */
   libraryWritable: z.boolean().optional(),
+  /** Hồ sơ trình duyệt (Dashboard → Trình duyệt) cho tool browser; null = trình duyệt trống. */
+  browserProfileId: z.string().uuid().nullable().optional(),
 });
 
 const CreateWorkspaceMemoryBody = z.object({
@@ -720,6 +724,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Inbox Zalo cá nhân (trực chat nhiều người) + PenAI MCP server (Claude/ChatGPT gọi vào)
   registerZaloInboxRoutes(app, { db, dataDir: deps.config.dataDir });
   registerMcpServerRoutes(app, { db, dataDir: deps.config.dataDir, config: deps.config });
+
+  // Trình duyệt của agent: hồ sơ cookie, thử truy cập, phiên đang mở (ws_admin)
+  registerBrowserRoutes(app, { db });
 
   // Phiên bản kèm theo để lệnh cập nhật kiểm tra đúng bản mới đã chạy.
   app.get("/healthz", async () => ({ ok: true, version: RELEASE.version, ...(RELEASE.commit ? { commit: RELEASE.commit } : {}) }));
@@ -1100,6 +1107,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const parsed = UpdateAgentBody.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: zodMessage(parsed.error) });
+    }
+    if (parsed.data.browserProfileId && !(await getBrowserProfile(db, req.authCtx, parsed.data.browserProfileId))) {
+      return reply.code(400).send({ error: "Hồ sơ trình duyệt không tồn tại" });
     }
     const before = parsed.data.libraryWritable === undefined ? null : await getAgentById(db, req.authCtx, id);
     const agent = await updateAgent(db, req.authCtx, id, parsed.data);

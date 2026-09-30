@@ -2,6 +2,9 @@ export * from "./registry.js";
 export * from "./workspace-paths.js";
 export * from "./exec-sandbox.js";
 export * from "./skill-frontmatter.js";
+export * from "./browser/manager.js";
+export * from "./browser/cookies.js";
+export { isUrlAllowed, isPrivateAddress } from "./browser/net-guard.js";
 export { currentTimeTool } from "./builtin/current-time.js";
 export { readFileTool } from "./builtin/read-file.js";
 export {
