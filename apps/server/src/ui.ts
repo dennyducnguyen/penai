@@ -1555,9 +1555,10 @@ export const INDEX_HTML = `<!doctype html>
     var m = page("Channels", "Kênh nhắn tin (Telegram, Discord...) — mỗi kênh gắn 1 agent trả lời");
     var top = card(m);
     top.innerHTML = '<div class="row" style="justify-content:space-between;align-items:center"><span class="muted">Thêm/sửa kênh áp dụng ngay, không cần restart server. Yêu cầu pairing mới xuất hiện trong mục chờ duyệt ngay bên dưới.</span><button id="chAdd">＋ Thêm kênh</button></div>';
+    // Danh sách kênh đứng đầu (hay dùng nhất), rồi mới tới các mục chờ duyệt
+    var listC = card(m, "Danh sách kênh");
     var pendingC = card(m, "Yêu cầu chờ duyệt");
     var zaloC = card(m, "Zalo — nhóm/thread chờ duyệt");
-    var listC = card(m, "Danh sách kênh");
     var kinds = ["telegram", "discord", "slack", "whatsapp", "zalo", "zalo_personal", "feishu", "msteams"];
     function loadPending() {
       pendingC.innerHTML = '<h3>Yêu cầu chờ duyệt</h3><div class="muted">Đang tải...</div>';
