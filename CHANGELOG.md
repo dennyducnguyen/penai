@@ -4,6 +4,12 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.5.1 — 2026-09-30
+
+- Trang **Channels**: mục "Danh sách kênh" chuyển lên đầu trang (ngay dưới nút ＋ Thêm kênh), các mục chờ duyệt xếp phía dưới.
+
+Cập nhật: `sudo penai update` (không có migration, không phải làm gì thêm).
+
 ## 1.5.0 — 2026-09-30
 
 - **Tắt agent mà vẫn giữ kênh**: Channels → Sửa kênh có ô mới **"Agent tự trả lời"** (trên cùng, mặc định có tick). Bỏ tick → AI không trả lời trên kênh đó nhưng kênh vẫn kết nối, Inbox Zalo vẫn lưu/hiện tin, nhân viên vẫn chat tay, MCP vẫn chạy; lịch hẹn agent đã đặt vẫn gửi. Dùng được cho mọi loại kênh.
