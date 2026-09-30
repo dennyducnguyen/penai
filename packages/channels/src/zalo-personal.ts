@@ -373,6 +373,7 @@ export class ZaloPersonalChannel implements Channel {
    */
   private sentMsgIds = new Set<string>();
   private contactSync: Promise<{ friends: number; groups: number }> | null = null;
+  private pendingThreadName = "";
 
   constructor(private deps: ChannelDeps) {
     this.id = deps.id;
@@ -627,17 +628,24 @@ export class ZaloPersonalChannel implements Channel {
     filePaths?: string[];
     source: ZaloSendSource;
     webUserId?: string;
+    /** Tên người/nhóm nhận (nếu biết) — để hội thoại mới trong Inbox có tên. */
+    threadName?: string;
   }): Promise<string[]> {
     if (!this.api) throw new ZaloNotConnectedError();
     const type = input.peerKind === "group" ? ThreadType.Group : ThreadType.User;
     const ids: string[] = [];
-    if (input.text?.trim()) {
-      ids.push(...(await this.sendText(input.threadId, type, input.text, input.source, input.webUserId)));
-    }
-    if (input.filePaths?.length) {
-      ids.push(
-        ...(await this.sendFiles(input.threadId, type, input.filePaths, input.source, input.webUserId, true)),
-      );
+    this.pendingThreadName = input.threadName ?? "";
+    try {
+      if (input.text?.trim()) {
+        ids.push(...(await this.sendText(input.threadId, type, input.text, input.source, input.webUserId)));
+      }
+      if (input.filePaths?.length) {
+        ids.push(
+          ...(await this.sendFiles(input.threadId, type, input.filePaths, input.source, input.webUserId, true)),
+        );
+      }
+    } finally {
+      this.pendingThreadName = "";
     }
     return ids;
   }
@@ -1000,6 +1008,7 @@ export class ZaloPersonalChannel implements Channel {
         ...(webUserId ? { webUserId } : {}),
         ...content,
         sentAt: new Date(),
+        ...(this.pendingThreadName ? { threadName: this.pendingThreadName } : {}),
       });
     } catch (error) {
       logger.warn(`zalo.inbox_log_fail: ${errorMessage(error)}`);

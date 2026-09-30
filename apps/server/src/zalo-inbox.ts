@@ -336,6 +336,7 @@ export interface ZaloSendRequest {
   image?: string;
   source: ZaloSendSource;
   webUserId?: string;
+  threadName?: string;
 }
 
 export async function sendZalo(dataDir: string, req: ZaloSendRequest): Promise<{ msgIds: string[] }> {
@@ -357,6 +358,7 @@ export async function sendZalo(dataDir: string, req: ZaloSendRequest): Promise<{
     ...(filePaths.length ? { filePaths } : {}),
     source: req.source,
     ...(req.webUserId ? { webUserId: req.webUserId } : {}),
+    ...(req.threadName ? { threadName: req.threadName } : {}),
   });
   return { msgIds };
 }
@@ -527,10 +529,12 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
     if (!rt?.isConnected()) return reply.code(409).send({ error: "Kênh Zalo chưa kết nối", code: "NOT_CONNECTED" });
     let threadId = parsed.data.to ?? "";
     let peerKind = parsed.data.peerKind;
+    let threadName = "";
     if (!threadId && parsed.data.phone) {
       const user = await rt.findUserByPhone(parsed.data.phone).catch(() => null);
       if (!user) return reply.code(404).send({ error: "Không tìm thấy tài khoản Zalo với số này (hoặc người đó chặn tìm kiếm)" });
       threadId = user.uid;
+      threadName = user.name;
       peerKind = "direct";
     } else {
       const known = await getZaloThread(db, req.authCtx, channelId, threadId);
@@ -546,6 +550,7 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
         ...(parsed.data.image ? { image: parsed.data.image } : {}),
         source: "web",
         webUserId: req.authCtx.userId,
+        ...(threadName ? { threadName } : {}),
       });
       return { sent: true, threadId, peerKind };
     } catch (err) {

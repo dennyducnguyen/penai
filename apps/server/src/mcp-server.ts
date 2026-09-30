@@ -407,6 +407,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string): Mcp
         ...(args.image_url ? { image: args.image_url } : {}),
         source: "mcp",
         webUserId: p.ctx.userId,
+        ...(args.phone && name ? { threadName: name } : {}),
       });
       result = ok({
         success: true,
