@@ -47,6 +47,7 @@ Monorepo pnpm (nhiều gói trong một kho mã), TypeScript strict, ESM.
 | `apps/server/src/library*.ts`, `vault-*.ts` | Thư viện file theo agent; kho tri thức (chia đoạn, tạo vector, tìm kiếm) |
 | `apps/server/src/cron-runner.ts`, `cron-tools.ts` | Chạy agent theo lịch và gửi kết quả về cuộc trò chuyện đã đặt lịch; phần runtime của tool `cron_*` (agent tự đặt lịch khi chat — [lich-hen.md](lich-hen.md)) |
 | `apps/server/src/memory-worker.ts`, `mcp-manager.ts` | Tóm tắt hội thoại cũ thành trí nhớ; kết nối và tự nối lại MCP |
+| `apps/server/src/zalo-inbox.ts`, `mcp-server.ts` | Inbox Zalo cá nhân (lưu tin, realtime SSE, gửi text/ảnh); PenAI MCP server + OAuth cho Claude/ChatGPT gọi vào ([zalo-inbox-mcp.md](zalo-inbox-mcp.md)) |
 | `apps/server/src/version.ts` | Phiên bản đang chạy (đọc `release.json` do lệnh cài/cập nhật ghi) |
 | `packages/shared` | Đọc/kiểm tra cấu hình (`config.ts`), mã hóa AES-256-GCM (`crypto.ts`), logger, kiểu dùng chung |
 | `packages/db` | Schema, migration SQL viết tay, hàm truy vấn theo từng nhóm (`*-repo.ts`), lệnh `cli-*` (migrate, tạo quản trị, đặt lại mật khẩu) — **nơi duy nhất có SQL** |

@@ -265,6 +265,8 @@ import {
   type ResolvedAuth,
 } from "./web-auth.js";
 import { registerLibraryRoutes } from "./library.js";
+import { registerZaloInboxRoutes } from "./zalo-inbox.js";
+import { isMcpPublicPath, registerMcpServerRoutes } from "./mcp-server.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -654,7 +656,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       path === "/oauth/mcp/callback" || // redirect từ trang OAuth của MCP server
       path.startsWith("/f/") || // link file công khai — token ngẫu nhiên là bằng chứng
       path.startsWith("/landing/") || // landing page public, HTML chay trong CSP sandbox
-      path.startsWith("/webhooks/")
+      path.startsWith("/webhooks/") ||
+      isMcpPublicPath(path) // PenAI MCP server + OAuth: tự xác thực bằng token riêng (mcp-server.ts)
     )
       return;
     const resolved = await resolveRequestAuth(db, req);
@@ -710,6 +713,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   // Thư viện file của agent (Dashboard → Thư viện file) — operator trở lên
   registerLibraryRoutes(app, { db, dataDir: deps.config.dataDir });
+
+  // Inbox Zalo cá nhân (trực chat nhiều người) + PenAI MCP server (Claude/ChatGPT gọi vào)
+  registerZaloInboxRoutes(app, { db, dataDir: deps.config.dataDir });
+  registerMcpServerRoutes(app, { db, dataDir: deps.config.dataDir, config: deps.config });
 
   // Phiên bản kèm theo để lệnh cập nhật kiểm tra đúng bản mới đã chạy.
   app.get("/healthz", async () => ({ ok: true, version: RELEASE.version, ...(RELEASE.commit ? { commit: RELEASE.commit } : {}) }));

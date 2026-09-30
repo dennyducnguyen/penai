@@ -1,0 +1,120 @@
+import { describe, expect, it } from "vitest";
+import { ThreadType } from "zca-js";
+import type { ChannelContact, ChannelMessageLog } from "../src/types.js";
+import { describeZaloContent, ZaloPersonalChannel } from "../src/zalo-personal.js";
+
+describe("describeZaloContent — nội dung tin cho Inbox", () => {
+  it("text thường", () => {
+    expect(describeZaloContent("xin chào", "webchat")).toEqual({ contentType: "text", text: "xin chào" });
+  });
+
+  it("ảnh từ CDN Zalo giữ link, link lạ bị bỏ", () => {
+    const ok = describeZaloContent(
+      { href: "https://f47-photo.talk.zdn.vn/a.jpg", thumb: "https://f47-photo.talk.zdn.vn/t.jpg", title: "chú thích" },
+      "chat.photo",
+    );
+    expect(ok.contentType).toBe("photo");
+    expect(ok.text).toBe("chú thích");
+    expect(ok.media?.url).toBe("https://f47-photo.talk.zdn.vn/a.jpg");
+    const bad = describeZaloContent({ href: "https://evil.example/a.jpg" }, "chat.photo");
+    expect(bad.media?.url).toBeUndefined();
+  });
+
+  it("file giữ tên + đuôi + dung lượng", () => {
+    const f = describeZaloContent(
+      { href: "https://f18-zpg.zdn.vn/x", title: "bao-gia", params: JSON.stringify({ fileExt: "xlsx", fileSize: 1234 }) },
+      "share.file",
+    );
+    expect(f).toMatchObject({ contentType: "file", media: { name: "bao-gia.xlsx", size: 1234 } });
+  });
+
+  it("sticker / voice / nội dung lạ", () => {
+    expect(describeZaloContent({ id: 1 }, "chat.sticker").contentType).toBe("sticker");
+    expect(describeZaloContent({ href: "https://a.zdn.vn/v.aac" }, "chat.voice").contentType).toBe("voice");
+    expect(describeZaloContent({ foo: 1 }, "chat.xyz").contentType).toBe("other");
+  });
+});
+
+describe("Inbox: ghi tin đi/đến + bỏ bản dội lại", () => {
+  function setup() {
+    const logs: ChannelMessageLog[] = [];
+    const contacts: ChannelContact[][] = [];
+    const channel = new ZaloPersonalChannel({
+      id: "zp-inbox",
+      name: "Zalo inbox",
+      token: "{}",
+      config: {},
+      requirePairing: true,
+      onInbound: async () => ({ kind: "ignore" }),
+      onMessageLog: (e) => logs.push(e),
+      onContactsSynced: (items) => contacts.push(items),
+    });
+    let n = 100;
+    const sent: Array<{ msg: unknown; threadId: string; type: unknown }> = [];
+    const fakeApi = {
+      sendMessage: async (msg: unknown, threadId: string, type: unknown) => {
+        sent.push({ msg, threadId, type });
+        n += 1;
+        return { message: { msgId: String(n) }, attachment: [] };
+      },
+      findUser: async (phone: string) => (phone === "0900000001" ? { uid: "u-1", display_name: "Chị A", avatar: "" } : null),
+    };
+    const c = channel as unknown as Record<string, unknown>;
+    c.api = fakeApi;
+    c.account = { id: "me-1", name: "Shop" };
+    return { channel, logs, sent, contacts };
+  }
+
+  it("sendManual gửi text không qua cổng demo, ghi 1 log nguồn web", async () => {
+    const { channel, logs, sent } = setup();
+    const ids = await channel.sendManual({ threadId: "u-9", peerKind: "direct", text: "chào anh", source: "web", webUserId: "user-1" });
+    expect(ids).toEqual(["101"]);
+    expect(sent[0]).toMatchObject({ threadId: "u-9", type: ThreadType.User });
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({ direction: "out", source: "web", webUserId: "user-1", msgId: "101", text: "chào anh" });
+  });
+
+  it("tin dội lại (isSelf) của tin PenAI vừa gửi không bị ghi lần 2; tin gửi từ điện thoại thì ghi nguồn app", async () => {
+    const { channel, logs } = setup();
+    await channel.sendManual({ threadId: "g-1", peerKind: "group", text: "thông báo", source: "mcp" });
+    const handle = (channel as unknown as { handleMessage: (m: unknown) => Promise<void> }).handleMessage.bind(channel);
+    const base = { type: ThreadType.Group, threadId: "g-1", isSelf: true };
+    await handle({ ...base, data: { msgId: "101", uidFrom: "0", content: "thông báo", msgType: "webchat", ts: String(Date.now()) } });
+    expect(logs).toHaveLength(1);
+    await handle({ ...base, data: { msgId: "555", uidFrom: "0", content: "gõ từ điện thoại", msgType: "webchat", ts: String(Date.now()) } });
+    expect(logs).toHaveLength(2);
+    expect(logs[1]).toMatchObject({ direction: "out", source: "app", text: "gõ từ điện thoại", peerKind: "group" });
+  }, 10_000);
+
+  it("tin khách gửi tới ghi nguồn zalo kèm tên người gửi (kể cả khi agent không được trả lời)", async () => {
+    const { channel, logs } = setup();
+    const handle = (channel as unknown as { handleMessage: (m: unknown) => Promise<void> }).handleMessage.bind(channel);
+    await handle({
+      type: ThreadType.User,
+      threadId: "u-5",
+      isSelf: false,
+      data: { msgId: "900", uidFrom: "u-5", dName: "Anh B", content: "còn hàng không?", msgType: "webchat", ts: String(Date.now()) },
+    });
+    expect(logs[0]).toMatchObject({ direction: "in", source: "zalo", senderName: "Anh B", threadName: "Anh B", threadId: "u-5" });
+  });
+
+  it("findUserByPhone trả null khi không có", async () => {
+    const { channel } = setup();
+    expect(await channel.findUserByPhone("0900000001")).toMatchObject({ uid: "u-1", name: "Chị A" });
+    expect(await channel.findUserByPhone("0900000002")).toBeNull();
+  });
+
+  it("chưa đăng nhập → sendManual báo NOT_CONNECTED", async () => {
+    const channel = new ZaloPersonalChannel({
+      id: "zp-x",
+      name: "x",
+      token: "{}",
+      config: {},
+      requirePairing: true,
+      onInbound: async () => ({ kind: "ignore" }),
+    });
+    await expect(channel.sendManual({ threadId: "1", peerKind: "direct", text: "a", source: "web" })).rejects.toMatchObject({
+      code: "NOT_CONNECTED",
+    });
+  });
+});

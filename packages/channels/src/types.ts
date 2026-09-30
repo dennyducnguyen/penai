@@ -135,4 +135,43 @@ export interface ChannelDeps {
     lastSenderName: string;
     countMessage: boolean;
   }) => void;
+  /**
+   * Zalo Personal — Inbox: MỌI tin đến/đi của tài khoản (kể cả thread chưa
+   * cho agent trả lời) để server lưu và đẩy realtime cho người trực.
+   */
+  onMessageLog?: (entry: ChannelMessageLog) => void;
+  /** Zalo Personal — danh bạ (bạn bè + nhóm) vừa đồng bộ xong. */
+  onContactsSynced?: (items: ChannelContact[]) => void;
+  /** Zalo Personal — tra được tên nhóm (sau khi tin đầu tiên tới). */
+  onThreadName?: (threadId: string, name: string) => void;
+}
+
+/** Một tin nhắn (đến hoặc đi) cho Inbox. */
+export interface ChannelMessageLog {
+  threadId: string;
+  peerKind: "direct" | "group";
+  msgId: string;
+  direction: "in" | "out";
+  /** zalo = người ngoài gửi tới · app = chủ tài khoản gửi từ điện thoại · agent/web/mcp/api = gửi từ PenAI */
+  source: "zalo" | "app" | "agent" | "web" | "mcp" | "api";
+  senderId: string;
+  senderName: string;
+  webUserId?: string;
+  contentType: "text" | "photo" | "file" | "sticker" | "voice" | "video" | "link" | "other";
+  text: string;
+  media?: { url?: string; thumb?: string; name?: string; size?: number; localPath?: string };
+  meta?: Record<string, unknown>;
+  sentAt: Date;
+  /** Tên hội thoại biết được lúc này (DM đến: tên người gửi; nhóm: tên nhóm nếu đã tra). */
+  threadName?: string;
+}
+
+/** Một mục danh bạ đồng bộ về (bạn bè hoặc nhóm). */
+export interface ChannelContact {
+  id: string;
+  type: "direct" | "group";
+  name: string;
+  avatar?: string;
+  phone?: string;
+  memberCount?: number;
 }

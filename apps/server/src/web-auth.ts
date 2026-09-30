@@ -38,6 +38,9 @@ import {
   updateMemberRole,
   updateUserProfile,
   getWorkspaceById,
+  listChannels,
+  listZaloChannelMembers,
+  setUserZaloChannels,
   type Db,
 } from "@penai/db";
 
@@ -169,6 +172,16 @@ const MEMBER_ALLOW: Array<{ methods: string[]; path: RegExp }> = [
   { methods: ["DELETE"], path: /^\/v1\/sessions\/[^/]+$/ },
   { methods: ["POST"], path: /^\/v1\/chat$/ },
   { methods: ["GET"], path: /^\/v1\/chat\/files$/ },
+  // Inbox Zalo: quyền theo kênh được gán kiểm tra trong route (zalo-inbox.ts)
+  { methods: ["GET"], path: /^\/v1\/zalo-inbox\/(channels|events)$/ },
+  { methods: ["GET"], path: /^\/v1\/zalo-inbox\/[0-9a-f-]{36}\/(threads|find-phone|file)$/ },
+  { methods: ["GET"], path: /^\/v1\/zalo-inbox\/[0-9a-f-]{36}\/threads\/\d{1,30}\/messages$/ },
+  { methods: ["POST"], path: /^\/v1\/zalo-inbox\/[0-9a-f-]{36}\/threads\/\d{1,30}\/(read|send)$/ },
+  { methods: ["PUT"], path: /^\/v1\/zalo-inbox\/[0-9a-f-]{36}\/threads\/\d{1,30}\/ai$/ },
+  { methods: ["POST"], path: /^\/v1\/zalo-inbox\/[0-9a-f-]{36}\/new$/ },
+  // Kết nối AI bên ngoài (MCP) của chính mình
+  { methods: ["GET"], path: /^\/v1\/mcp-server$/ },
+  { methods: ["DELETE"], path: /^\/v1\/mcp-server\/connections\/[0-9a-f-]{36}$/ },
 ];
 
 export function memberAllowed(method: string, path: string): boolean {
@@ -351,13 +364,19 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
 
   app.get("/v1/users", async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
-    const [users, agents] = await Promise.all([
+    const [users, agents, channels, zaloMembers] = await Promise.all([
       listWorkspaceUsers(db, req.authCtx),
       listAgents(db, req.authCtx),
+      listChannels(db, req.authCtx),
+      listZaloChannelMembers(db, req.authCtx),
     ]);
     return {
-      users,
+      users: users.map((u) => ({
+        ...u,
+        zaloChannelIds: zaloMembers.filter((m) => m.userId === u.id).map((m) => m.channelId),
+      })),
       agents: agents.map((a) => ({ id: a.id, key: a.key, name: a.name })),
+      zaloChannels: channels.filter((c) => c.kind === "zalo_personal").map((c) => ({ id: c.id, name: c.name })),
       roles: WORKSPACE_ROLES.map((r) => ({ id: r, label: ROLE_LABELS[r] })),
     };
   });
@@ -370,6 +389,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       password?: unknown;
       role?: unknown;
       agentIds?: unknown;
+      zaloChannelIds?: unknown;
       mustChangePassword?: unknown;
     };
     if (!validEmail(b.email)) return reply.code(400).send({ error: "Email không hợp lệ" });
@@ -395,6 +415,10 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     if (role === "member" && agentIds.length) {
       await setUserAgentGrants(db, req.authCtx, created.id, agentIds);
     }
+    const zaloIds = Array.isArray(b.zaloChannelIds) ? b.zaloChannelIds.filter((x): x is string => typeof x === "string") : [];
+    if (role === "member" && zaloIds.length) {
+      await setUserZaloChannels(db, req.authCtx, created.id, zaloIds);
+    }
     await recordAudit(db, req.authCtx, "user.create", { userId: created.id, email: b.email, role });
     return reply.code(201).send({ id: created.id, reusedExisting: created.reusedExisting });
   });
@@ -405,7 +429,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     if (!(await isWorkspaceMember(db, req.authCtx, id))) {
       return reply.code(404).send({ error: "Người dùng không thuộc workspace" });
     }
-    const b = (req.body ?? {}) as { name?: unknown; role?: unknown; isActive?: unknown; agentIds?: unknown };
+    const b = (req.body ?? {}) as { name?: unknown; role?: unknown; isActive?: unknown; agentIds?: unknown; zaloChannelIds?: unknown };
     const self = id === req.authCtx.userId;
     if (b.role !== undefined) {
       if (!isRole(b.role)) return reply.code(400).send({ error: "Role không hợp lệ" });
@@ -428,6 +452,14 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
         req.authCtx,
         id,
         b.agentIds.filter((x): x is string => typeof x === "string"),
+      );
+    }
+    if (Array.isArray(b.zaloChannelIds)) {
+      await setUserZaloChannels(
+        db,
+        req.authCtx,
+        id,
+        b.zaloChannelIds.filter((x): x is string => typeof x === "string"),
       );
     }
     await recordAudit(db, req.authCtx, "user.update", {

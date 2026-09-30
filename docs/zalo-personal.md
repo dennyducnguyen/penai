@@ -1,5 +1,7 @@
 # Zalo Personal trong PenAI
 
+> Từ 1.3.0: mọi tin nhắn của tài khoản được lưu vào **Inbox Zalo** để nhân viên cùng xem/trả lời, và có **MCP server** cho Claude/ChatGPT gửi tin — xem [zalo-inbox-mcp.md](zalo-inbox-mcp.md). Chế độ an toàn bên dưới vẫn áp dụng cho việc **AI tự trả lời**; gửi tay từ Inbox/MCP không bị giới hạn bởi danh sách thread demo.
+
 PenAI hỗ trợ kênh `zalo_personal` bằng `zca-js` 2.1.x để một tài khoản Zalo cá nhân làm đầu vào/đầu ra cho agent.
 
 > Đây là API không chính thức, mô phỏng Zalo Web. Zalo có thể giới hạn hoặc khóa tài khoản; nên dùng tài khoản riêng cho bot. Mỗi tài khoản chỉ nên có một listener web, vì mở Zalo Web cùng lúc có thể làm listener PenAI bị ngắt.

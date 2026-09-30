@@ -20,6 +20,7 @@ PenAI là hệ thống "trợ lý AI của công ty": bạn tạo các **agent**
 - **Hồ sơ contact**: mỗi người nhắn tới bot có hồ sơ riêng (tên, cách xưng hô, vai trò, nhãn VIP/Đại lý…) và chỉ dẫn riêng cho AI — AI biết đang nói chuyện với ai và trả lời đúng từng người.
 - **Kho tri thức (Vault)**: tải lên PDF/Word/Excel/TXT, tìm kiếm ngữ nghĩa, phân quyền theo bộ sưu tập, agent đọc toàn văn khi tìm trúng tài liệu.
 - **Skill & MCP**: nạp skill (thư mục `SKILL.md` + script), kết nối MCP server (Canva, Google, công cụ nội bộ...), phân quyền theo agent và theo người dùng.
+- **Inbox Zalo cá nhân**: nhiều người cùng xem và trả lời khách Zalo ngay trong Dashboard (realtime, gửi ảnh, nhắn tin mới theo SĐT); nhân viên trả lời thì AI tự tạm im. **Kết nối AI bên ngoài (MCP)**: Claude, ChatGPT… (hoặc chính PenAI) gửi tin nhắn + ảnh Zalo, tra danh bạ/nhóm, tìm người theo SĐT. Chi tiết: [docs/zalo-inbox-mcp.md](docs/zalo-inbox-mcp.md).
 - **Lịch hẹn ngay trong lúc chat**: nhắn *"nhắc tôi 8h sáng mai…"*, *"sáng thứ Hai hằng tuần gửi tôi báo cáo…"* là agent tự đặt lịch; tới giờ agent tự chạy và gửi kết quả về đúng cuộc trò chuyện (Telegram, Zalo, trang Chat…). Chi tiết: [docs/lich-hen.md](docs/lich-hen.md).
 - **Tool có sẵn**: đọc/ghi file, chạy Python/Node trong sandbox, đọc tài liệu, tạo ảnh, tạo landing page, đặt lịch (cron), gửi thẻ duyệt có nút bấm, xuất link tải công khai có hạn...
 - **Quản trị**: tài khoản đăng nhập + 4 cấp quyền, workspace theo bộ phận, nhật ký kiểm tra (audit), theo dõi token, giới hạn hạn mức.
@@ -89,6 +90,7 @@ Các lệnh vận hành khác (`penai status`, `penai backup`, `penai rollback`,
 | [docs/ho-so-contact.md](docs/ho-so-contact.md) | Hồ sơ contact, nhãn, chỉ dẫn cho AI theo từng người |
 | [docs/huong-dan-teams-bot.md](docs/huong-dan-teams-bot.md) | Nối Microsoft Teams |
 | [docs/zalo-personal.md](docs/zalo-personal.md) | Nối Zalo cá nhân (chế độ an toàn) |
+| [docs/zalo-inbox-mcp.md](docs/zalo-inbox-mcp.md) | Inbox Zalo trực chat + kết nối Claude/ChatGPT qua MCP |
 | [docs/api-public.md](docs/api-public.md) · [docs/api-reference.md](docs/api-reference.md) | API tương thích OpenAI |
 | [docs/kien-truc.md](docs/kien-truc.md) | Kiến trúc: thành phần, mã nguồn, luồng xử lý, dữ liệu, bản cài trên máy chủ |
 | [docs/phat-trien.md](docs/phat-trien.md) | Sửa mã nguồn, chạy test |
