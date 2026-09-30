@@ -56,11 +56,17 @@ interface InboxChannelState {
 const inboxState = new Map<string, InboxChannelState>();
 let inboxDataDir = "";
 
-export function readInboxConfig(config: Record<string, unknown>): { enabled: boolean; pauseMinutes: number } {
+export function readInboxConfig(config: Record<string, unknown>): {
+  enabled: boolean;
+  pauseMinutes: number;
+  mcpReadMessages: boolean;
+} {
   const raw = Number(config["inbox_pause_minutes"]);
   return {
     enabled: config["inbox"] !== false,
     pauseMinutes: Number.isFinite(raw) && raw >= 0 ? Math.min(raw, 24 * 60) : 30,
+    // Ứng dụng AI bên ngoài (MCP) đọc hội thoại + nội dung tin: MẶC ĐỊNH TẮT, quản trị bật theo từng kênh.
+    mcpReadMessages: config["mcp_read_messages"] === true,
   };
 }
 
@@ -117,7 +123,7 @@ export function zaloInboxHooks(
   ch: { id: string; workspaceId: string; config: Record<string, unknown> },
 ) {
   const cfg = readInboxConfig(ch.config);
-  inboxState.set(ch.id, { workspaceId: ch.workspaceId, ...cfg });
+  inboxState.set(ch.id, { workspaceId: ch.workspaceId, enabled: cfg.enabled, pauseMinutes: cfg.pauseMinutes });
   const ctx = ctxOf(ch.workspaceId);
   return {
     onMessageLog: (entry: ChannelMessageLog) => {
@@ -410,6 +416,7 @@ const AiBody = z.object({ mode: z.enum(["auto", "off"]).optional(), resume: z.bo
 const InboxSettingsBody = z.object({
   enabled: z.boolean().optional(),
   pauseMinutes: z.number().int().min(0).max(1440).optional(),
+  mcpReadMessages: z.boolean().optional(),
 });
 
 function sendError(reply: FastifyReply, err: unknown) {
@@ -449,6 +456,7 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
           account: rt?.accountInfo() ?? null,
           inbox: cfg.enabled,
           pauseMinutes: cfg.pauseMinutes,
+          mcpReadMessages: cfg.mcpReadMessages,
         };
       }),
       canManage: hasRole(req.authCtx.role, "operator"),
@@ -628,10 +636,11 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
     const config = { ...((row.config as Record<string, unknown>) ?? {}) };
     if (parsed.data.enabled !== undefined) config["inbox"] = parsed.data.enabled;
     if (parsed.data.pauseMinutes !== undefined) config["inbox_pause_minutes"] = parsed.data.pauseMinutes;
+    if (parsed.data.mcpReadMessages !== undefined) config["mcp_read_messages"] = parsed.data.mcpReadMessages;
     await updateChannel(db, req.authCtx, channelId, { config });
     const cfg = readInboxConfig(config);
     const st = inboxState.get(channelId);
-    if (st) Object.assign(st, cfg);
+    if (st) Object.assign(st, { enabled: cfg.enabled, pauseMinutes: cfg.pauseMinutes });
     await recordAudit(db, req.authCtx, "zalo_inbox.settings", { channelId, ...cfg });
     return cfg;
   });

@@ -51,8 +51,9 @@ Trình duyệt mở **trang cấp quyền của PenAI**: đăng nhập bằng em
 |---|---|
 | `zalo:read` | Xem danh sách người liên hệ, nhóm; tra người theo SĐT |
 | `zalo:send` | Gửi tin nhắn + ảnh |
+| `zalo:messages` | Đọc danh sách hội thoại + toàn bộ nội dung tin nhắn — **chỉ có tác dụng ở kênh quản trị đã bật** (xem dưới) |
 
-Ứng dụng AI **không đọc được nội dung tin nhắn**. Quyền theo tài khoản đã cấp, tính theo **hiện tại**: Vận hành trở lên dùng mọi kênh Zalo, Thành viên chỉ kênh được gán. Đổi mật khẩu, khóa tài khoản hoặc gỡ khỏi workspace → kết nối mất hiệu lực. Thu hồi: Dashboard → Kết nối AI bên ngoài → Thu hồi.
+**Đọc hội thoại (từ 1.4.0) — mặc định TẮT.** Quản trị bật riêng từng kênh: Inbox Zalo → ⚙️ Cài đặt → tick *"Cho ứng dụng AI bên ngoài (MCP) đọc hội thoại và nội dung tin nhắn"*. Khi tắt, ứng dụng AI không thấy các công cụ đọc tin. Kết nối tạo trước 1.4.0 chưa có quyền `zalo:messages` → xóa kết nối trong ứng dụng AI rồi kết nối lại và tick quyền này. Trang Kết nối AI bên ngoài hiện kênh nào đang bật. Quyền theo tài khoản đã cấp, tính theo **hiện tại**: Vận hành trở lên dùng mọi kênh Zalo, Thành viên chỉ kênh được gán. Đổi mật khẩu, khóa tài khoản hoặc gỡ khỏi workspace → kết nối mất hiệu lực. Thu hồi: Dashboard → Kết nối AI bên ngoài → Thu hồi.
 
 ### Công cụ
 
@@ -62,10 +63,15 @@ Trình duyệt mở **trang cấp quyền của PenAI**: đăng nhập bằng em
 | `zalo_list_contacts` | read | `query?`, `limit?` (≤100), `cursor?`, `channel_id?` → `uid`, `name`, `phone`, `is_friend` |
 | `zalo_list_groups` | read | như trên → `group_id`, `name`, `member_count` |
 | `zalo_find_user_by_phone` | read | `phone` |
+| `zalo_list_conversations` | messages | `query?`, `type?` (user/group), `unread_only?`, `limit?` (≤200), `cursor?`, `channel_id?` → `thread_id`, tên, tin cuối, số chưa đọc |
+| `zalo_get_messages` | messages | `thread_id`, `limit?` (mặc định 500, ≤2000), `before?`, `channel_id?` → lịch sử cũ → mới, người gửi, nguồn, ảnh/file (link); `has_more` + `next_before` để lấy tiếp phần cũ hơn tới hết |
+| `zalo_search_messages` | messages | `query`, `thread_id?`, `since?` (ISO), `limit?` (≤200) → tin khớp từ khóa kèm hội thoại |
 | `zalo_send_message` | send | `to` (uid/group_id), `thread_type?` (user/group), `message?`, `image_url?`, `request_id?`, `channel_id?` |
 | `zalo_send_message_by_phone` | send | `phone`, `message?`, `image_url?`, `request_id?`, `channel_id?` |
 
 - `channel_id` chỉ cần khi workspace có nhiều kênh Zalo.
+- **Trả lời vào hội thoại** (cá nhân hoặc nhóm): `zalo_send_message` với `to` = `thread_id` lấy từ `zalo_list_conversations`.
+- Lịch sử chỉ gồm tin PenAI đã lưu từ lúc kênh kết nối (Zalo không cho lấy lịch sử cũ hơn).
 - Ảnh: `image_url` là URL http(s) công khai hoặc `data:image/...;base64,...`; PNG/JPEG/GIF/WEBP ≤ 10 MB. URL trỏ vào mạng nội bộ bị từ chối.
 - Danh bạ lấy từ dữ liệu đã lưu (bạn bè, nhóm, người đã nhắn). Thiếu người → Inbox → Đồng bộ danh bạ.
 - **Gửi tuần tự**: mỗi kênh gửi 1 tin / 2 giây. Gửi dồn → lỗi `RATE_LIMITED` kèm `retry_after_seconds`.
@@ -82,6 +88,8 @@ Trình duyệt mở **trang cấp quyền của PenAI**: đăng nhập bằng em
 | `IMAGE_INVALID` | Ảnh sai định dạng / quá lớn / URL nội bộ |
 | `CHANNEL_REQUIRED` / `CHANNEL_NOT_ALLOWED` / `NO_CHANNEL` | Chọn đúng kênh / tài khoản chưa được trực kênh nào |
 | `INSUFFICIENT_SCOPE` | Kết nối chưa được cấp quyền đó — kết nối lại và tick quyền |
+| `MESSAGES_DISABLED` | Kênh chưa bật cho ứng dụng AI đọc tin nhắn (Inbox → ⚙️ Cài đặt) |
+| `THREAD_NOT_FOUND` | Không có hội thoại / chưa có tin nào được lưu |
 
 ### Kỹ thuật (cho người sửa mã)
 

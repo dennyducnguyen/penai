@@ -3523,7 +3523,8 @@ export const INDEX_HTML = `<!doctype html>
       var c = chInfo(), st = $("#ibxSt");
       if (!c) { st.innerHTML = ""; return; }
       st.innerHTML = (c.connected ? '<span class="pill ok">đã kết nối</span> ' + esc(c.account ? c.account.name : "") : '<span class="pill err">chưa kết nối</span> <span class="muted">— quản trị vào Channels → Kết nối QR</span>') +
-        (c.inbox ? "" : ' · <span class="err">đang TẮT lưu nội dung</span>');
+        (c.inbox ? "" : ' · <span class="err">đang TẮT lưu nội dung</span>') +
+        (c.mcpReadMessages ? ' · <span class="pill" title="Ứng dụng AI bên ngoài (MCP) được đọc hội thoại của kênh này">🔓 AI ngoài đọc được tin</span>' : "");
       $("#ibxSync").style.display = S.canManage ? "" : "none";
       $("#ibxSet").style.display = isAdmin() ? "" : "none";
     }
@@ -3708,13 +3709,15 @@ export const INDEX_HTML = `<!doctype html>
         '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem"><input type="checkbox" id="isOn" style="width:auto"> Lưu nội dung tin nhắn (bật Inbox)</label>' +
         '<div class="muted" style="margin:4px 0 10px">Tắt thì tin mới không được lưu/hiện trong Inbox (tin cũ giữ nguyên). Lưu ý: bật là lưu cả tin riêng tư của tài khoản Zalo này.</div>' +
         '<label>AI tạm im bao nhiêu phút sau khi nhân viên trả lời (0 = không tạm dừng)</label><input id="isPause" type="number" min="0" max="1440" style="width:120px">' +
+        '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem;margin-top:14px"><input type="checkbox" id="isMcpRead" style="width:auto"> Cho ứng dụng AI bên ngoài (MCP) đọc hội thoại và nội dung tin nhắn</label>' +
+        '<div class="muted" style="margin:4px 0 0">Mặc định TẮT. Bật thì Claude/ChatGPT… đã kết nối (và được cấp quyền đọc tin nhắn) xem được danh sách hội thoại, toàn bộ lịch sử tin nhắn cá nhân + nhóm của kênh này, tìm kiếm trong tin nhắn để làm báo cáo và trả lời vào hội thoại.</div>' +
         '<div class="dialog-actions"><button class="ghost" id="isX">Hủy</button><button id="isOk">Lưu</button></div>';
       document.body.appendChild(dlg);
-      $("#isOn", dlg).checked = !!c.inbox; $("#isPause", dlg).value = c.pauseMinutes;
+      $("#isOn", dlg).checked = !!c.inbox; $("#isPause", dlg).value = c.pauseMinutes; $("#isMcpRead", dlg).checked = !!c.mcpReadMessages;
       $("#isX", dlg).onclick = function () { dlg.close(); dlg.remove(); };
       $("#isOk", dlg).onclick = function () {
-        api("/v1/zalo-inbox/" + c.id + "/settings", { method: "PUT", body: { enabled: $("#isOn", dlg).checked, pauseMinutes: Number($("#isPause", dlg).value) || 0 } })
-          .then(function (j) { c.inbox = j.enabled; c.pauseMinutes = j.pauseMinutes; renderStatus(); dlg.close(); dlg.remove(); toast("Đã lưu"); })
+        api("/v1/zalo-inbox/" + c.id + "/settings", { method: "PUT", body: { enabled: $("#isOn", dlg).checked, pauseMinutes: Number($("#isPause", dlg).value) || 0, mcpReadMessages: $("#isMcpRead", dlg).checked } })
+          .then(function (j) { c.inbox = j.enabled; c.pauseMinutes = j.pauseMinutes; c.mcpReadMessages = j.mcpReadMessages; renderStatus(); dlg.close(); dlg.remove(); toast("Đã lưu"); })
           .catch(function (e) { toast(e.message, true); });
       };
       dlg.showModal();
@@ -3776,7 +3779,9 @@ export const INDEX_HTML = `<!doctype html>
             "<li><b>ChatGPT</b>: Settings → Apps &amp; Connectors → Advanced → bật Developer mode → Create → dán địa chỉ, chọn OAuth.</li>" +
             "<li><b>" + esc(BRAND.name) + "</b> (cho agent dùng): trang <a href='#/mcp'>MCP</a> → Thêm → transport http, URL là địa chỉ trên → Đăng nhập OAuth.</li>" +
             "<li>Trình duyệt mở trang cấp quyền của " + esc(BRAND.name) + ": đăng nhập bằng tài khoản Dashboard, chọn quyền (xem danh bạ / gửi tin) → Cấp quyền.</li></ol>" +
-            '<div class="muted" style="margin-top:8px">Công cụ: zalo_list_channels, zalo_list_contacts, zalo_list_groups, zalo_find_user_by_phone, zalo_send_message (theo uid, kèm ảnh), zalo_send_message_by_phone. Ứng dụng AI <b>không đọc được nội dung tin nhắn</b>. Quyền theo tài khoản: Vận hành trở lên dùng mọi kênh Zalo; Thành viên chỉ kênh được gán.</div>';
+            '<div class="muted" style="margin-top:8px">Công cụ: zalo_list_channels, zalo_list_contacts, zalo_list_groups, zalo_find_user_by_phone, zalo_send_message (theo uid, kèm ảnh — cũng để trả lời vào hội thoại), zalo_send_message_by_phone. Quyền theo tài khoản: Vận hành trở lên dùng mọi kênh Zalo; Thành viên chỉ kênh được gán.</div>' +
+            '<div style="margin-top:10px"><b>Đọc hội thoại + nội dung tin nhắn</b> (zalo_list_conversations, zalo_get_messages, zalo_search_messages): mặc định TẮT, quản trị bật riêng từng kênh ở Inbox Zalo → ⚙️ Cài đặt; kết nối phải được cấp quyền <code>zalo:messages</code> (kết nối cũ cần kết nối lại).<div style="margin-top:4px">' +
+            (j.channels || []).map(function (c) { return '<span class="pill' + (c.mcpReadMessages ? " ok" : "") + '" style="margin-right:4px">' + esc(c.name) + ": " + (c.mcpReadMessages ? "đang BẬT" : "tắt") + "</span>"; }).join("") + "</div></div>";
           $("#msCopy").onclick = function () { try { navigator.clipboard.writeText(j.url); toast("Đã sao chép"); } catch (e) {} };
         }
         c2.innerHTML = "<h3>Các kết nối đã cấp quyền</h3>";

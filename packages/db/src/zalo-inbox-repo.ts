@@ -302,9 +302,9 @@ export async function listZaloMessages(
   ctx: WorkspaceContext,
   channelId: string,
   threadId: string,
-  opts: { beforeId?: string; limit?: number } = {},
+  opts: { beforeId?: string; limit?: number; maxLimit?: number } = {},
 ): Promise<ZaloMessageRow[]> {
-  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), opts.maxLimit ?? 200);
   const before = opts.beforeId && /^\d+$/.test(opts.beforeId) ? sql`AND m.id < ${opts.beforeId}::bigint` : sql``;
   const res = await withWorkspace(db, ctx, (tx) =>
     tx.execute(sql`
@@ -314,6 +314,46 @@ export async function listZaloMessages(
       ORDER BY m.id DESC LIMIT ${limit}`),
   );
   return (res.rows as Raw[]).map(mapMessage).reverse();
+}
+
+export async function countZaloMessages(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+  threadId: string,
+): Promise<number> {
+  const res = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`SELECT count(*)::int AS n FROM zalo_messages WHERE channel_id = ${channelId} AND thread_id = ${threadId}`),
+  );
+  return Number((res.rows[0] as Raw | undefined)?.n ?? 0);
+}
+
+/** Tìm tin nhắn theo nội dung (không phân biệt hoa thường), mới nhất trước. */
+export async function searchZaloMessages(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+  query: string,
+  opts: { threadId?: string; limit?: number; since?: Date } = {},
+): Promise<Array<ZaloMessageRow & { threadName: string; threadKind: "direct" | "group" }>> {
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const like = `%${query.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  const byThread = opts.threadId ? sql`AND m.thread_id = ${opts.threadId}` : sql``;
+  const since = opts.since ? sql`AND m.sent_at >= ${opts.since.toISOString()}` : sql``;
+  const res = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`
+      SELECT m.*, u.name AS web_user_name, t.name AS thread_name, t.kind AS thread_kind
+      FROM zalo_messages m
+      LEFT JOIN users u ON u.id = m.web_user_id
+      LEFT JOIN zalo_threads t ON t.channel_id = m.channel_id AND t.thread_id = m.thread_id
+      WHERE m.channel_id = ${channelId} AND m.text ILIKE ${like} ${byThread} ${since}
+      ORDER BY m.id DESC LIMIT ${limit}`),
+  );
+  return (res.rows as Raw[]).map((r) => ({
+    ...mapMessage(r),
+    threadName: String(r.thread_name ?? ""),
+    threadKind: r.thread_kind === "group" ? "group" : "direct",
+  }));
 }
 
 export async function markZaloThreadRead(

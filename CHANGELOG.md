@@ -4,6 +4,14 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.4.0 — 2026-09-30
+
+- **Ứng dụng AI bên ngoài (Claude, ChatGPT…) đọc được hội thoại Zalo cá nhân qua MCP** — để tra thông tin, làm báo cáo và trả lời vào đúng hội thoại (cá nhân hoặc nhóm). 3 công cụ mới: `zalo_list_conversations` (danh sách hội thoại + tin cuối + số chưa đọc), `zalo_get_messages` (toàn bộ lịch sử tin nhắn của một hội thoại, lấy theo từng đợt tới hết), `zalo_search_messages` (tìm từ khóa trong tin nhắn). Trả lời: `zalo_send_message` với `to` = `thread_id`.
+- **Mặc định TẮT**, quản trị bật riêng từng kênh: Inbox Zalo → ⚙️ Cài đặt → "Cho ứng dụng AI bên ngoài (MCP) đọc hội thoại và nội dung tin nhắn". Kết nối cần thêm quyền mới `zalo:messages` trên trang cấp quyền — kết nối tạo từ bản 1.3.0 phải kết nối lại để dùng.
+- Trang Kết nối AI bên ngoài hiện kênh nào đang cho AI ngoài đọc tin.
+
+Chi tiết: `docs/zalo-inbox-mcp.md`. Cập nhật: `sudo penai update` (không có migration mới; không phải làm gì thêm).
+
 ## 1.3.0 — 2026-09-30
 
 - **Inbox Zalo cá nhân** (Dashboard → 📥 Inbox Zalo): nhiều người dùng PenAI cùng xem và trả lời khách trên kênh Zalo cá nhân, tin mới hiện ngay không cần tải lại trang. Gửi chữ, **gửi ảnh** (chọn file hoặc dán ảnh), nhắn tin mới theo **số điện thoại** / uid / ID nhóm, tìm theo tên – uid – SĐT, lọc cá nhân/nhóm/chưa đọc. Danh bạ bạn bè + nhóm tự kéo về mỗi lần kết nối (nút Đồng bộ danh bạ).
