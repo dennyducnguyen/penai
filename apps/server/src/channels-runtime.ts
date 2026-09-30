@@ -16,6 +16,7 @@ import {
   listEnabledChannels,
   updateChannel,
   upsertZaloObservedPeer,
+  getZaloThreadAgentBlock,
   type EnabledChannel,
   recordTraceSafe,
 } from "@penai/db";
@@ -36,6 +37,7 @@ import {
   type OutboundButton,
   type RunHooks,
 } from "@penai/channels";
+import { forgetZaloInboxChannel, zaloInboxHooks } from "./zalo-inbox.js";
 
 /** Handler + channel theo channelId — cho webhook route (WhatsApp, Teams) dùng. */
 export const channelHandlers = new Map<
@@ -566,6 +568,14 @@ function makeInboundHandler(
       }
     }
 
+    // Inbox Zalo: nhân viên đã tắt AI cho hội thoại này, hoặc vừa trả lời tay
+    // (web/điện thoại) → AI im trong lúc tạm dừng.
+    if (msg.channelKind === "zalo_personal") {
+      const threadId = msg.chatKey.slice(msg.chatKey.indexOf(":") + 1);
+      const block = await getZaloThreadAgentBlock(db, ctx, channel.id, threadId).catch(() => null);
+      if (block) return { kind: "ignore" };
+    }
+
     // Group Zalo: adapter pass-through mọi tin (kèm cờ mentioned) để
     // orchestrator thấy hết; agent MẶC ĐỊNH chỉ trả lời khi được tag/reply
     // (31/08/2026 — user chốt). Muốn bot trả lời mọi tin trong nhóm demo
@@ -1003,6 +1013,8 @@ function buildChannel(
           logger.warn(`zalo.observed_persist lỗi: ${(err as Error).message}`),
         );
       },
+      // Inbox trực chat: lưu mọi tin đến/đi + danh bạ (zalo-inbox.ts)
+      ...(ch.kind === "zalo_personal" ? zaloInboxHooks(rt.db.db, ch) : {}),
     });
     channelHandlers.set(ch.id, { handler, channel, workspaceId: ch.workspaceId });
     return channel;
@@ -1038,6 +1050,7 @@ export async function applyChannelChange(
   if (!live) return "Đã lưu — restart server (pnpm start) để áp dụng.";
   await live.manager.remove(channelId);
   channelHandlers.delete(channelId);
+  forgetZaloInboxChannel(channelId);
   if (!row) return "Đã dừng channel.";
   const channel = buildChannel(live.rt, live.queue, live.manager, row);
   if (!channel) {

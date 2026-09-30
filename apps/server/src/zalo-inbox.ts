@@ -1,0 +1,642 @@
+/**
+ * Zalo cá nhân — Inbox trực chat (0031).
+ *
+ * - Adapter zalo_personal báo MỌI tin đến/đi (onMessageLog) → lưu zalo_messages
+ *   + zalo_threads → đẩy realtime (SSE) cho người đang trực.
+ * - Người trực (operator trở lên: mọi kênh; member: kênh được gán) xem hội thoại,
+ *   gửi text/ảnh, bật/tắt AI theo hội thoại. Nhân viên trả lời (web hoặc điện
+ *   thoại) → AI tạm im trong hội thoại đó `inbox_pause_minutes` phút (mặc định 30).
+ * - Dùng chung cho MCP server (mcp-server.ts): gửi tin/ảnh, tra SĐT, danh bạ.
+ *
+ * Cấu hình theo kênh (channels.config): `inbox` (mặc định true — lưu nội dung),
+ * `inbox_pause_minutes` (mặc định 30, 0 = không tạm dừng).
+ */
+import { randomUUID } from "node:crypto";
+import { lookup } from "node:dns/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { isIP } from "node:net";
+import { join, relative, resolve, sep } from "node:path";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { z } from "zod";
+import { hasRole, logger, type WorkspaceContext } from "@penai/shared";
+import {
+  getChannelById,
+  getZaloThread,
+  listChannels,
+  listUserZaloChannelIds,
+  listZaloMessages,
+  listZaloThreads,
+  markZaloThreadRead,
+  recordZaloMessage,
+  setZaloThreadAi,
+  setZaloThreadName,
+  updateChannel,
+  upsertZaloContacts,
+  recordAudit,
+  type Db,
+  type ZaloMessageRow,
+  type ZaloThread,
+} from "@penai/db";
+import {
+  ZaloPersonalChannel,
+  type ChannelContact,
+  type ChannelMessageLog,
+  type ZaloSendSource,
+} from "@penai/channels";
+import { channelHandlers } from "./channels-runtime.js";
+
+// ===== Cấu hình sống theo kênh =====
+
+interface InboxChannelState {
+  workspaceId: string;
+  enabled: boolean;
+  pauseMinutes: number;
+}
+
+const inboxState = new Map<string, InboxChannelState>();
+let inboxDataDir = "";
+
+export function readInboxConfig(config: Record<string, unknown>): { enabled: boolean; pauseMinutes: number } {
+  const raw = Number(config["inbox_pause_minutes"]);
+  return {
+    enabled: config["inbox"] !== false,
+    pauseMinutes: Number.isFinite(raw) && raw >= 0 ? Math.min(raw, 24 * 60) : 30,
+  };
+}
+
+// ===== SSE: đẩy tin mới cho người đang trực =====
+
+interface SseClient {
+  workspaceId: string;
+  /** null = mọi kênh (operator trở lên) */
+  channelIds: Set<string> | null;
+  write: (chunk: string) => void;
+}
+
+const sseClients = new Set<SseClient>();
+
+function broadcast(workspaceId: string, channelId: string, event: string, data: unknown): void {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const c of sseClients) {
+    if (c.workspaceId !== workspaceId) continue;
+    if (c.channelIds && !c.channelIds.has(channelId)) continue;
+    try {
+      c.write(payload);
+    } catch {
+      sseClients.delete(c);
+    }
+  }
+}
+
+setInterval(() => {
+  for (const c of sseClients) {
+    try {
+      c.write(": ping\n\n");
+    } catch {
+      sseClients.delete(c);
+    }
+  }
+}, 25_000).unref();
+
+// ===== Hook cho adapter (channels-runtime gọi khi dựng kênh) =====
+
+function ctxOf(workspaceId: string): WorkspaceContext {
+  return { workspaceId, userId: workspaceId, role: "ws_admin" };
+}
+
+function zaloRuntime(channelId: string): ZaloPersonalChannel | null {
+  const ch = channelHandlers.get(channelId)?.channel;
+  return ch instanceof ZaloPersonalChannel ? ch : null;
+}
+
+const groupNameLookups = new Set<string>();
+
+/** Hook onMessageLog / onContactsSynced / onThreadName cho 1 kênh zalo_personal. */
+export function zaloInboxHooks(
+  db: Db,
+  ch: { id: string; workspaceId: string; config: Record<string, unknown> },
+) {
+  const cfg = readInboxConfig(ch.config);
+  inboxState.set(ch.id, { workspaceId: ch.workspaceId, ...cfg });
+  const ctx = ctxOf(ch.workspaceId);
+  return {
+    onMessageLog: (entry: ChannelMessageLog) => {
+      const st = inboxState.get(ch.id);
+      if (!st?.enabled) return;
+      void (async () => {
+        const saved = await recordZaloMessage(
+          db,
+          ctx,
+          ch.id,
+          {
+            threadId: entry.threadId,
+            peerKind: entry.peerKind,
+            msgId: entry.msgId,
+            direction: entry.direction,
+            source: entry.source,
+            senderId: entry.senderId,
+            senderName: entry.senderName,
+            webUserId: entry.webUserId ?? null,
+            contentType: entry.contentType,
+            text: entry.text,
+            media: entry.media ? { ...entry.media } : null,
+            meta: entry.meta ?? null,
+            sentAt: entry.sentAt,
+            threadName: entry.threadName ?? "",
+          },
+          { pauseMinutes: st.pauseMinutes },
+        );
+        if (!saved) return;
+        broadcast(ch.workspaceId, ch.id, "message", {
+          channelId: ch.id,
+          thread: saved.thread,
+          message: publicMessage(saved.message, ch.workspaceId),
+        });
+        // Nhóm chưa có tên → tra 1 lần
+        const key = `${ch.id}:${entry.threadId}`;
+        if (entry.peerKind === "group" && !saved.thread.name && !groupNameLookups.has(key)) {
+          groupNameLookups.add(key);
+          const name = await zaloRuntime(ch.id)?.lookupGroupName(entry.threadId);
+          if (name) {
+            await setZaloThreadName(db, ctx, ch.id, entry.threadId, name);
+            broadcast(ch.workspaceId, ch.id, "thread", { channelId: ch.id, thread: { ...saved.thread, name } });
+          }
+        }
+      })().catch((err) => logger.warn(`zalo.inbox_store lỗi: ${(err as Error).message}`));
+    },
+    onContactsSynced: (items: ChannelContact[]) => {
+      void upsertZaloContacts(
+        db,
+        ctx,
+        ch.id,
+        items.map((i) => ({
+          threadId: i.id,
+          kind: i.type,
+          name: i.name,
+          ...(i.avatar ? { avatar: i.avatar } : {}),
+          ...(i.phone ? { phone: i.phone } : {}),
+          ...(i.memberCount !== undefined ? { memberCount: i.memberCount } : {}),
+        })),
+      )
+        .then((n) => broadcast(ch.workspaceId, ch.id, "contacts", { channelId: ch.id, count: n }))
+        .catch((err) => logger.warn(`zalo.contacts_store lỗi: ${(err as Error).message}`));
+    },
+    onThreadName: (threadId: string, name: string) => {
+      void setZaloThreadName(db, ctx, ch.id, threadId, name).catch(() => {});
+    },
+  };
+}
+
+export function forgetZaloInboxChannel(channelId: string): void {
+  inboxState.delete(channelId);
+}
+
+// ===== Quyền truy cập kênh =====
+
+/** Kênh zalo_personal người này được trực: operator trở lên = mọi kênh; member = kênh được gán; viewer = không. */
+export async function allowedZaloChannelIds(db: Db, ctx: WorkspaceContext): Promise<string[]> {
+  if (hasRole(ctx.role, "operator")) {
+    return (await listChannels(db, ctx)).filter((c) => c.kind === "zalo_personal").map((c) => c.id);
+  }
+  if (ctx.role === "member") return listUserZaloChannelIds(db, ctx, ctx.userId);
+  return [];
+}
+
+export async function canUseZaloChannel(db: Db, ctx: WorkspaceContext, channelId: string): Promise<boolean> {
+  return (await allowedZaloChannelIds(db, ctx)).includes(channelId);
+}
+
+// ===== Ảnh: nạp từ data URL hoặc URL công khai (chống SSRF) =====
+
+export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+function isBlockedIp(ip: string): boolean {
+  const v = isIP(ip);
+  if (v === 4) {
+    const p = ip.split(".").map(Number) as [number, number, number, number];
+    return (
+      p[0] === 10 ||
+      p[0] === 127 ||
+      p[0] === 0 ||
+      (p[0] === 169 && p[1] === 254) ||
+      (p[0] === 172 && p[1] >= 16 && p[1] <= 31) ||
+      (p[0] === 192 && p[1] === 168) ||
+      (p[0] === 100 && p[1] >= 64 && p[1] <= 127) ||
+      p[0] >= 224
+    );
+  }
+  if (v === 6) {
+    const low = ip.toLowerCase();
+    if (low.startsWith("::ffff:")) return isBlockedIp(low.slice(7));
+    return low === "::1" || low === "::" || low.startsWith("fc") || low.startsWith("fd") || low.startsWith("fe80");
+  }
+  return true;
+}
+
+/** Nhận diện ảnh theo byte đầu (không tin content-type). */
+export function sniffImage(buf: Buffer): { ext: string; mime: string } | null {
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return { ext: "png", mime: "image/png" };
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { ext: "jpg", mime: "image/jpeg" };
+  if (buf.length >= 6 && (buf.subarray(0, 6).toString("ascii") === "GIF87a" || buf.subarray(0, 6).toString("ascii") === "GIF89a")) {
+    return { ext: "gif", mime: "image/gif" };
+  }
+  if (buf.length >= 12 && buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") {
+    return { ext: "webp", mime: "image/webp" };
+  }
+  return null;
+}
+
+export class ImageInputError extends Error {}
+
+/**
+ * Ảnh đầu vào: `data:image/...;base64,...` hoặc URL http(s) công khai.
+ * URL: chặn IP nội bộ (kiểm lại ở mỗi lần chuyển hướng, tối đa 3), ≤ 10 MB,
+ * nội dung phải là PNG/JPEG/GIF/WEBP thật.
+ */
+export async function loadImageInput(src: string): Promise<{ buf: Buffer; ext: string; mime: string }> {
+  const value = src.trim();
+  let buf: Buffer;
+  if (value.startsWith("data:")) {
+    const comma = value.indexOf(",");
+    const head = value.slice(0, comma);
+    if (comma < 0 || !/^data:image\/[a-z0-9.+-]+;base64$/i.test(head)) {
+      throw new ImageInputError("Ảnh base64 phải có dạng data:image/<loại>;base64,<dữ liệu>");
+    }
+    buf = Buffer.from(value.slice(comma + 1), "base64");
+  } else {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new ImageInputError("image_url không phải URL hợp lệ");
+    }
+    let res: Response | null = null;
+    for (let hop = 0; hop < 4; hop++) {
+      if (url.protocol !== "https:" && url.protocol !== "http:") throw new ImageInputError("Chỉ nhận ảnh qua http/https");
+      const host = url.hostname.replace(/^\[|\]$/g, "");
+      const ips = isIP(host) ? [{ address: host }] : await lookup(host, { all: true });
+      if (!ips.length || ips.some((i) => isBlockedIp(i.address))) {
+        throw new ImageInputError("Từ chối: địa chỉ ảnh trỏ tới mạng nội bộ");
+      }
+      res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+      if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
+        url = new URL(res.headers.get("location")!, url);
+        res = null;
+        continue;
+      }
+      break;
+    }
+    if (!res) throw new ImageInputError("Ảnh chuyển hướng quá nhiều lần");
+    if (!res.ok) throw new ImageInputError(`Không tải được ảnh (HTTP ${res.status})`);
+    if (Number(res.headers.get("content-length") ?? 0) > IMAGE_MAX_BYTES) throw new ImageInputError("Ảnh vượt 10 MB");
+    buf = Buffer.from(await res.arrayBuffer());
+  }
+  if (!buf.length) throw new ImageInputError("Ảnh rỗng");
+  if (buf.length > IMAGE_MAX_BYTES) throw new ImageInputError("Ảnh vượt 10 MB");
+  const kind = sniffImage(buf);
+  if (!kind) throw new ImageInputError("Chỉ hỗ trợ ảnh PNG, JPEG, GIF, WEBP");
+  return { buf, ...kind };
+}
+
+/** Lưu ảnh gửi đi vào thư mục inbox của kênh (để gửi Zalo + hiển thị lại). */
+export async function saveOutboundImage(
+  dataDir: string,
+  workspaceId: string,
+  channelId: string,
+  img: { buf: Buffer; ext: string },
+): Promise<string> {
+  const month = new Date().toISOString().slice(0, 7);
+  const dir = resolve(join(dataDir, workspaceId, "zalo-inbox", channelId, month));
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, `${randomUUID()}.${img.ext}`);
+  await writeFile(path, img.buf);
+  return path;
+}
+
+/** Media cho trình duyệt: bỏ đường dẫn tuyệt đối, thay bằng đường dẫn tương đối trong workspace. */
+function publicMessage(m: ZaloMessageRow, workspaceId: string): ZaloMessageRow {
+  if (!m.media || typeof m.media.localPath !== "string") return m;
+  const { localPath, ...rest } = m.media as { localPath: string } & Record<string, unknown>;
+  const ws = resolve(join(inboxDataDir, workspaceId));
+  const rel = relative(ws, resolve(localPath));
+  const file = rel && !rel.startsWith("..") && !rel.includes(`..${sep}`) ? rel.split(sep).join("/") : undefined;
+  return { ...m, media: { ...rest, ...(file ? { file } : {}) } };
+}
+
+// ===== Gửi (dùng chung Inbox web + MCP) =====
+
+export interface ZaloSendRequest {
+  channelId: string;
+  workspaceId: string;
+  threadId: string;
+  peerKind: "direct" | "group";
+  text?: string;
+  image?: string;
+  source: ZaloSendSource;
+  webUserId?: string;
+  threadName?: string;
+}
+
+export async function sendZalo(dataDir: string, req: ZaloSendRequest): Promise<{ msgIds: string[] }> {
+  const runtime = zaloRuntime(req.channelId);
+  if (!runtime || !runtime.isConnected()) {
+    const err = new Error("Kênh Zalo chưa kết nối — vào Channels → Kết nối QR để quét lại.") as Error & { code?: string };
+    err.code = "NOT_CONNECTED";
+    throw err;
+  }
+  const filePaths: string[] = [];
+  if (req.image) {
+    const img = await loadImageInput(req.image);
+    filePaths.push(await saveOutboundImage(dataDir, req.workspaceId, req.channelId, img));
+  }
+  const msgIds = await runtime.sendManual({
+    threadId: req.threadId,
+    peerKind: req.peerKind,
+    ...(req.text ? { text: req.text } : {}),
+    ...(filePaths.length ? { filePaths } : {}),
+    source: req.source,
+    ...(req.webUserId ? { webUserId: req.webUserId } : {}),
+    ...(req.threadName ? { threadName: req.threadName } : {}),
+  });
+  return { msgIds };
+}
+
+export function zaloRuntimeFor(channelId: string): ZaloPersonalChannel | null {
+  return zaloRuntime(channelId);
+}
+
+// ===== Routes =====
+
+const SendBody = z
+  .object({
+    text: z.string().max(10_000).optional(),
+    image: z.string().max(15_000_000).optional(),
+    peerKind: z.enum(["direct", "group"]).optional(),
+  })
+  .refine((v) => (v.text && v.text.trim()) || v.image, { message: "Cần nội dung hoặc ảnh" });
+
+const NewMessageBody = z
+  .object({
+    to: z.string().regex(/^\d{1,30}$/).optional(),
+    phone: z.string().regex(/^\+?\d{8,15}$/).optional(),
+    peerKind: z.enum(["direct", "group"]).default("direct"),
+    text: z.string().max(10_000).optional(),
+    image: z.string().max(15_000_000).optional(),
+  })
+  .refine((v) => v.to || v.phone, { message: "Cần uid (to) hoặc số điện thoại" })
+  .refine((v) => (v.text && v.text.trim()) || v.image, { message: "Cần nội dung hoặc ảnh" });
+
+const AiBody = z.object({ mode: z.enum(["auto", "off"]).optional(), resume: z.boolean().optional() });
+const InboxSettingsBody = z.object({
+  enabled: z.boolean().optional(),
+  pauseMinutes: z.number().int().min(0).max(1440).optional(),
+});
+
+function sendError(reply: FastifyReply, err: unknown) {
+  const e = err as Error & { code?: string };
+  if (e instanceof ImageInputError) return reply.code(400).send({ error: e.message });
+  if (e.code === "NOT_CONNECTED") return reply.code(409).send({ error: e.message, code: "NOT_CONNECTED" });
+  logger.warn(`zalo.inbox_send lỗi: ${e.message}`);
+  return reply.code(502).send({ error: `Gửi Zalo lỗi: ${e.message}` });
+}
+
+export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDir: string }): void {
+  const { db, dataDir } = deps;
+  inboxDataDir = dataDir;
+
+  async function guard(req: FastifyRequest, reply: FastifyReply, channelId: string): Promise<boolean> {
+    if (!/^[0-9a-f-]{36}$/i.test(channelId) || !(await canUseZaloChannel(db, req.authCtx, channelId))) {
+      void reply.code(403).send({ error: "Bạn không được trực kênh Zalo này" });
+      return false;
+    }
+    return true;
+  }
+
+  // Kênh được trực + trạng thái kết nối
+  app.get("/v1/zalo-inbox/channels", async (req) => {
+    const ids = await allowedZaloChannelIds(db, req.authCtx);
+    const all = (await listChannels(db, req.authCtx)).filter((c) => ids.includes(c.id));
+    return {
+      channels: all.map((c) => {
+        const rt = zaloRuntime(c.id);
+        const cfg = readInboxConfig((c.config as Record<string, unknown>) ?? {});
+        return {
+          id: c.id,
+          name: c.name,
+          enabled: c.enabled,
+          connected: rt?.isConnected() ?? false,
+          account: rt?.accountInfo() ?? null,
+          inbox: cfg.enabled,
+          pauseMinutes: cfg.pauseMinutes,
+        };
+      }),
+      canManage: hasRole(req.authCtx.role, "operator"),
+    };
+  });
+
+  // Realtime
+  app.get("/v1/zalo-inbox/events", async (req, reply) => {
+    const ids = await allowedZaloChannelIds(db, req.authCtx);
+    reply.hijack();
+    const raw = reply.raw;
+    raw.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    raw.write("event: ready\ndata: {}\n\n");
+    const client: SseClient = {
+      workspaceId: req.authCtx.workspaceId,
+      channelIds: hasRole(req.authCtx.role, "operator") ? null : new Set(ids),
+      write: (chunk) => raw.write(chunk),
+    };
+    sseClients.add(client);
+    req.raw.on("close", () => sseClients.delete(client));
+  });
+
+  app.get("/v1/zalo-inbox/:channelId/threads", async (req, reply) => {
+    const { channelId } = req.params as { channelId: string };
+    if (!(await guard(req, reply, channelId))) return;
+    const q = req.query as { q?: string; kind?: string; unread?: string; limit?: string; offset?: string; all?: string };
+    const res = await listZaloThreads(db, req.authCtx, channelId, {
+      ...(q.q ? { q: q.q.slice(0, 100) } : {}),
+      ...(q.kind === "direct" || q.kind === "group" ? { kind: q.kind } : {}),
+      unreadOnly: q.unread === "1",
+      // Không tìm kiếm → chỉ hội thoại đã có tin; tìm kiếm → cả danh bạ chưa chat
+      withMessagesOnly: !q.q && q.all !== "1",
+      limit: Number(q.limit) || 100,
+      offset: Number(q.offset) || 0,
+    });
+    return res;
+  });
+
+  app.get("/v1/zalo-inbox/:channelId/threads/:threadId/messages", async (req, reply) => {
+    const { channelId, threadId } = req.params as { channelId: string; threadId: string };
+    if (!(await guard(req, reply, channelId))) return;
+    const q = req.query as { before?: string; limit?: string };
+    const [thread, messages] = await Promise.all([
+      getZaloThread(db, req.authCtx, channelId, threadId),
+      listZaloMessages(db, req.authCtx, channelId, threadId, {
+        ...(q.before ? { beforeId: q.before } : {}),
+        limit: Number(q.limit) || 50,
+      }),
+    ]);
+    return { thread, messages: messages.map((m) => publicMessage(m, req.authCtx.workspaceId)) };
+  });
+
+  app.post("/v1/zalo-inbox/:channelId/threads/:threadId/read", async (req, reply) => {
+    const { channelId, threadId } = req.params as { channelId: string; threadId: string };
+    if (!(await guard(req, reply, channelId))) return;
+    await markZaloThreadRead(db, req.authCtx, channelId, threadId);
+    return { ok: true };
+  });
+
+  app.post("/v1/zalo-inbox/:channelId/threads/:threadId/send", async (req, reply) => {
+    const { channelId, threadId } = req.params as { channelId: string; threadId: string };
+    if (!(await guard(req, reply, channelId))) return;
+    if (!/^\d{1,30}$/.test(threadId)) return reply.code(400).send({ error: "Mã hội thoại không hợp lệ" });
+    const parsed = SendBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Dữ liệu không hợp lệ" });
+    const thread = await getZaloThread(db, req.authCtx, channelId, threadId);
+    const peerKind = thread?.kind ?? parsed.data.peerKind ?? "direct";
+    try {
+      const out = await sendZalo(dataDir, {
+        channelId,
+        workspaceId: req.authCtx.workspaceId,
+        threadId,
+        peerKind,
+        ...(parsed.data.text?.trim() ? { text: parsed.data.text } : {}),
+        ...(parsed.data.image ? { image: parsed.data.image } : {}),
+        source: "web",
+        webUserId: req.authCtx.userId,
+      });
+      return { sent: true, msgIds: out.msgIds };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // Nhắn tin mới cho uid/SĐT chưa có trong danh sách
+  app.post("/v1/zalo-inbox/:channelId/new", async (req, reply) => {
+    const { channelId } = req.params as { channelId: string };
+    if (!(await guard(req, reply, channelId))) return;
+    const parsed = NewMessageBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Dữ liệu không hợp lệ" });
+    const rt = zaloRuntime(channelId);
+    if (!rt?.isConnected()) return reply.code(409).send({ error: "Kênh Zalo chưa kết nối", code: "NOT_CONNECTED" });
+    let threadId = parsed.data.to ?? "";
+    let peerKind = parsed.data.peerKind;
+    let threadName = "";
+    if (!threadId && parsed.data.phone) {
+      const user = await rt.findUserByPhone(parsed.data.phone).catch(() => null);
+      if (!user) return reply.code(404).send({ error: "Không tìm thấy tài khoản Zalo với số này (hoặc người đó chặn tìm kiếm)" });
+      threadId = user.uid;
+      threadName = user.name;
+      peerKind = "direct";
+    } else {
+      const known = await getZaloThread(db, req.authCtx, channelId, threadId);
+      if (known) peerKind = known.kind;
+    }
+    try {
+      await sendZalo(dataDir, {
+        channelId,
+        workspaceId: req.authCtx.workspaceId,
+        threadId,
+        peerKind,
+        ...(parsed.data.text?.trim() ? { text: parsed.data.text } : {}),
+        ...(parsed.data.image ? { image: parsed.data.image } : {}),
+        source: "web",
+        webUserId: req.authCtx.userId,
+        ...(threadName ? { threadName } : {}),
+      });
+      return { sent: true, threadId, peerKind };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get("/v1/zalo-inbox/:channelId/find-phone", async (req, reply) => {
+    const { channelId } = req.params as { channelId: string };
+    if (!(await guard(req, reply, channelId))) return;
+    const phone = String((req.query as { phone?: string }).phone ?? "").trim();
+    if (!/^\+?\d{8,15}$/.test(phone)) return reply.code(400).send({ error: "Số điện thoại không hợp lệ" });
+    const rt = zaloRuntime(channelId);
+    if (!rt?.isConnected()) return reply.code(409).send({ error: "Kênh Zalo chưa kết nối", code: "NOT_CONNECTED" });
+    const user = await rt.findUserByPhone(phone).catch(() => null);
+    return { found: !!user, user };
+  });
+
+  app.put("/v1/zalo-inbox/:channelId/threads/:threadId/ai", async (req, reply) => {
+    const { channelId, threadId } = req.params as { channelId: string; threadId: string };
+    if (!(await guard(req, reply, channelId))) return;
+    const parsed = AiBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Dữ liệu không hợp lệ" });
+    const existing = await getZaloThread(db, req.authCtx, channelId, threadId);
+    const thread = await setZaloThreadAi(db, req.authCtx, channelId, threadId, {
+      ...(parsed.data.mode ? { mode: parsed.data.mode } : {}),
+      ...(parsed.data.resume ? { resume: true } : {}),
+      kind: existing?.kind ?? "direct",
+    });
+    if (thread) broadcast(req.authCtx.workspaceId, channelId, "thread", { channelId, thread });
+    return { thread };
+  });
+
+  // Đồng bộ danh bạ ngay (operator trở lên)
+  app.post("/v1/zalo-inbox/:channelId/sync-contacts", async (req, reply) => {
+    const { channelId } = req.params as { channelId: string };
+    if (!hasRole(req.authCtx.role, "operator")) return reply.code(403).send({ error: "Cần quyền operator trở lên" });
+    if (!(await guard(req, reply, channelId))) return;
+    const rt = zaloRuntime(channelId);
+    if (!rt?.isConnected()) return reply.code(409).send({ error: "Kênh Zalo chưa kết nối", code: "NOT_CONNECTED" });
+    try {
+      return await rt.syncContacts();
+    } catch (err) {
+      return reply.code(502).send({ error: `Đồng bộ danh bạ lỗi: ${(err as Error).message}` });
+    }
+  });
+
+  // Bật/tắt lưu nội dung + số phút AI tạm im sau khi nhân viên trả lời (ws_admin)
+  app.put("/v1/zalo-inbox/:channelId/settings", async (req, reply) => {
+    const { channelId } = req.params as { channelId: string };
+    if (!hasRole(req.authCtx.role, "ws_admin")) return reply.code(403).send({ error: "Cần quyền quản trị" });
+    const parsed = InboxSettingsBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Dữ liệu không hợp lệ" });
+    const row = await getChannelById(db, req.authCtx, channelId);
+    if (!row || row.kind !== "zalo_personal") return reply.code(404).send({ error: "Không có kênh Zalo cá nhân này" });
+    const config = { ...((row.config as Record<string, unknown>) ?? {}) };
+    if (parsed.data.enabled !== undefined) config["inbox"] = parsed.data.enabled;
+    if (parsed.data.pauseMinutes !== undefined) config["inbox_pause_minutes"] = parsed.data.pauseMinutes;
+    await updateChannel(db, req.authCtx, channelId, { config });
+    const cfg = readInboxConfig(config);
+    const st = inboxState.get(channelId);
+    if (st) Object.assign(st, cfg);
+    await recordAudit(db, req.authCtx, "zalo_inbox.settings", { channelId, ...cfg });
+    return cfg;
+  });
+
+  // File/ảnh đã gửi (lưu trong workspace) — chỉ người trực kênh
+  app.get("/v1/zalo-inbox/:channelId/file", async (req, reply) => {
+    const { channelId } = req.params as { channelId: string };
+    if (!(await guard(req, reply, channelId))) return;
+    const p = String((req.query as { p?: string }).p ?? "");
+    const ws = resolve(join(dataDir, req.authCtx.workspaceId));
+    const abs = resolve(ws, p);
+    if (!p || !abs.startsWith(ws + sep)) return reply.code(400).send({ error: "Đường dẫn không hợp lệ" });
+    const st = await stat(abs).catch(() => null);
+    if (!st?.isFile() || st.size > 50 * 1024 * 1024) return reply.code(404).send({ error: "Không tìm thấy file" });
+    const buf = await readFile(abs);
+    const img = sniffImage(buf);
+    const name = abs.split(sep).pop() ?? "file";
+    return reply
+      .header("cache-control", "private, max-age=3600")
+      .header("x-content-type-options", "nosniff")
+      .header("content-disposition", `${img ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(name)}`)
+      .type(img ? img.mime : "application/octet-stream")
+      .send(buf);
+  });
+}
+
+export type { ZaloThread };

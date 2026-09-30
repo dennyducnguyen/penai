@@ -15,7 +15,9 @@ import { BoundedRunner } from "./bounded-runner.js";
 import { stripToPlain } from "./format.js";
 import type {
   Channel,
+  ChannelContact,
   ChannelDeps,
+  ChannelMessageLog,
   InboundMedia,
   OutboundMessage,
 } from "./types.js";
@@ -62,6 +64,8 @@ export interface ZaloPersonalTarget {
   id: string;
   type: "direct" | "group";
   name: string;
+  avatar?: string;
+  phone?: string;
   memberCount?: number;
 }
 
@@ -246,6 +250,85 @@ export function trustedZaloMediaUrl(raw: string): URL | null {
   }
 }
 
+/**
+ * Chuẩn hóa nội dung 1 tin Zalo để lưu/hiển thị trong Inbox (không tải file:
+ * chỉ giữ link CDN Zalo). Hàm thuần — test được.
+ */
+export function describeZaloContent(
+  content: unknown,
+  msgType = "",
+): Pick<ChannelMessageLog, "contentType" | "text" | "media"> {
+  if (typeof content === "string") return { contentType: "text", text: content };
+  if (!content || typeof content !== "object") return { contentType: "other", text: "" };
+  const value = content as ZaloContentObject;
+  const href = typeof value.href === "string" ? value.href : "";
+  const thumb = typeof value.thumb === "string" ? value.thumb : "";
+  const title = typeof value.title === "string" ? value.title.trim() : "";
+  const description = typeof value.description === "string" ? value.description.trim() : "";
+  const params = parseZaloAttachmentParams(value.params);
+  const safe = (raw: string) => (raw && trustedZaloMediaUrl(raw) ? raw : "");
+  const probe = msgType.toLowerCase();
+  if (/link|recommend|webcontent/.test(probe) && href && !/zdn|zadn|zalo/.test(href)) {
+    let url = "";
+    try {
+      const u = new URL(href);
+      if (u.protocol === "https:" || u.protocol === "http:") url = u.href;
+    } catch {
+      /* link hỏng → chỉ giữ chữ */
+    }
+    return {
+      contentType: "link",
+      text: [title, description, url].filter(Boolean).join("\n"),
+      ...(url ? { media: { url } } : {}),
+    };
+  }
+  const kind = zaloMediaKind(msgType, typeof value.type === "string" ? value.type : "");
+  if (kind === "photo") {
+    const url = safe(href) || safe(thumb);
+    return {
+      contentType: "photo",
+      text: title,
+      media: { ...(url ? { url } : {}), ...(safe(thumb) ? { thumb: safe(thumb) } : {}) },
+    };
+  }
+  if (kind === "document") {
+    let name = title || params.title || "tep-zalo";
+    if (params.fileExt && !name.toLowerCase().endsWith(`.${params.fileExt.toLowerCase()}`)) {
+      name = `${name}.${params.fileExt}`;
+    }
+    return {
+      contentType: "file",
+      text: "",
+      media: { name, ...(safe(href) ? { url: safe(href) } : {}), ...(params.fileSize ? { size: params.fileSize } : {}) },
+    };
+  }
+  if (kind === "sticker") {
+    return { contentType: "sticker", text: "", ...(safe(thumb) || safe(href) ? { media: { url: safe(thumb) || safe(href) } } : {}) };
+  }
+  if (kind === "voice" || kind === "video") {
+    return { contentType: kind, text: "", ...(safe(href) ? { media: { url: safe(href) } } : {}) };
+  }
+  return { contentType: "other", text: title || description };
+}
+
+/** msgId của mọi phần (text + từng file) trong kết quả sendMessage của zca-js. */
+function sentMessageIds(result: unknown): string[] {
+  const r = result as { message?: { msgId?: unknown } | null; attachment?: Array<{ msgId?: unknown }> } | null;
+  const ids: string[] = [];
+  if (r?.message?.msgId != null) ids.push(String(r.message.msgId));
+  for (const a of r?.attachment ?? []) if (a?.msgId != null) ids.push(String(a.msgId));
+  return ids;
+}
+
+export type ZaloSendSource = "agent" | "web" | "mcp" | "api";
+
+export class ZaloNotConnectedError extends Error {
+  readonly code = "NOT_CONNECTED";
+  constructor(message = "Zalo Personal chưa đăng nhập — vào Channels → Kết nối QR để quét lại.") {
+    super(message);
+  }
+}
+
 async function imageMetadataGetter(filePath: string) {
   const data = await readFile(filePath);
   const metadata = imageDimensionsFromData(data);
@@ -283,6 +366,14 @@ export class ZaloPersonalChannel implements Channel {
   private groupNames = new Map<string, string>();
   /** Kênh tắt "yêu cầu pairing" → DM mở cho mọi người; nhóm vẫn gate theo demo threads. */
   private openDirect: boolean;
+  /**
+   * msgId của tin do PenAI gửi (agent/web/MCP) — tin này dội lại qua listener
+   * (isSelf) thì bỏ qua vì đã ghi Inbox lúc gửi. Dội lại có thể tới TRƯỚC khi
+   * sendMessage() trả kết quả → listener chờ ngắn rồi kiểm tra lại.
+   */
+  private sentMsgIds = new Set<string>();
+  private contactSync: Promise<{ friends: number; groups: number }> | null = null;
+  private pendingThreadName = "";
 
   constructor(private deps: ChannelDeps) {
     this.id = deps.id;
@@ -444,6 +535,8 @@ export class ZaloPersonalChannel implements Channel {
         id: String(friend.userId),
         type: "direct",
         name: friend.displayName || friend.zaloName || String(friend.userId),
+        ...(friend.avatar ? { avatar: friend.avatar } : {}),
+        ...(friend.phoneNumber ? { phone: friend.phoneNumber } : {}),
       });
     }
 
@@ -454,15 +547,122 @@ export class ZaloPersonalChannel implements Channel {
       const detail = await this.api.getGroupInfo(batch);
       for (const id of batch) {
         const group = detail.gridInfoMap[id];
+        if (group?.name) this.groupNames.set(id, group.name);
         targets.push({
           id,
           type: "group",
           name: group?.name || id,
+          ...(group?.avt ? { avatar: group.avt } : {}),
           ...(group?.totalMember !== undefined ? { memberCount: group.totalMember } : {}),
         });
       }
     }
     return targets.sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }
+
+  /** Đã đăng nhập Zalo và sẵn sàng gửi. */
+  isConnected(): boolean {
+    return this.api !== null;
+  }
+
+  accountInfo(): ZaloPersonalAccount | null {
+    return this.account;
+  }
+
+  /**
+   * Đồng bộ danh bạ (bạn bè + nhóm) rồi báo server lưu DB (onContactsSynced).
+   * Gọi trùng khi đang chạy → dùng chung lượt đang chạy.
+   */
+  syncContacts(): Promise<{ friends: number; groups: number }> {
+    if (!this.api) return Promise.reject(new ZaloNotConnectedError());
+    if (this.contactSync) return this.contactSync;
+    this.contactSync = (async () => {
+      try {
+        const targets = await this.listTargets();
+        const items: ChannelContact[] = targets.map((t) => ({
+          id: t.id,
+          type: t.type,
+          name: t.name,
+          ...(t.avatar ? { avatar: t.avatar } : {}),
+          ...(t.phone ? { phone: t.phone } : {}),
+          ...(t.memberCount !== undefined ? { memberCount: t.memberCount } : {}),
+        }));
+        this.deps.onContactsSynced?.(items);
+        const groups = items.filter((i) => i.type === "group").length;
+        logger.info(`zalo.contacts_synced: channel "${this.name}" ${items.length - groups} bạn bè, ${groups} nhóm`);
+        return { friends: items.length - groups, groups };
+      } finally {
+        this.contactSync = null;
+      }
+    })();
+    return this.contactSync;
+  }
+
+  /** Tra người dùng Zalo theo SĐT; không tìm thấy (hoặc chặn tìm kiếm) → null. */
+  async findUserByPhone(phone: string): Promise<{ uid: string; name: string; avatar: string } | null> {
+    if (!this.api) throw new ZaloNotConnectedError();
+    try {
+      const user = await this.api.findUser(phone);
+      if (!user?.uid) return null;
+      return {
+        uid: String(user.uid),
+        name: user.display_name || user.zalo_name || String(user.uid),
+        avatar: user.avatar || "",
+      };
+    } catch (error) {
+      const msg = errorMessage(error).toLowerCase();
+      if (/not found|không tìm|khong tim|216|-?1\b/.test(msg)) return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Gửi có chủ đích từ người trực (Inbox web), ứng dụng AI qua MCP, hoặc REST —
+   * KHÔNG qua cổng "thread demo" (cổng đó chỉ dành cho agent tự trả lời).
+   * Trả msgId của các tin đã gửi.
+   */
+  async sendManual(input: {
+    threadId: string;
+    peerKind: "direct" | "group";
+    text?: string;
+    filePaths?: string[];
+    source: ZaloSendSource;
+    webUserId?: string;
+    /** Tên người/nhóm nhận (nếu biết) — để hội thoại mới trong Inbox có tên. */
+    threadName?: string;
+  }): Promise<string[]> {
+    if (!this.api) throw new ZaloNotConnectedError();
+    const type = input.peerKind === "group" ? ThreadType.Group : ThreadType.User;
+    const ids: string[] = [];
+    this.pendingThreadName = input.threadName ?? "";
+    try {
+      if (input.text?.trim()) {
+        ids.push(...(await this.sendText(input.threadId, type, input.text, input.source, input.webUserId)));
+      }
+      if (input.filePaths?.length) {
+        ids.push(
+          ...(await this.sendFiles(input.threadId, type, input.filePaths, input.source, input.webUserId, true)),
+        );
+      }
+    } finally {
+      this.pendingThreadName = "";
+    }
+    return ids;
+  }
+
+  /** Tên nhóm (cache; tra Zalo nếu chưa có). Lỗi → "". */
+  async lookupGroupName(threadId: string): Promise<string> {
+    const cached = this.groupNames.get(threadId);
+    if (cached) return cached;
+    if (!this.api) return "";
+    try {
+      const detail = await this.api.getGroupInfo([threadId]);
+      const name = detail.gridInfoMap[threadId]?.name ?? "";
+      if (name) this.groupNames.set(threadId, name);
+      return name;
+    } catch {
+      return "";
+    }
   }
 
   /** Tìm UID Zalo theo số điện thoại (cho admin thêm thread demo/gửi tin test). */
@@ -584,6 +784,15 @@ export class ZaloPersonalChannel implements Channel {
     };
     this.lastError = null;
     this.attachListener(api);
+    // Inbox: kéo danh bạ (bạn bè + nhóm) về DB một lần sau mỗi lần đăng nhập/khôi phục phiên.
+    if (this.deps.onContactsSynced) {
+      setTimeout(() => {
+        if (this.api !== api) return;
+        this.syncContacts().catch((error) =>
+          logger.warn(`zalo.contacts_sync_fail: ${errorMessage(error)}`),
+        );
+      }, 5_000).unref?.();
+    }
   }
 
   private attachListener(api: API): void {
@@ -632,6 +841,10 @@ export class ZaloPersonalChannel implements Channel {
     const senderId = String(message.data.uidFrom || message.threadId);
     const senderName =
       message.data.dName || (message.isSelf ? (this.account?.name ?? senderId) : senderId);
+
+    // Inbox: ghi MỌI tin (kể cả thread chưa cho agent trả lời). Tin do PenAI
+    // tự gửi (agent/web/MCP) đã ghi lúc gửi → bỏ qua bản dội lại.
+    await this.logListenerMessage(message, peerKind, threadId, senderId, senderName);
 
     // Chế độ an toàn: LUÔN ghi nhận ai/nhóm nào nhắn tới (metadata, không lưu
     // nội dung), rồi im lặng bỏ qua mọi thread chưa được chỉ định làm demo —
@@ -713,6 +926,95 @@ export class ZaloPersonalChannel implements Channel {
     }
   }
 
+  private async logListenerMessage(
+    message: Message,
+    peerKind: "direct" | "group",
+    threadId: string,
+    senderId: string,
+    senderName: string,
+  ): Promise<void> {
+    if (!this.deps.onMessageLog) return;
+    const msgId = String(message.data.msgId ?? "");
+    if (message.isSelf && msgId) {
+      if (!this.sentMsgIds.has(msgId)) await new Promise((r) => setTimeout(r, 1_500));
+      if (this.sentMsgIds.has(msgId)) {
+        this.sentMsgIds.delete(msgId);
+        return;
+      }
+    }
+    try {
+      const described = describeZaloContent(message.data.content, String(message.data.msgType ?? ""));
+      const meta: Record<string, unknown> = {};
+      const data = message.data as unknown as {
+        mentions?: Array<{ uid: unknown }>;
+        quote?: { msg?: unknown; ownerId?: unknown };
+      };
+      if (data.quote) {
+        meta.quote = {
+          ownerId: String(data.quote.ownerId ?? ""),
+          text: typeof data.quote.msg === "string" ? data.quote.msg.slice(0, 300) : "",
+        };
+      }
+      if (Array.isArray(data.mentions) && data.mentions.length) {
+        meta.mentions = data.mentions.map((m) => String(m.uid));
+      }
+      const ts = Number(message.data.ts);
+      this.deps.onMessageLog({
+        threadId,
+        peerKind,
+        msgId,
+        direction: message.isSelf ? "out" : "in",
+        source: message.isSelf ? "app" : "zalo",
+        senderId: message.isSelf ? (this.account?.id ?? senderId) : senderId,
+        senderName,
+        ...described,
+        ...(Object.keys(meta).length ? { meta } : {}),
+        sentAt: Number.isFinite(ts) && ts > 0 ? new Date(ts) : new Date(),
+        threadName:
+          peerKind === "group"
+            ? (this.groupNames.get(threadId) ?? "")
+            : message.isSelf
+              ? ""
+              : senderName,
+      });
+    } catch (error) {
+      logger.warn(`zalo.inbox_log_fail: ${errorMessage(error)}`);
+    }
+  }
+
+  /** Ghi tin PenAI vừa gửi vào Inbox + nhớ msgId để bỏ qua bản dội lại. */
+  private logSent(
+    ids: string[],
+    threadId: string,
+    type: ThreadType,
+    source: ZaloSendSource,
+    webUserId: string | undefined,
+    content: Pick<ChannelMessageLog, "contentType" | "text" | "media">,
+  ): void {
+    for (const id of ids) {
+      this.sentMsgIds.add(id);
+      setTimeout(() => this.sentMsgIds.delete(id), 120_000).unref?.();
+    }
+    if (!this.deps.onMessageLog) return;
+    try {
+      this.deps.onMessageLog({
+        threadId,
+        peerKind: type === ThreadType.Group ? "group" : "direct",
+        msgId: ids[0] ?? "",
+        direction: "out",
+        source,
+        senderId: this.account?.id ?? "",
+        senderName: this.account?.name ?? "",
+        ...(webUserId ? { webUserId } : {}),
+        ...content,
+        sentAt: new Date(),
+        ...(this.pendingThreadName ? { threadName: this.pendingThreadName } : {}),
+      });
+    } catch (error) {
+      logger.warn(`zalo.inbox_log_fail: ${errorMessage(error)}`);
+    }
+  }
+
   /** Ghi nhận peer đã nhắn tới — chỉ metadata (tên/id/số tin), không lưu nội dung. */
   private recordObservation(
     chatKey: string,
@@ -783,6 +1085,7 @@ export class ZaloPersonalChannel implements Channel {
       const name = detail.gridInfoMap[threadId]?.name;
       if (name) {
         this.groupNames.set(threadId, name);
+        this.deps.onThreadName?.(threadId, name);
         const peer = this.observed.get(`group:${threadId}`);
         if (peer) {
           peer.name = name;
@@ -932,24 +1235,53 @@ export class ZaloPersonalChannel implements Channel {
     if (message.media?.length) await this.sendFiles(thread.id, thread.type, message.media);
   }
 
-  private async sendText(threadId: string, type: ThreadType, text: string): Promise<void> {
-    if (!this.api) throw new Error("Zalo Personal chưa đăng nhập");
+  private async sendText(
+    threadId: string,
+    type: ThreadType,
+    text: string,
+    source: ZaloSendSource = "agent",
+    webUserId?: string,
+  ): Promise<string[]> {
+    if (!this.api) throw new ZaloNotConnectedError();
+    const all: string[] = [];
     for (const chunk of chunkZaloText(text)) {
-      await this.api.sendMessage({ msg: chunk }, threadId, type);
+      const ids = sentMessageIds(await this.api.sendMessage({ msg: chunk }, threadId, type));
+      this.logSent(ids, threadId, type, source, webUserId, { contentType: "text", text: chunk });
+      all.push(...ids);
     }
+    return all;
   }
 
-  private async sendFiles(threadId: string, type: ThreadType, paths: string[]): Promise<void> {
-    if (!this.api) throw new Error("Zalo Personal chưa đăng nhập");
+  private async sendFiles(
+    threadId: string,
+    type: ThreadType,
+    paths: string[],
+    source: ZaloSendSource = "agent",
+    webUserId?: string,
+    throwOnError = false,
+  ): Promise<string[]> {
+    if (!this.api) throw new ZaloNotConnectedError();
+    const all: string[] = [];
     for (const path of paths) {
       const normalized = path.replaceAll("\\", "/");
+      const name = normalized.split("/").pop() ?? "file";
+      const isImage = /\.(png|jpe?g|webp|gif)$/i.test(name);
       try {
-        await this.api.sendMessage({ msg: "", attachments: [normalized] }, threadId, type);
-      } catch (error) {
-        this.deps.onError?.(
-          new Error(`Không gửi được file "${path}" qua Zalo: ${errorMessage(error)}`),
+        const ids = sentMessageIds(
+          await this.api.sendMessage({ msg: "", attachments: [normalized] }, threadId, type),
         );
+        this.logSent(ids, threadId, type, source, webUserId, {
+          contentType: isImage ? "photo" : "file",
+          text: "",
+          media: { name, localPath: path },
+        });
+        all.push(...ids);
+      } catch (error) {
+        const err = new Error(`Không gửi được file "${name}" qua Zalo: ${errorMessage(error)}`);
+        if (throwOnError) throw err;
+        this.deps.onError?.(err);
       }
     }
+    return all;
   }
 }

@@ -1,0 +1,195 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { sha256hex, type WorkspaceContext } from "@penai/shared";
+import {
+  approveMcpOauthPending,
+  consumeMcpOauthCode,
+  createChannel,
+  createDb,
+  finishMcpServerSend,
+  getMcpOauthGrant,
+  getMcpOauthToken,
+  getMcpServerSend,
+  getZaloThreadAgentBlock,
+  insertMcpOauthClient,
+  insertMcpOauthPending,
+  insertMcpOauthTokens,
+  insertMcpServerSend,
+  listMcpOauthGrants,
+  listUserZaloChannelIds,
+  listZaloMessages,
+  listZaloThreads,
+  lookupMcpGrantPrincipal,
+  markMcpRefreshUsed,
+  markZaloThreadRead,
+  recordZaloMessage,
+  revokeMcpOauthGrant,
+  setUserZaloChannels,
+  setZaloThreadAi,
+  upsertZaloContacts,
+  type DbHandle,
+} from "../src/index.js";
+import { adminQuery, createTestFixtures, setupTestDatabase, TEST_APP_URL, type TestFixtures } from "../src/testing.js";
+
+let fx: TestFixtures;
+let dbh: DbHandle;
+let chA = "";
+let chB = "";
+const ctxA = (): WorkspaceContext => ({ workspaceId: fx.wsA, userId: fx.userId, role: "ws_admin" });
+const ctxB = (): WorkspaceContext => ({ workspaceId: fx.wsB, userId: fx.userId, role: "ws_admin" });
+
+beforeAll(async () => {
+  await setupTestDatabase();
+  fx = await createTestFixtures();
+  dbh = createDb(TEST_APP_URL);
+  chA = (await createChannel(dbh.db, ctxA(), { kind: "zalo_personal", name: "Zalo A", agentId: fx.agentA })).id;
+  chB = (await createChannel(dbh.db, ctxB(), { kind: "zalo_personal", name: "Zalo B", agentId: fx.agentB })).id;
+});
+afterAll(async () => {
+  await dbh.close();
+});
+
+const msg = (over: Record<string, unknown> = {}) => ({
+  threadId: "1001",
+  peerKind: "direct" as const,
+  msgId: "m-1",
+  direction: "in" as const,
+  source: "zalo" as const,
+  senderId: "1001",
+  senderName: "Chị Lan",
+  contentType: "text",
+  text: "Còn hàng không em?",
+  sentAt: new Date(),
+  threadName: "Chị Lan",
+  ...over,
+});
+
+describe("Zalo Inbox (0031)", () => {
+  it("ghi tin + tạo hội thoại, trùng msg_id thì bỏ qua", async () => {
+    const r = await recordZaloMessage(dbh.db, ctxA(), chA, msg());
+    expect(r?.thread).toMatchObject({ threadId: "1001", name: "Chị Lan", unreadCount: 1, kind: "direct" });
+    expect(await recordZaloMessage(dbh.db, ctxA(), chA, msg())).toBeNull();
+    const list = await listZaloThreads(dbh.db, ctxA(), chA, { withMessagesOnly: true });
+    expect(list.total).toBe(1);
+    expect(list.threads[0]?.lastMessage).toBe("Còn hàng không em?");
+  });
+
+  it("nhân viên trả lời (web) → hết chưa đọc + AI tạm dừng; agent trả lời không tạm dừng", async () => {
+    await recordZaloMessage(dbh.db, ctxA(), chA, msg({ msgId: "m-2", direction: "out", source: "agent", text: "Dạ còn ạ" }), { pauseMinutes: 30 });
+    expect(await getZaloThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBeNull();
+    const r = await recordZaloMessage(
+      dbh.db,
+      ctxA(),
+      chA,
+      msg({ msgId: "m-3", direction: "out", source: "web", webUserId: fx.userId, text: "Em gửi báo giá nhé", threadName: "" }),
+      { pauseMinutes: 30 },
+    );
+    expect(r?.thread.unreadCount).toBe(0);
+    expect(r?.message.webUserName).toBeTruthy();
+    expect(await getZaloThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBe("paused");
+    await setZaloThreadAi(dbh.db, ctxA(), chA, "1001", { resume: true });
+    expect(await getZaloThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBeNull();
+    await setZaloThreadAi(dbh.db, ctxA(), chA, "1001", { mode: "off" });
+    expect(await getZaloThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBe("off");
+  });
+
+  it("danh sách tin theo thứ tự cũ → mới, phân trang lùi", async () => {
+    const all = await listZaloMessages(dbh.db, ctxA(), chA, "1001");
+    expect(all.map((m) => m.msgId)).toEqual(["m-1", "m-2", "m-3"]);
+    const older = await listZaloMessages(dbh.db, ctxA(), chA, "1001", { beforeId: all[2]!.id, limit: 1 });
+    expect(older.map((m) => m.msgId)).toEqual(["m-2"]);
+  });
+
+  it("đồng bộ danh bạ: bạn bè + nhóm, tìm theo tên/SĐT, không đè hội thoại đang có", async () => {
+    await upsertZaloContacts(dbh.db, ctxA(), chA, [
+      { threadId: "1001", kind: "direct", name: "Lan Nguyễn", phone: "0901234567" },
+      { threadId: "2002", kind: "direct", name: "Anh Minh" },
+      { threadId: "g-9", kind: "group", name: "Nhóm đại lý", memberCount: 25 },
+    ]);
+    const direct = await listZaloThreads(dbh.db, ctxA(), chA, { kind: "direct", stableOrder: true });
+    expect(direct.threads.map((t) => t.threadId)).toEqual(["1001", "2002"]);
+    expect(direct.threads[0]).toMatchObject({ isContact: true, phone: "0901234567", lastMessage: "Em gửi báo giá nhé" });
+    const found = await listZaloThreads(dbh.db, ctxA(), chA, { q: "0901" });
+    expect(found.threads.map((t) => t.threadId)).toEqual(["1001"]);
+    const groups = await listZaloThreads(dbh.db, ctxA(), chA, { kind: "group" });
+    expect(groups.threads[0]).toMatchObject({ name: "Nhóm đại lý", memberCount: 25 });
+    await markZaloThreadRead(dbh.db, ctxA(), chA, "1001");
+  });
+
+  it("cách ly workspace: workspace B không thấy hội thoại của A", async () => {
+    const res = await listZaloThreads(dbh.db, ctxB(), chA, {});
+    expect(res.total).toBe(0);
+    expect(await listZaloMessages(dbh.db, ctxB(), chA, "1001")).toEqual([]);
+  });
+
+  it("gán kênh Zalo cho member — bỏ qua kênh không phải zalo_personal / khác workspace", async () => {
+    const ids = await setUserZaloChannels(dbh.db, ctxA(), fx.userId, [chA, chB, "not-a-uuid"]);
+    expect(ids).toEqual([chA]);
+    expect(await listUserZaloChannelIds(dbh.db, ctxA(), fx.userId)).toEqual([chA]);
+    await setUserZaloChannels(dbh.db, ctxA(), fx.userId, []);
+    expect(await listUserZaloChannelIds(dbh.db, ctxA(), fx.userId)).toEqual([]);
+  });
+
+  it("chống gửi trùng MCP theo request_id", async () => {
+    const input = { principal: `${fx.userId}:c1`, requestId: "req-00000001", payloadHash: "h1", tool: "zalo_send_message", channelId: chA, recipient: "1001" };
+    expect(await insertMcpServerSend(dbh.db, ctxA(), input)).toBe(true);
+    expect(await insertMcpServerSend(dbh.db, ctxA(), input)).toBe(false);
+    await finishMcpServerSend(dbh.db, ctxA(), input.principal, input.requestId, "sent", { ok: true });
+    const rec = await getMcpServerSend(dbh.db, ctxA(), input.principal, input.requestId);
+    expect(rec).toMatchObject({ status: "sent", payloadHash: "h1", result: { ok: true } });
+    expect(await getMcpServerSend(dbh.db, ctxB(), input.principal, input.requestId)).toBeNull();
+  });
+});
+
+describe("OAuth PenAI MCP server (0031)", () => {
+  it("pending → grant + code (một lần) → token → refresh dùng một lần → thu hồi", async () => {
+    await adminQuery(`UPDATE users SET password_hash = 'scrypt$x' WHERE id = $1`, [fx.userId]);
+    await adminQuery(
+      `INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'operator') ON CONFLICT DO NOTHING`,
+      [fx.wsA, fx.userId],
+    );
+    await insertMcpOauthClient(dbh.db, "pmc_test", { client_name: "Claude", redirect_uris: ["https://claude.ai/api/mcp/auth_callback"] });
+    await insertMcpOauthPending(dbh.db, {
+      id: "pend-1",
+      clientId: "pmc_test",
+      params: { redirectUri: "https://claude.ai/api/mcp/auth_callback", scopes: ["zalo:read", "zalo:send"] },
+      csrfHash: sha256hex("csrf"),
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const principal = await lookupMcpGrantPrincipal(dbh.db, fx.userId, fx.wsA);
+    expect(principal?.isActive).toBe(true);
+    const approve = {
+      pendingId: "pend-1",
+      clientId: "pmc_test",
+      userId: fx.userId,
+      workspaceId: fx.wsA,
+      scopes: ["zalo:read"],
+      passwordVersion: principal!.passwordVersion,
+      codeHash: sha256hex("code-1"),
+      challenge: "ch",
+      redirectUri: "https://claude.ai/api/mcp/auth_callback",
+    };
+    expect(await approveMcpOauthPending(dbh.db, approve)).toBe(true);
+    expect(await approveMcpOauthPending(dbh.db, { ...approve, codeHash: sha256hex("code-2") })).toBe(false);
+    const code = await consumeMcpOauthCode(dbh.db, sha256hex("code-1"));
+    expect(code).toBeTruthy();
+    expect(await consumeMcpOauthCode(dbh.db, sha256hex("code-1"))).toBeNull();
+    const grant = await getMcpOauthGrant(dbh.db, code!.grantId);
+    expect(grant).toMatchObject({ scopes: ["zalo:read"], workspaceId: fx.wsA });
+    await insertMcpOauthTokens(dbh.db, {
+      grantId: grant!.id,
+      scopes: grant!.scopes,
+      accessHash: "acc-h",
+      accessExpires: new Date(Date.now() + 3600_000),
+      refreshHash: "ref-h",
+      refreshExpires: new Date(Date.now() + 86400_000),
+    });
+    expect((await getMcpOauthToken(dbh.db, "acc-h"))?.kind).toBe("access");
+    expect(await markMcpRefreshUsed(dbh.db, "ref-h")).toBe(true);
+    expect(await markMcpRefreshUsed(dbh.db, "ref-h")).toBe(false);
+    const list = await listMcpOauthGrants(dbh.db, { workspaceId: fx.wsA });
+    expect(list[0]).toMatchObject({ clientName: "Claude", redirectOrigins: ["https://claude.ai"] });
+    expect(await revokeMcpOauthGrant(dbh.db, grant!.id, { workspaceId: fx.wsB })).toBe(false);
+    expect(await revokeMcpOauthGrant(dbh.db, grant!.id, { workspaceId: fx.wsA })).toBe(true);
+    expect((await getMcpOauthGrant(dbh.db, grant!.id))?.revokedAt).toBeTruthy();
+  });
+});

@@ -183,6 +183,38 @@ export const INDEX_HTML = `<!doctype html>
   .agent-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; margin-top: 6px; max-height: 220px; overflow: auto; padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
   .agent-checks label { display: flex; align-items: center; gap: 6px; margin: 0; font-size: .85rem; opacity: 1; cursor: pointer; }
   .agent-checks input { width: auto; padding: 0; }
+  /* Inbox Zalo */
+  .ibx { display: flex; height: calc(100vh - 190px); min-height: 420px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--card); }
+  .ibx-list { width: 330px; border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+  .ibx-threads { flex: 1; overflow-y: auto; }
+  .ibx-item { display: flex; gap: 10px; padding: 9px 10px; cursor: pointer; border-bottom: 1px solid var(--border); }
+  .ibx-item:hover { background: rgba(128,128,128,.08); }
+  .ibx-item.active { background: rgba(128,128,128,.16); }
+  .ibx-av { width: 38px; height: 38px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; flex-shrink: 0; overflow: hidden; }
+  .ibx-av.grp { border-radius: 10px; }
+  .ibx-av img { width: 100%; height: 100%; object-fit: cover; }
+  .ibx-mid { flex: 1; min-width: 0; }
+  .ibx-nm { font-weight: 600; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ibx-last { font-size: .8rem; opacity: .65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ibx-meta { font-size: .72rem; opacity: .8; text-align: right; flex-shrink: 0; }
+  .ibx-badge { display: inline-block; background: #ef4444; color: #fff; border-radius: 999px; padding: 0 7px; font-size: .72rem; margin-top: 3px; }
+  .ibx-chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .ibx-head { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .ibx-msgs { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+  .ibx-msg { max-width: 72%; display: flex; flex-direction: column; }
+  .ibx-msg.in { align-self: flex-start; }
+  .ibx-msg.out { align-self: flex-end; align-items: flex-end; }
+  .ibx-bubble { padding: 7px 11px; border-radius: 12px; background: rgba(128,128,128,.14); font-size: .9rem; line-height: 1.4; word-wrap: break-word; overflow-wrap: anywhere; }
+  .ibx-msg.out .ibx-bubble { background: var(--accent); color: #fff; }
+  .ibx-msg.out .ibx-bubble a { color: #fff; }
+  .ibx-who { font-size: .7rem; opacity: .7; margin: 0 4px 1px; }
+  .ibx-time { font-size: .66rem; opacity: .5; margin: 1px 4px 0; }
+  .ibx-quote { font-size: .78rem; opacity: .75; border-left: 3px solid rgba(128,128,128,.5); padding-left: 6px; margin-bottom: 4px; }
+  .ibx-photo { max-width: 260px; max-height: 260px; border-radius: 8px; display: block; }
+  .ibx-sticker { width: 90px; height: 90px; object-fit: contain; }
+  .ibx-compose { border-top: 1px solid var(--border); padding: 8px 10px; }
+  .ibx-compose textarea { flex: 1; resize: vertical; min-height: 42px; }
+  @media (max-width: 860px) { .ibx { flex-direction: column; height: auto; } .ibx-list { width: 100%; max-height: 300px; border-right: 0; border-bottom: 1px solid var(--border); } .ibx-msgs { min-height: 360px; } .ibx-msg { max-width: 90%; } }
 </style>
 </head>
 <body>
@@ -278,6 +310,7 @@ export const INDEX_HTML = `<!doctype html>
     { grp: "Tổng quan" },
     { id: "overview", icon: "📊", label: "Tổng quan" },
     { id: "chat", icon: "💬", label: "Chat" },
+    { id: "inbox", icon: "📥", label: "Inbox Zalo" },
     { grp: "Cấu hình" },
     { id: "agents", icon: "🤖", label: "Agents" },
     { id: "providers", icon: "🔌", label: "Providers" },
@@ -290,6 +323,7 @@ export const INDEX_HTML = `<!doctype html>
     { id: "skills", icon: "📚", label: "Skills" },
     { id: "tools", icon: "🛠️", label: "Custom Tools" },
     { id: "mcp", icon: "🧩", label: "MCP" },
+    { id: "mcpserver", icon: "🔗", label: "Kết nối AI bên ngoài" },
     { id: "vault", icon: "🗄️", label: "Kho tri thức (Vault)" },
     { id: "library", icon: "📁", label: "Thư viện file" },
     { id: "kg", icon: "🕸️", label: "Knowledge Graph" },
@@ -308,13 +342,15 @@ export const INDEX_HTML = `<!doctype html>
     if (isMember()) {
       // Thành viên: chỉ có trang Chat
       nav.appendChild(el("div", { "class": "grp" }, "Trợ lý AI"));
-      nav.appendChild(el("a", { href: "#/chat", "class": "active" }, "💬 <span>Chat</span>"));
+      nav.appendChild(el("a", { href: "#/chat", "class": cur === "inbox" ? "" : "active" }, "💬 <span>Chat</span>"));
+      if ((state.inboxChannels || []).length) nav.appendChild(el("a", { href: "#/inbox", "class": cur === "inbox" ? "active" : "" }, "📥 <span>Inbox Zalo</span>"));
       return;
     }
     var pendingGrp = null;
     NAV.forEach(function (n) {
       if (n.grp) { pendingGrp = n.grp; return; }
       if (n.admin && !isAdmin()) return;
+      if (n.id === "inbox" && !(state.inboxChannels || []).length) return;
       if (pendingGrp) { nav.appendChild(el("div", { "class": "grp" }, pendingGrp)); pendingGrp = null; }
       var a = el("a", { href: "#/" + n.id, "class": cur === n.id ? "active" : "" }, n.icon + " <span>" + n.label + "</span>");
       nav.appendChild(a);
@@ -1268,7 +1304,7 @@ export const INDEX_HTML = `<!doctype html>
     slack: "Bot token (xoxb-...) từ Slack App → OAuth & Permissions.",
     whatsapp: "Access token WhatsApp Cloud API (Meta for Developers).",
     zalo: "Access token Zalo Official Account.",
-    zalo_personal: "Zalo cá nhân qua zca-js (unofficial). Không cần token; tạo kênh xong bấm Kết nối QR. An toàn cho tài khoản đang dùng thật: sau đăng nhập bot CHỈ QUAN SÁT (ghi nhận ai/nhóm nhắn tới), không trả lời ai; chỉ nhận/gửi trong thread được chỉ định demo.",
+    zalo_personal: "Zalo cá nhân qua zca-js (unofficial). Không cần token; tạo kênh xong bấm Kết nối QR. Mọi tin nhắn được lưu vào Inbox Zalo để nhân viên cùng xem/trả lời (tắt được trong Inbox → Cài đặt). AI chỉ tự trả lời trong thread được chỉ định demo (hoặc mọi tin riêng nếu tắt pairing).",
     feishu: "App credentials Feishu/Lark (app_id:app_secret).",
     msteams: "Bot Microsoft Teams qua Azure Bot. Token = <b>client secret</b> của App Registration; điền thêm App ID + Tenant ID bên dưới. Azure Bot → Configuration → Messaging endpoint phải trỏ: <code>" + location.origin + "/webhooks/teams</code>."
   };
@@ -2594,7 +2630,8 @@ export const INDEX_HTML = `<!doctype html>
     var addB = el("button", null, "＋ Thêm người dùng"); top.appendChild(addB);
     m.appendChild(top);
     var c = card(m);
-    var DATA = { users: [], agents: [] };
+    var DATA = { users: [], agents: [], zaloChannels: [] };
+    function zaloName(id) { var z = DATA.zaloChannels || []; for (var i = 0; i < z.length; i++) if (z[i].id === id) return z[i].name; return id.slice(0, 6); }
     function agentName(id) { for (var i = 0; i < DATA.agents.length; i++) if (DATA.agents[i].id === id) return DATA.agents[i].name; return id.slice(0, 6); }
     function load() {
       api("/v1/users").then(function (j) {
@@ -2603,6 +2640,7 @@ export const INDEX_HTML = `<!doctype html>
         c.appendChild(table(["Tên", "Email", "Vai trò", "Agent được chat", "Đăng nhập gần nhất", "Trạng thái", ""], j.users, function (u) {
           var tr = el("tr");
           var agentsTxt = u.role === "member" ? (u.agentIds.length ? u.agentIds.map(function (id) { return '<span class="pill">' + esc(agentName(id)) + "</span>"; }).join(" ") : '<span class="err">chưa gán</span>') : '<span class="muted">tất cả</span>';
+          if (u.role === "member" && (u.zaloChannelIds || []).length) agentsTxt += '<div style="margin-top:3px">' + u.zaloChannelIds.map(function (id) { return '<span class="pill">📥 ' + esc(zaloName(id)) + "</span>"; }).join(" ") + "</div>";
           var me = state.me && state.me.user && state.me.user.id === u.id;
           tr.innerHTML = "<td>" + esc(u.name) + (me ? ' <span class="pill">bạn</span>' : "") + "</td><td>" + esc(u.email) + "</td><td><span class='role-pill'>" + esc(ROLE_LABELS[u.role] || u.role) + "</span></td><td>" + agentsTxt + "</td><td class='muted'>" + esc(u.lastLoginAt ? String(u.lastLoginAt).slice(0, 16).replace("T", " ") : "chưa") + "</td><td>" + (u.isActive ? '<span class="ok">hoạt động</span>' : '<span class="err">đã khóa</span>') + (u.mustChangePassword ? ' <span class="pill">phải đổi MK</span>' : "") + "</td>";
           var td = el("td", { style: "white-space:nowrap" });
@@ -2637,19 +2675,28 @@ export const INDEX_HTML = `<!doctype html>
         '<label>Vai trò</label><select id="uRole" style="width:100%">' + Object.keys(ROLE_LABELS).map(function (r) { return '<option value="' + r + '">' + esc(ROLE_LABELS[r]) + "</option>"; }).join("") + "</select>" +
         '<div id="uRoleHelp" class="muted" style="margin-top:4px"></div>' +
         '<div id="uAgentWrap"><label>Agent được phép chat</label></div>' +
+        '<div id="uZaloWrap"><label>Kênh Zalo được trực (Inbox Zalo)</label></div>' +
         '<div class="dialog-actions"><button class="ghost" id="uCancel">Hủy</button><button id="uSave">' + (isEdit ? "Lưu" : "Tạo tài khoản") + "</button></div>" +
         '<div id="uMsg" style="margin-top:8px"></div>';
       document.body.appendChild(dlg);
       bindPwToggles(dlg);
       $("#uAgentWrap", dlg).appendChild(agentChecks(isEdit ? u.agentIds : []));
+      var zbox = el("div", { "class": "agent-checks", id: "uZalo" });
+      if (!(DATA.zaloChannels || []).length) zbox.innerHTML = '<span class="muted">Chưa có kênh Zalo cá nhân nào.</span>';
+      (DATA.zaloChannels || []).forEach(function (z) {
+        var lb = el("label"); var cb = el("input", { type: "checkbox", value: z.id }); if (isEdit && (u.zaloChannelIds || []).indexOf(z.id) >= 0) cb.checked = true;
+        lb.appendChild(cb); lb.appendChild(document.createTextNode(z.name)); zbox.appendChild(lb);
+      });
+      $("#uZaloWrap", dlg).appendChild(zbox);
       if (isEdit) { $("#uName", dlg).value = u.name; $("#uEmail", dlg).value = u.email; $("#uRole", dlg).value = u.role; }
       else { $("#uRole", dlg).value = "member"; }
-      function syncRole() { var r = $("#uRole", dlg).value; $("#uRoleHelp", dlg).textContent = ROLE_HELP[r] || ""; $("#uAgentWrap", dlg).style.display = r === "member" ? "block" : "none"; }
+      function syncRole() { var r = $("#uRole", dlg).value; $("#uRoleHelp", dlg).textContent = ROLE_HELP[r] || ""; $("#uAgentWrap", dlg).style.display = r === "member" ? "block" : "none"; $("#uZaloWrap", dlg).style.display = r === "member" ? "block" : "none"; }
       $("#uRole", dlg).onchange = syncRole; syncRole();
       $("#uCancel", dlg).onclick = function () { dlg.close(); dlg.remove(); };
       $("#uSave", dlg).onclick = function () {
         var body = { name: $("#uName", dlg).value.trim(), role: $("#uRole", dlg).value };
         body.agentIds = Array.prototype.map.call(dlg.querySelectorAll("#uAgents input:checked"), function (x) { return x.value; });
+        body.zaloChannelIds = Array.prototype.map.call(dlg.querySelectorAll("#uZalo input:checked"), function (x) { return x.value; });
         var req;
         if (isEdit) req = api("/v1/users/" + u.id, { method: "PATCH", body: body });
         else {
@@ -3444,14 +3491,324 @@ export const INDEX_HTML = `<!doctype html>
     loadScopes().then(function () { if (!scopeInfo(cur.scope)) cur.scope = "shared"; drawScopes(); loadDir(); }, function () {});
   };
 
+  // ===== Inbox Zalo cá nhân (0031): nhiều người cùng trực, realtime qua SSE =====
+  function ibxTime(iso) {
+    if (!iso) return "";
+    var d = new Date(iso), now = new Date();
+    var hm = d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+    return d.toDateString() === now.toDateString() ? hm : d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }) + " " + hm;
+  }
+  function ibxNl(s) { return esc(s).split(String.fromCharCode(10)).join("<br>"); }
+  function ibxInitial(name) { var n = String(name || "?").trim(); return esc((n.split(" ").pop() || "?").charAt(0).toUpperCase() || "?"); }
+  var IBX_SRC = { agent: "🤖 AI", web: "👤 Nhân viên", app: "📱 Điện thoại", mcp: "🔌 Ứng dụng AI", api: "🔌 API" };
+
+  PAGES.inbox = function () {
+    var m = page("Inbox Zalo", "Nhiều người cùng xem và trả lời khách trên Zalo cá nhân. Nhân viên trả lời thì AI tự tạm im trong hội thoại đó.");
+    var S = { channels: [], canManage: false, ch: null, threads: [], cur: null, msgs: [], filter: "", kind: "", img: null, es: null };
+    var top = el("div", { "class": "row", style: "margin-bottom:10px" });
+    top.innerHTML = '<select id="ibxCh" style="max-width:260px"></select><span id="ibxSt" class="muted"></span><span style="flex:1"></span>' +
+      '<button class="ghost sm" id="ibxNew">＋ Nhắn tin mới</button><button class="ghost sm" id="ibxSync" style="display:none">🔄 Đồng bộ danh bạ</button><button class="ghost sm" id="ibxSet" style="display:none">⚙️ Cài đặt</button>';
+    m.appendChild(top);
+    var wrap = el("div", { "class": "ibx" });
+    wrap.innerHTML = '<div class="ibx-list"><div class="row" style="padding:8px"><input id="ibxQ" placeholder="Tìm tên, uid, SĐT…"><select id="ibxKind" style="flex:0 0 auto;min-width:0"><option value="">Tất cả</option><option value="direct">Cá nhân</option><option value="group">Nhóm</option><option value="unread">Chưa đọc</option></select></div><div id="ibxThreads" class="ibx-threads"></div></div>' +
+      '<div class="ibx-chat"><div id="ibxHead" class="ibx-head muted">Chọn một hội thoại bên trái.</div><div id="ibxMsgs" class="ibx-msgs"></div>' +
+      '<div class="ibx-compose" id="ibxCompose" style="display:none"><div id="ibxImg"></div><div class="row" style="align-items:flex-end"><textarea id="ibxText" rows="2" placeholder="Nhập tin nhắn… (Enter để gửi, Shift+Enter xuống dòng, dán ảnh trực tiếp)"></textarea><input type="file" id="ibxFile" accept="image/png,image/jpeg,image/gif,image/webp" hidden><button class="ghost" id="ibxAttach" title="Gửi ảnh">🖼️</button><button id="ibxSend">Gửi</button></div></div></div>';
+    m.appendChild(wrap);
+
+    function stopEs() { if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; } }
+    state.pageCleanup = stopEs;
+
+    function chInfo() { for (var i = 0; i < S.channels.length; i++) if (S.channels[i].id === S.ch) return S.channels[i]; return null; }
+    function renderStatus() {
+      var c = chInfo(), st = $("#ibxSt");
+      if (!c) { st.innerHTML = ""; return; }
+      st.innerHTML = (c.connected ? '<span class="pill ok">đã kết nối</span> ' + esc(c.account ? c.account.name : "") : '<span class="pill err">chưa kết nối</span> <span class="muted">— quản trị vào Channels → Kết nối QR</span>') +
+        (c.inbox ? "" : ' · <span class="err">đang TẮT lưu nội dung</span>');
+      $("#ibxSync").style.display = S.canManage ? "" : "none";
+      $("#ibxSet").style.display = isAdmin() ? "" : "none";
+    }
+    function aiBadge(t) {
+      if (t.aiMode === "off") return '<span title="Đã tắt AI cho hội thoại này">🚫</span>';
+      if (t.pausedUntil && new Date(t.pausedUntil).getTime() > Date.now()) return '<span title="AI đang tạm dừng vì nhân viên vừa trả lời">⏸️</span>';
+      return "";
+    }
+    function threadItem(t) {
+      var a = el("div", { "class": "ibx-item" + (S.cur && S.cur.threadId === t.threadId ? " active" : "") });
+      a.innerHTML = '<div class="ibx-av' + (t.kind === "group" ? " grp" : "") + '">' + (t.avatar ? '<img src="' + esc(t.avatar) + '" referrerpolicy="no-referrer" alt="">' : ibxInitial(t.name)) + '</div>' +
+        '<div class="ibx-mid"><div class="ibx-nm">' + (t.kind === "group" ? "👥 " : "") + esc(t.name || t.threadId) + " " + aiBadge(t) + '</div><div class="ibx-last">' + esc(t.lastMessage || (t.isContact ? "(chưa có tin nhắn)" : "")) + "</div></div>" +
+        '<div class="ibx-meta"><div>' + esc(ibxTime(t.lastMessageAt)) + "</div>" + (t.unreadCount ? '<span class="ibx-badge">' + t.unreadCount + "</span>" : "") + "</div>";
+      a.onclick = function () { openThread(t); };
+      return a;
+    }
+    function renderThreads() {
+      var box = $("#ibxThreads"); box.innerHTML = "";
+      if (!S.threads.length) { box.innerHTML = '<div class="muted" style="padding:12px">' + (S.filter ? "Không tìm thấy." : "Chưa có hội thoại nào. Tin nhắn mới tới tài khoản Zalo sẽ tự hiện ở đây.") + "</div>"; return; }
+      S.threads.forEach(function (t) { box.appendChild(threadItem(t)); });
+    }
+    function loadThreads() {
+      if (!S.ch) return;
+      var k = S.kind, qs = "?limit=200" + (S.filter ? "&q=" + encodeURIComponent(S.filter) : "") + (k === "direct" || k === "group" ? "&kind=" + k : "") + (k === "unread" ? "&unread=1" : "");
+      api("/v1/zalo-inbox/" + S.ch + "/threads" + qs).then(function (j) { S.threads = j.threads || []; renderThreads(); })
+        .catch(function (e) { $("#ibxThreads").innerHTML = '<div class="err" style="padding:12px">' + esc(e.message) + "</div>"; });
+    }
+    function msgBody(x) {
+      var md = x.media || {}, h = "";
+      var src = md.file ? "/v1/zalo-inbox/" + S.ch + "/file?p=" + encodeURIComponent(md.file) : (md.url || "");
+      if (x.contentType === "photo") h += src ? '<a href="' + esc(src) + '" target="_blank" rel="noopener noreferrer"><img class="ibx-photo" src="' + esc(src) + '" referrerpolicy="no-referrer" alt="ảnh" loading="lazy"></a>' : "[Hình ảnh]";
+      else if (x.contentType === "sticker") h += md.url ? '<img class="ibx-sticker" src="' + esc(md.url) + '" referrerpolicy="no-referrer" alt="sticker">' : "[Sticker]";
+      else if (x.contentType === "file") h += src ? '<a href="' + esc(src) + '" target="_blank" rel="noopener noreferrer">📎 ' + esc(md.name || "Tệp") + "</a>" : "📎 " + esc(md.name || "Tệp");
+      else if (x.contentType === "voice") h += md.url ? '<audio controls preload="none" src="' + esc(md.url) + '"></audio>' : "[Tin nhắn thoại]";
+      else if (x.contentType === "video") h += md.url ? '<a href="' + esc(md.url) + '" target="_blank" rel="noopener noreferrer">🎬 Xem video</a>' : "[Video]";
+      else if (x.contentType === "link" && md.url) h += '<a href="' + esc(md.url) + '" target="_blank" rel="noopener noreferrer">🔗 ' + esc(md.url) + "</a>";
+      else if (x.contentType === "other" && !x.text) h += '<span class="muted">[Nội dung Zalo chưa hỗ trợ hiển thị]</span>';
+      var text = x.contentType === "link" ? String(x.text || "").split(String.fromCharCode(10)).filter(function (l) { return l !== md.url; }).join(String.fromCharCode(10)) : x.text;
+      if (text) h += (h ? '<div style="margin-top:4px">' : "<div>") + ibxNl(text) + "</div>";
+      return h;
+    }
+    function msgEl(x) {
+      var out = x.direction === "out";
+      var who = out ? (x.source === "web" ? "👤 " + (x.webUserName || "Nhân viên") : (IBX_SRC[x.source] || "")) : (S.cur && S.cur.kind === "group" ? x.senderName : "");
+      if (out && x.source === "mcp" && x.webUserName) who = "🔌 Ứng dụng AI (" + x.webUserName + ")";
+      var q = x.meta && x.meta.quote && x.meta.quote.text ? '<div class="ibx-quote">↪ ' + esc(x.meta.quote.text) + "</div>" : "";
+      var d = el("div", { "class": "ibx-msg " + (out ? "out" : "in"), "data-id": x.id });
+      d.innerHTML = (who ? '<div class="ibx-who">' + esc(who) + "</div>" : "") + '<div class="ibx-bubble">' + q + msgBody(x) + '</div><div class="ibx-time">' + esc(ibxTime(x.sentAt)) + "</div>";
+      return d;
+    }
+    function renderHead() {
+      var t = S.cur, h = $("#ibxHead");
+      if (!t) { h.innerHTML = "Chọn một hội thoại bên trái."; return; }
+      var paused = t.pausedUntil && new Date(t.pausedUntil).getTime() > Date.now();
+      h.className = "ibx-head";
+      h.innerHTML = '<div><b>' + (t.kind === "group" ? "👥 " : "👤 ") + esc(t.name || t.threadId) + '</b> <span class="muted">' + (t.kind === "group" ? "nhóm" : "cá nhân") + " · uid <code>" + esc(t.threadId) + "</code>" + (t.phone ? " · " + esc(t.phone) : "") + "</span></div>" +
+        '<div class="row" style="gap:6px"><span class="muted">AI trả lời:</span><select id="ibxAi" style="padding:3px 6px"><option value="auto">Theo cấu hình kênh</option><option value="off">Tắt cho hội thoại này</option></select>' +
+        (paused ? '<span class="pill">⏸️ tạm dừng tới ' + esc(ibxTime(t.pausedUntil)) + '</span><button class="ghost sm" id="ibxResume">Cho AI trả lời lại</button>' : "") + "</div>";
+      $("#ibxAi").value = t.aiMode || "auto";
+      $("#ibxAi").onchange = function () { setAi({ mode: this.value }); };
+      var r = $("#ibxResume"); if (r) r.onclick = function () { setAi({ resume: true }); };
+    }
+    function setAi(body) {
+      api("/v1/zalo-inbox/" + S.ch + "/threads/" + S.cur.threadId + "/ai", { method: "PUT", body: body })
+        .then(function (j) { if (j.thread) { S.cur = j.thread; mergeThread(j.thread); renderHead(); } toast("Đã cập nhật"); })
+        .catch(function (e) { toast(e.message, true); });
+    }
+    function renderMsgs(keepScroll) {
+      var box = $("#ibxMsgs"), old = box.scrollHeight - box.scrollTop;
+      box.innerHTML = "";
+      if (S.msgs.length >= 50) { var more = el("button", { "class": "ghost sm", style: "display:block;margin:6px auto" }, "Tải tin cũ hơn"); more.onclick = loadOlder; box.appendChild(more); }
+      if (!S.msgs.length) box.appendChild(el("div", { "class": "muted", style: "padding:16px;text-align:center" }, "Chưa có tin nhắn được lưu (hệ thống chỉ lưu từ lúc kết nối). Gửi tin đầu tiên ở ô bên dưới."));
+      S.msgs.forEach(function (x) { box.appendChild(msgEl(x)); });
+      box.scrollTop = keepScroll ? box.scrollHeight - old : box.scrollHeight;
+    }
+    function loadOlder() {
+      if (!S.msgs.length) return;
+      api("/v1/zalo-inbox/" + S.ch + "/threads/" + S.cur.threadId + "/messages?limit=50&before=" + S.msgs[0].id).then(function (j) {
+        S.msgs = (j.messages || []).concat(S.msgs); renderMsgs(true);
+      }).catch(function (e) { toast(e.message, true); });
+    }
+    function openThread(t) {
+      S.cur = t; S.img = null; renderImg();
+      Array.prototype.forEach.call(document.querySelectorAll(".ibx-item"), function (n) { n.classList.remove("active"); });
+      renderThreads(); renderHead();
+      $("#ibxCompose").style.display = "";
+      $("#ibxMsgs").innerHTML = '<div class="muted" style="padding:16px">Đang tải…</div>';
+      api("/v1/zalo-inbox/" + S.ch + "/threads/" + t.threadId + "/messages?limit=50").then(function (j) {
+        if (!S.cur || S.cur.threadId !== t.threadId) return;
+        if (j.thread) { S.cur = j.thread; renderHead(); }
+        S.msgs = j.messages || []; renderMsgs(false);
+      }).catch(function (e) { $("#ibxMsgs").innerHTML = '<div class="err" style="padding:16px">' + esc(e.message) + "</div>"; });
+      if (t.unreadCount) {
+        api("/v1/zalo-inbox/" + S.ch + "/threads/" + t.threadId + "/read", { method: "POST", body: {} }).catch(function () {});
+        t.unreadCount = 0; renderThreads();
+      }
+      $("#ibxText").focus();
+    }
+    function mergeThread(t) {
+      var i; for (i = 0; i < S.threads.length; i++) if (S.threads[i].threadId === t.threadId) break;
+      if (i < S.threads.length) S.threads.splice(i, 1);
+      if (S.kind === "unread" && !t.unreadCount) { renderThreads(); return; }
+      if ((S.kind === "direct" || S.kind === "group") && t.kind !== S.kind) { renderThreads(); return; }
+      S.threads.unshift(t); renderThreads();
+    }
+    function renderImg() {
+      var b = $("#ibxImg");
+      if (!S.img) { b.innerHTML = ""; return; }
+      b.innerHTML = '<div class="row" style="margin-bottom:6px"><img src="' + S.img + '" style="max-height:90px;border-radius:8px"><button class="ghost sm" id="ibxImgX">Bỏ ảnh</button></div>';
+      $("#ibxImgX").onclick = function () { S.img = null; renderImg(); };
+    }
+    function takeFile(f) {
+      if (!f) return;
+      if (!/^image[/](png|jpeg|gif|webp)$/.test(f.type)) { toast("Chỉ gửi ảnh PNG/JPEG/GIF/WEBP", true); return; }
+      if (f.size > 10 * 1024 * 1024) { toast("Ảnh vượt 10 MB", true); return; }
+      var r = new FileReader(); r.onload = function () { S.img = r.result; renderImg(); }; r.readAsDataURL(f);
+    }
+    $("#ibxAttach").onclick = function () { $("#ibxFile").click(); };
+    $("#ibxFile").onchange = function () { takeFile(this.files[0]); this.value = ""; };
+    $("#ibxText").addEventListener("paste", function (e) {
+      var items = (e.clipboardData && e.clipboardData.items) || [];
+      for (var i = 0; i < items.length; i++) if (items[i].kind === "file" && items[i].type.indexOf("image/") === 0) { takeFile(items[i].getAsFile()); e.preventDefault(); return; }
+    });
+    $("#ibxText").addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+    $("#ibxSend").onclick = send;
+    function send() {
+      if (!S.cur) return;
+      var text = $("#ibxText").value, body = {};
+      if (text.trim()) body.text = text;
+      if (S.img) body.image = S.img;
+      if (!body.text && !body.image) return;
+      var btn = $("#ibxSend"); btn.disabled = true;
+      var tid = S.cur.threadId;
+      api("/v1/zalo-inbox/" + S.ch + "/threads/" + tid + "/send", { method: "POST", body: body }).then(function () {
+        $("#ibxText").value = ""; S.img = null; renderImg();
+        // Tin mới tự về qua realtime; phòng khi mất kết nối realtime thì tải lại sau 2 giây
+        setTimeout(function () { if (S.cur && S.cur.threadId === tid) api("/v1/zalo-inbox/" + S.ch + "/threads/" + tid + "/messages?limit=50").then(function (j) { if (S.cur && S.cur.threadId === tid && (j.messages || []).length !== S.msgs.length) { S.msgs = j.messages; renderMsgs(false); } }).catch(function () {}); }, 2000);
+      }).catch(function (e) { toast(e.message, true); }).then(function () { btn.disabled = false; $("#ibxText").focus(); });
+    }
+    function connectEs() {
+      stopEs();
+      if (!window.EventSource) return;
+      var es = new EventSource("/v1/zalo-inbox/events"); S.es = es;
+      es.addEventListener("message", function (ev) {
+        var d; try { d = JSON.parse(ev.data); } catch (e) { return; }
+        if (d.channelId !== S.ch) return;
+        var isCur = S.cur && S.cur.threadId === d.thread.threadId;
+        if (isCur) {
+          if (!S.msgs.some(function (x) { return x.id === d.message.id; })) {
+            S.msgs.push(d.message);
+            var box = $("#ibxMsgs"), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+            box.appendChild(msgEl(d.message)); if (atBottom || d.message.direction === "out") box.scrollTop = box.scrollHeight;
+          }
+          if (d.message.direction === "in" && document.visibilityState === "visible") { api("/v1/zalo-inbox/" + S.ch + "/threads/" + d.thread.threadId + "/read", { method: "POST", body: {} }).catch(function () {}); d.thread.unreadCount = 0; }
+          S.cur = d.thread; renderHead();
+        }
+        if (!S.filter) mergeThread(d.thread);
+      });
+      es.addEventListener("thread", function (ev) {
+        var d; try { d = JSON.parse(ev.data); } catch (e) { return; }
+        if (d.channelId !== S.ch) return;
+        for (var i = 0; i < S.threads.length; i++) if (S.threads[i].threadId === d.thread.threadId) { S.threads[i] = d.thread; }
+        renderThreads();
+        if (S.cur && S.cur.threadId === d.thread.threadId) { S.cur = d.thread; renderHead(); }
+      });
+      es.addEventListener("contacts", function (ev) { var d; try { d = JSON.parse(ev.data); } catch (e) { return; } if (d.channelId === S.ch) toast("Đã đồng bộ " + d.count + " liên hệ/nhóm"); });
+    }
+    var qTimer = null;
+    $("#ibxQ").oninput = function () { var v = this.value.trim(); clearTimeout(qTimer); qTimer = setTimeout(function () { S.filter = v; loadThreads(); }, 300); };
+    $("#ibxKind").onchange = function () { S.kind = this.value; loadThreads(); };
+    $("#ibxCh").onchange = function () { S.ch = this.value; S.cur = null; S.msgs = []; renderStatus(); renderHead(); $("#ibxMsgs").innerHTML = ""; $("#ibxCompose").style.display = "none"; loadThreads(); };
+    $("#ibxSync").onclick = function () {
+      var b = this; b.disabled = true;
+      api("/v1/zalo-inbox/" + S.ch + "/sync-contacts", { method: "POST", body: {} })
+        .then(function (j) { toast("Đã đồng bộ " + j.friends + " bạn bè, " + j.groups + " nhóm"); setTimeout(loadThreads, 1500); })
+        .catch(function (e) { toast(e.message, true); }).then(function () { b.disabled = false; });
+    };
+    $("#ibxSet").onclick = function () {
+      var c = chInfo(); if (!c) return;
+      var dlg = el("dialog", { style: "width:460px;padding:20px" });
+      dlg.innerHTML = "<h3 style='margin:0 0 8px'>Cài đặt Inbox — " + esc(c.name) + "</h3>" +
+        '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem"><input type="checkbox" id="isOn" style="width:auto"> Lưu nội dung tin nhắn (bật Inbox)</label>' +
+        '<div class="muted" style="margin:4px 0 10px">Tắt thì tin mới không được lưu/hiện trong Inbox (tin cũ giữ nguyên). Lưu ý: bật là lưu cả tin riêng tư của tài khoản Zalo này.</div>' +
+        '<label>AI tạm im bao nhiêu phút sau khi nhân viên trả lời (0 = không tạm dừng)</label><input id="isPause" type="number" min="0" max="1440" style="width:120px">' +
+        '<div class="dialog-actions"><button class="ghost" id="isX">Hủy</button><button id="isOk">Lưu</button></div>';
+      document.body.appendChild(dlg);
+      $("#isOn", dlg).checked = !!c.inbox; $("#isPause", dlg).value = c.pauseMinutes;
+      $("#isX", dlg).onclick = function () { dlg.close(); dlg.remove(); };
+      $("#isOk", dlg).onclick = function () {
+        api("/v1/zalo-inbox/" + c.id + "/settings", { method: "PUT", body: { enabled: $("#isOn", dlg).checked, pauseMinutes: Number($("#isPause", dlg).value) || 0 } })
+          .then(function (j) { c.inbox = j.enabled; c.pauseMinutes = j.pauseMinutes; renderStatus(); dlg.close(); dlg.remove(); toast("Đã lưu"); })
+          .catch(function (e) { toast(e.message, true); });
+      };
+      dlg.showModal();
+    };
+    $("#ibxNew").onclick = function () {
+      var dlg = el("dialog", { style: "width:480px;padding:20px" });
+      dlg.innerHTML = "<h3 style='margin:0 0 8px'>Nhắn tin mới</h3>" +
+        '<label>Gửi tới</label><select id="nwBy" style="width:100%"><option value="phone">Số điện thoại</option><option value="uid">uid cá nhân</option><option value="group">ID nhóm</option></select>' +
+        '<label id="nwLbl">Số điện thoại</label><input id="nwTo" style="width:100%" placeholder="0912345678">' +
+        '<label>Nội dung</label><textarea id="nwText" rows="4" style="width:100%"></textarea>' +
+        '<label>Ảnh (không bắt buộc)</label><input id="nwFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">' +
+        '<div id="nwMsg" style="margin-top:8px"></div><div class="dialog-actions"><button class="ghost" id="nwX">Hủy</button><button id="nwOk">Gửi</button></div>';
+      document.body.appendChild(dlg);
+      var img = null;
+      $("#nwBy", dlg).onchange = function () { $("#nwLbl", dlg).textContent = this.value === "phone" ? "Số điện thoại" : this.value === "uid" ? "uid cá nhân" : "ID nhóm"; };
+      $("#nwFile", dlg).onchange = function () { var f = this.files[0]; if (!f) { img = null; return; } var r = new FileReader(); r.onload = function () { img = r.result; }; r.readAsDataURL(f); };
+      $("#nwX", dlg).onclick = function () { dlg.close(); dlg.remove(); };
+      $("#nwOk", dlg).onclick = function () {
+        var by = $("#nwBy", dlg).value, to = $("#nwTo", dlg).value.replace(/[ .-]/g, ""), body = {};
+        if (by === "phone") body.phone = to; else { body.to = to; body.peerKind = by === "group" ? "group" : "direct"; }
+        if ($("#nwText", dlg).value.trim()) body.text = $("#nwText", dlg).value;
+        if (img) body.image = img;
+        $("#nwOk", dlg).disabled = true;
+        api("/v1/zalo-inbox/" + S.ch + "/new", { method: "POST", body: body }).then(function (j) {
+          dlg.close(); dlg.remove(); toast("Đã gửi");
+          setTimeout(function () { api("/v1/zalo-inbox/" + S.ch + "/threads?limit=200").then(function (r) { S.threads = r.threads || []; renderThreads(); var t = S.threads.filter(function (x) { return x.threadId === j.threadId; })[0]; if (t) openThread(t); }); }, 1200);
+        }).catch(function (e) { $("#nwOk", dlg).disabled = false; $("#nwMsg", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+      };
+      dlg.showModal();
+    };
+
+    api("/v1/zalo-inbox/channels").then(function (j) {
+      S.channels = j.channels || []; S.canManage = !!j.canManage; state.inboxChannels = S.channels;
+      var sel = $("#ibxCh");
+      if (!S.channels.length) {
+        wrap.innerHTML = '<div class="card">' + (isMember() ? "Bạn chưa được gán trực kênh Zalo nào — nhờ quản trị vào Người dùng → Sửa → tick kênh Zalo." : 'Chưa có kênh Zalo cá nhân. Vào <a href="#/channels">Channels</a> → ＋ Thêm kênh → chọn <b>zalo_personal</b> → Kết nối QR.') + "</div>";
+        top.style.display = "none"; return;
+      }
+      sel.innerHTML = S.channels.map(function (c) { return '<option value="' + c.id + '">' + esc(c.name) + "</option>"; }).join("");
+      var saved = null; try { saved = localStorage.getItem("penai_ibx_ch"); } catch (e) {}
+      S.ch = S.channels.some(function (c) { return c.id === saved; }) ? saved : S.channels[0].id;
+      sel.value = S.ch;
+      sel.addEventListener("change", function () { try { localStorage.setItem("penai_ibx_ch", S.ch); } catch (e) {} });
+      renderStatus(); loadThreads(); connectEs();
+    }).catch(function (e) { wrap.innerHTML = '<div class="card err">' + esc(e.message) + "</div>"; });
+  };
+
+  // ===== Kết nối AI bên ngoài: PenAI MCP server (Claude, ChatGPT… gọi vào) =====
+  PAGES.mcpserver = function () {
+    var m = page("Kết nối AI bên ngoài (MCP)", "Cho Claude, ChatGPT, Cursor… (hoặc chính " + BRAND.name + ") gửi tin nhắn/ảnh Zalo cá nhân và tra danh bạ qua giao thức MCP");
+    var c1 = card(m, "Địa chỉ MCP"), c2 = card(m, "Các kết nối đã cấp quyền"), c3 = card(m, "Lượt gửi gần đây qua MCP");
+    function load() {
+      api("/v1/mcp-server").then(function (j) {
+        if (!j.enabled) { c1.innerHTML = '<h3>Địa chỉ MCP</h3><span class="err">Chưa bật: máy chủ thiếu PENAI_PUBLIC_URL trong penai.env.</span>'; }
+        else {
+          c1.innerHTML = '<h3>Địa chỉ MCP</h3><div class="row"><code id="msUrl" style="font-size:.95rem;padding:6px 10px">' + esc(j.url) + '</code><button class="ghost sm" id="msCopy">Sao chép</button></div>' +
+            '<ol class="muted" style="margin:10px 0 0;padding-left:18px;line-height:1.7">' +
+            "<li><b>Claude</b> (claude.ai / Claude Desktop): Settings → Connectors → Add custom connector → dán địa chỉ trên → Connect.</li>" +
+            "<li><b>ChatGPT</b>: Settings → Apps &amp; Connectors → Advanced → bật Developer mode → Create → dán địa chỉ, chọn OAuth.</li>" +
+            "<li><b>" + esc(BRAND.name) + "</b> (cho agent dùng): trang <a href='#/mcp'>MCP</a> → Thêm → transport http, URL là địa chỉ trên → Đăng nhập OAuth.</li>" +
+            "<li>Trình duyệt mở trang cấp quyền của " + esc(BRAND.name) + ": đăng nhập bằng tài khoản Dashboard, chọn quyền (xem danh bạ / gửi tin) → Cấp quyền.</li></ol>" +
+            '<div class="muted" style="margin-top:8px">Công cụ: zalo_list_channels, zalo_list_contacts, zalo_list_groups, zalo_find_user_by_phone, zalo_send_message (theo uid, kèm ảnh), zalo_send_message_by_phone. Ứng dụng AI <b>không đọc được nội dung tin nhắn</b>. Quyền theo tài khoản: Vận hành trở lên dùng mọi kênh Zalo; Thành viên chỉ kênh được gán.</div>';
+          $("#msCopy").onclick = function () { try { navigator.clipboard.writeText(j.url); toast("Đã sao chép"); } catch (e) {} };
+        }
+        c2.innerHTML = "<h3>Các kết nối đã cấp quyền</h3>";
+        c2.appendChild(table(["Ứng dụng", "Người cấp", "Quyền", "Cấp lúc", "Dùng gần nhất", ""], j.connections, function (g) {
+          var tr = el("tr");
+          tr.innerHTML = "<td>" + esc(g.clientName) + '<div class="muted" style="font-size:.75rem">' + esc(g.redirectOrigins.join(", ")) + "</div></td><td>" + esc(g.userName || g.userEmail) + "</td><td>" + g.scopes.map(function (s) { return '<span class="pill">' + esc(s) + "</span>"; }).join(" ") +
+            "</td><td class='muted'>" + esc(ibxTime(g.createdAt)) + "</td><td class='muted'>" + esc(g.lastUsedAt ? ibxTime(g.lastUsedAt) : "chưa") + "</td>";
+          var td = el("td");
+          if (g.revokedAt) td.innerHTML = '<span class="muted">đã thu hồi</span>';
+          else { var b = el("button", { "class": "ghost sm" }, "Thu hồi"); b.onclick = function () { if (confirm("Thu hồi kết nối " + g.clientName + "?")) api("/v1/mcp-server/connections/" + g.id, { method: "DELETE" }).then(function () { toast("Đã thu hồi"); load(); }).catch(function (e) { toast(e.message, true); }); }; td.appendChild(b); }
+          tr.appendChild(td); return tr;
+        }));
+        c3.innerHTML = "<h3>Lượt gửi gần đây qua MCP</h3>";
+        c3.appendChild(table(["Lúc", "Ứng dụng", "Công cụ", "Người nhận", "Kết quả"], j.activity, function (a) {
+          var tr = el("tr");
+          tr.innerHTML = "<td class='muted'>" + esc(ibxTime(a.createdAt)) + "</td><td>" + esc(a.clientName) + "</td><td><code>" + esc(a.tool) + "</code></td><td><code>" + esc(a.recipient) + "</code></td><td>" + (a.status === "sent" ? '<span class="ok">đã gửi</span>' : a.status === "failed" ? '<span class="err">lỗi</span>' : '<span class="pill">' + esc(a.status) + "</span>") + "</td>";
+          return tr;
+        }));
+      }).catch(function (e) { c1.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    }
+    load();
+  };
+
   // ===== Router =====
   function refreshAgents() { return api("/v1/agents").then(function (j) { state.agents = j.agents; }).catch(function () {}); }
   function route() {
     if (!state.me) { showLogin(); return; }
+    if (state.pageCleanup) { try { state.pageCleanup(); } catch (e) {} state.pageCleanup = null; }
     renderNav();
     var id = location.hash.replace("#/", "") || (isMember() ? "chat" : "overview");
     var qi = id.indexOf("?"); state.routeQuery = qi >= 0 ? id.slice(qi + 1) : ""; if (qi >= 0) id = id.slice(0, qi);
-    if (isMember()) id = "chat";
+    if (isMember() && !(id === "inbox" && (state.inboxChannels || []).length)) id = "chat";
     var n = null; for (var i = 0; i < NAV.length; i++) if (NAV[i].id === id) n = NAV[i];
     if (n && n.admin && !isAdmin()) id = "overview";
     var fn = PAGES[id] || PAGES.overview;
@@ -3481,7 +3838,8 @@ export const INDEX_HTML = `<!doctype html>
     $("#loginView").hidden = true;
     renderUser();
     if (me.mustChangePassword) { openChangePassword(true); }
-    return refreshAgents().then(function () { route(); });
+    var inboxLoad = api("/v1/zalo-inbox/channels").then(function (j) { state.inboxChannels = j.channels || []; }).catch(function () { state.inboxChannels = []; });
+    return Promise.all([refreshAgents(), inboxLoad]).then(function () { route(); });
   }
   function openChangePassword(forced) {
     var dlg = el("dialog", { style: "width:420px;padding:20px" });
