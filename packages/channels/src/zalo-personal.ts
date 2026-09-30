@@ -18,6 +18,7 @@ import type {
   ChannelContact,
   ChannelDeps,
   ChannelMessageLog,
+  ChannelReaction,
   InboundMedia,
   OutboundMessage,
 } from "./types.js";
@@ -322,6 +323,28 @@ function sentMessageIds(result: unknown): string[] {
 
 export type ZaloSendSource = "agent" | "web" | "mcp" | "api";
 
+/** Cảm xúc hỗ trợ (tên dễ dùng → mã icon Zalo). "none" = gỡ cảm xúc. */
+export const ZALO_REACTIONS = {
+  heart: "/-heart",
+  like: "/-strong",
+  haha: ":>",
+  wow: ":o",
+  cry: ":-((",
+  angry: ":-h",
+  none: "",
+} as const;
+export type ZaloReactionKey = keyof typeof ZALO_REACTIONS;
+
+export function isZaloReactionKey(v: unknown): v is ZaloReactionKey {
+  return typeof v === "string" && Object.prototype.hasOwnProperty.call(ZALO_REACTIONS, v);
+}
+
+/** Tự thả cảm xúc khi khách nhắn: config.auto_reaction = "heart" | "like" (khác → tắt). */
+export function parseAutoReaction(config: Record<string, unknown>): "heart" | "like" | null {
+  const v = config["auto_reaction"];
+  return v === "heart" || v === "like" ? v : null;
+}
+
 export class ZaloNotConnectedError extends Error {
   readonly code = "NOT_CONNECTED";
   constructor(message = "Zalo Personal chưa đăng nhập — vào Channels → Kết nối QR để quét lại.") {
@@ -373,6 +396,13 @@ export class ZaloPersonalChannel implements Channel {
    */
   private sentMsgIds = new Set<string>();
   private contactSync: Promise<{ friends: number; groups: number }> | null = null;
+  /** Tự thả cảm xúc khi khách nhắn (null = tắt). Cập nhật nóng qua setAutoReaction. */
+  private autoReaction: "heart" | "like" | null;
+  /** Hẹn giờ tự thả theo hội thoại — khách nhắn dồn thì chỉ thả tin cuối. */
+  private autoReactTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Hàng đợi thả cảm xúc toàn kênh: tối đa ~1 lần/giây (tránh bị Zalo coi là spam). */
+  private reactChain: Promise<unknown> = Promise.resolve();
+  private lastReactAt = 0;
   private pendingThreadName = "";
 
   constructor(private deps: ChannelDeps) {
@@ -382,6 +412,7 @@ export class ZaloPersonalChannel implements Channel {
     this.requireMention = deps.config["require_mention"] === true;
     this.demoThreadSet = new Set(parseZaloDemoThreads(deps.config));
     this.openDirect = deps.requirePairing === false;
+    this.autoReaction = parseAutoReaction(deps.config);
     this.runner = new BoundedRunner(20, (error) => deps.onError?.(error));
   }
 
@@ -422,6 +453,8 @@ export class ZaloPersonalChannel implements Channel {
 
   async stop(): Promise<void> {
     this.running = false;
+    for (const t of this.autoReactTimers.values()) clearTimeout(t);
+    this.autoReactTimers.clear();
     for (const attempt of this.qrAttempts.values()) attempt.abort?.();
     this.currentQrId = null;
     this.stopListener();
@@ -650,6 +683,82 @@ export class ZaloPersonalChannel implements Channel {
     return ids;
   }
 
+  setAutoReaction(v: "heart" | "like" | null): void {
+    this.autoReaction = v;
+    if (!v) {
+      for (const t of this.autoReactTimers.values()) clearTimeout(t);
+      this.autoReactTimers.clear();
+    }
+  }
+
+  getAutoReaction(): "heart" | "like" | null {
+    return this.autoReaction;
+  }
+
+  /**
+   * Thả (hoặc gỡ, reaction = "none") cảm xúc vào 1 tin. Chạy qua hàng đợi toàn
+   * kênh ~1 lần/giây. Thành công → báo onReaction để Inbox lưu + hiện ngay.
+   */
+  async react(input: {
+    threadId: string;
+    peerKind: "direct" | "group";
+    msgId: string;
+    cliMsgId: string;
+    reaction: ZaloReactionKey;
+    source: "web" | "auto" | "mcp";
+    webUserId?: string;
+  }): Promise<void> {
+    if (!this.api) throw new ZaloNotConnectedError();
+    if (!input.msgId || !input.cliMsgId) throw new Error("Tin này thiếu mã để thả cảm xúc (tin lưu trước bản 1.5.0)");
+    const run = async () => {
+      const wait = this.lastReactAt + 1_000 - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      this.lastReactAt = Date.now();
+      if (!this.api) throw new ZaloNotConnectedError();
+      await this.api.addReaction(ZALO_REACTIONS[input.reaction] as never, {
+        data: { msgId: input.msgId, cliMsgId: input.cliMsgId },
+        threadId: input.threadId,
+        type: input.peerKind === "group" ? ThreadType.Group : ThreadType.User,
+      });
+    };
+    const job = this.reactChain.then(run, run);
+    this.reactChain = job.catch(() => {});
+    await job;
+    this.deps.onReaction?.({
+      threadId: input.threadId,
+      peerKind: input.peerKind,
+      targetMsgId: input.msgId,
+      reactorId: this.account?.id ?? "",
+      reactorName: this.account?.name ?? "",
+      icon: ZALO_REACTIONS[input.reaction],
+      source: input.source,
+      ...(input.webUserId ? { webUserId: input.webUserId } : {}),
+      at: new Date(),
+    });
+  }
+
+  /** Khách nhắn (cá nhân + nhóm) → sau 1–4 giây thả cảm xúc vào tin CUỐI của đợt nhắn. */
+  private scheduleAutoReaction(message: Message, peerKind: "direct" | "group", threadId: string): void {
+    const icon = this.autoReaction;
+    if (!icon || !this.api) return;
+    const msgId = String(message.data.msgId ?? "");
+    const cliMsgId = String((message.data as { cliMsgId?: unknown }).cliMsgId ?? "");
+    if (!msgId || !cliMsgId) return;
+    const key = `${peerKind}:${threadId}`;
+    const prev = this.autoReactTimers.get(key);
+    if (prev) clearTimeout(prev);
+    const delay = 1_000 + Math.floor(Math.random() * 3_000);
+    const timer = setTimeout(() => {
+      this.autoReactTimers.delete(key);
+      if (this.autoReaction !== icon) return;
+      void this.react({ threadId, peerKind, msgId, cliMsgId, reaction: icon, source: "auto" }).catch((error) =>
+        logger.warn(`zalo.auto_reaction_fail: ${peerKind} ${threadId} — ${errorMessage(error)}`),
+      );
+    }, delay);
+    timer.unref?.();
+    this.autoReactTimers.set(key, timer);
+  }
+
   /** Tên nhóm (cache; tra Zalo nếu chưa có). Lỗi → "". */
   async lookupGroupName(threadId: string): Promise<string> {
     const cached = this.groupNames.get(threadId);
@@ -799,6 +908,25 @@ export class ZaloPersonalChannel implements Channel {
     api.listener.on("message", (message) => {
       this.runner.run(() => this.handleMessage(message));
     });
+    api.listener.on("reaction", (reaction) => {
+      try {
+        const data = reaction.data;
+        const target = data.content?.rMsg?.[0];
+        if (!target?.gMsgID) return;
+        this.deps.onReaction?.({
+          threadId: String(reaction.threadId),
+          peerKind: reaction.isGroup ? "group" : "direct",
+          targetMsgId: String(target.gMsgID),
+          reactorId: reaction.isSelf ? (this.account?.id ?? String(data.uidFrom)) : String(data.uidFrom),
+          reactorName: reaction.isSelf ? (this.account?.name ?? "") : (data.dName ?? ""),
+          icon: String(data.content.rIcon ?? ""),
+          source: reaction.isSelf ? "app" : "zalo",
+          at: Number(data.ts) > 0 ? new Date(Number(data.ts)) : new Date(),
+        });
+      } catch (error) {
+        logger.warn(`zalo.reaction_event_fail: ${errorMessage(error)}`);
+      }
+    });
     api.listener.on("connected", () => {
       this.listening = true;
       this.lastError = null;
@@ -845,6 +973,7 @@ export class ZaloPersonalChannel implements Channel {
     // Inbox: ghi MỌI tin (kể cả thread chưa cho agent trả lời). Tin do PenAI
     // tự gửi (agent/web/MCP) đã ghi lúc gửi → bỏ qua bản dội lại.
     await this.logListenerMessage(message, peerKind, threadId, senderId, senderName);
+    if (!message.isSelf) this.scheduleAutoReaction(message, peerKind, threadId);
 
     // Chế độ an toàn: LUÔN ghi nhận ai/nhóm nào nhắn tới (metadata, không lưu
     // nội dung), rồi im lặng bỏ qua mọi thread chưa được chỉ định làm demo —
@@ -939,6 +1068,9 @@ export class ZaloPersonalChannel implements Channel {
       if (!this.sentMsgIds.has(msgId)) await new Promise((r) => setTimeout(r, 1_500));
       if (this.sentMsgIds.has(msgId)) {
         this.sentMsgIds.delete(msgId);
+        // Tin đã ghi lúc gửi nhưng thiếu cliMsgId (kết quả gửi không có) → bổ sung để thả cảm xúc được.
+        const cli = (message.data as { cliMsgId?: unknown }).cliMsgId;
+        if (cli != null && String(cli) !== "") this.deps.onMessageCliId?.(msgId, String(cli));
         return;
       }
     }
@@ -958,6 +1090,9 @@ export class ZaloPersonalChannel implements Channel {
       if (Array.isArray(data.mentions) && data.mentions.length) {
         meta.mentions = data.mentions.map((m) => String(m.uid));
       }
+      // Cần cả msgId + cliMsgId để thả cảm xúc vào tin này về sau
+      const cli = (message.data as { cliMsgId?: unknown }).cliMsgId;
+      if (cli != null && String(cli) !== "") meta.cliMsgId = String(cli);
       const ts = Number(message.data.ts);
       this.deps.onMessageLog({
         threadId,

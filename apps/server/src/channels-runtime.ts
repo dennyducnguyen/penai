@@ -568,6 +568,10 @@ function makeInboundHandler(
       }
     }
 
+    // Công tắc "Agent tự trả lời" của kênh (Channels → Sửa). Bỏ tick = kênh vẫn
+    // kết nối + Inbox vẫn lưu tin, chỉ agent không trả lời. Lịch hẹn vẫn gửi (đi đường khác).
+    if (channel.config["agent_reply"] === false) return { kind: "ignore" };
+
     // Inbox Zalo: nhân viên đã tắt AI cho hội thoại này, hoặc vừa trả lời tay
     // (web/điện thoại) → AI im trong lúc tạm dừng.
     if (msg.channelKind === "zalo_personal") {

@@ -20,6 +20,14 @@ Có từ PenAI **1.3.0**. Hai tính năng dùng chung một kênh `zalo_personal
 
 **Lưu gì:** mặc định **lưu mọi tin nhắn** đến/đi của tài khoản Zalo đã kết nối (kể cả tin riêng tư) vào database, kể từ lúc kết nối — Zalo không cho lấy lịch sử cũ. Ảnh/file khách gửi chỉ lưu đường link CDN của Zalo; ảnh gửi đi lưu trong `/var/lib/<bản-cài>/data/<workspace>/zalo-inbox/`. Tắt lưu: Inbox → ⚙️ Cài đặt → bỏ tick.
 
+**Tắt hẳn agent trên kênh (từ 1.5.0):** Channels → Sửa kênh → bỏ tick **"Agent tự trả lời"** (ô trên cùng, mặc định có tick). Kênh vẫn kết nối, Inbox vẫn lưu và hiện tin, nhân viên vẫn chat tay, MCP vẫn chạy — chỉ AI không trả lời. Lịch hẹn agent đã đặt vẫn gửi bình thường. Áp dụng cho mọi loại kênh (Telegram, Teams…).
+
+**Cảm xúc (reaction, từ 1.5.0):**
+
+- **Thả tay trong Inbox**: rê chuột vào tin của khách → thanh ❤️ 👍 😆 😮 😢 😡; bấm lại icon đang chọn để gỡ. Cảm xúc của cả hai phía (khách thả vào tin của mình, mình thả vào tin của khách) hiện dưới bong bóng, cập nhật tức thì.
+- **Tự thả khi khách nhắn**: Inbox → ⚙️ Cài đặt → "Tự thả cảm xúc khi khách nhắn" = Tắt (mặc định) / ❤️ / 👍. Áp dụng cả tin riêng và nhóm, thả vào tin cuối của mỗi đợt nhắn sau 1–4 giây, cả kênh tối đa ~1 lần/giây. Chạy độc lập với "Agent tự trả lời". Nhóm đông người nhắn nhiều → tài khoản thả rất nhiều, Zalo có thể giới hạn tài khoản.
+- Chỉ thả được vào tin lưu từ bản 1.5.0 trở đi (cần thêm mã tin mà bản cũ chưa lưu).
+
 **AI và nhân viên cùng trực:**
 
 - AI chỉ tự trả lời ở những hội thoại kênh cho phép (thread được "Chỉ định demo", hoặc mọi tin riêng nếu kênh tắt "Yêu cầu pairing") — y như trước.
@@ -65,6 +73,8 @@ Trình duyệt mở **trang cấp quyền của PenAI**: đăng nhập bằng em
 | `zalo_find_user_by_phone` | read | `phone` |
 | `zalo_list_conversations` | messages | `query?`, `type?` (user/group), `unread_only?`, `limit?` (≤200), `cursor?`, `channel_id?` → `thread_id`, tên, tin cuối, số chưa đọc |
 | `zalo_get_messages` | messages | `thread_id`, `limit?` (mặc định 500, ≤2000), `before?`, `channel_id?` → lịch sử cũ → mới, người gửi, nguồn, ảnh/file (link); `has_more` + `next_before` để lấy tiếp phần cũ hơn tới hết |
+| `zalo_react_latest` | send | `thread_id`, `reaction?` (heart mặc định / like / haha / wow / cry / angry / none), `count?` (≤5) → thả vào tin mới nhất của khách — không cần quyền đọc tin |
+| `zalo_react_message` | send | `thread_id`, `message_id` (từ `zalo_get_messages` / `zalo_search_messages`), `reaction` |
 | `zalo_search_messages` | messages | `query`, `thread_id?`, `since?` (ISO), `limit?` (≤200) → tin khớp từ khóa kèm hội thoại |
 | `zalo_send_message` | send | `to` (uid/group_id), `thread_type?` (user/group), `message?`, `image_url?`, `request_id?`, `channel_id?` |
 | `zalo_send_message_by_phone` | send | `phone`, `message?`, `image_url?`, `request_id?`, `channel_id?` |
@@ -90,6 +100,7 @@ Trình duyệt mở **trang cấp quyền của PenAI**: đăng nhập bằng em
 | `INSUFFICIENT_SCOPE` | Kết nối chưa được cấp quyền đó — kết nối lại và tick quyền |
 | `MESSAGES_DISABLED` | Kênh chưa bật cho ứng dụng AI đọc tin nhắn (Inbox → ⚙️ Cài đặt) |
 | `THREAD_NOT_FOUND` | Không có hội thoại / chưa có tin nào được lưu |
+| `CANNOT_REACT` / `NO_MESSAGE` | Tin lưu trước 1.5.0 không thả cảm xúc được / hội thoại chưa có tin của khách để thả |
 
 ### Kỹ thuật (cho người sửa mã)
 

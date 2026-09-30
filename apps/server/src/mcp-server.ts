@@ -66,6 +66,8 @@ import {
   allowedZaloChannelIds,
   ImageInputError,
   readInboxConfig,
+  reactZaloMessage,
+  latestIncomingZaloMessages,
   isZaloRejected,
   prepareOutboundImage,
   sendZalo,
@@ -233,6 +235,16 @@ function mediaForMcp(m: Record<string, unknown> | null): MediaOut {
   const name = typeof m.name === "string" ? m.name : undefined;
   return url || name ? { ...(url ? { url } : {}), ...(name ? { name } : {}) } : null;
 }
+
+const ICON_NAME: Record<string, string> = {
+  "/-heart": "heart",
+  "/-strong": "like",
+  ":>": "haha",
+  ":o": "wow",
+  ":-((": "cry",
+  ":-h": "angry",
+};
+const reactionName = (icon: string) => ICON_NAME[icon] ?? icon;
 
 const SOURCE_LABEL: Record<string, string> = {
   zalo: "người ngoài gửi tới",
@@ -606,6 +618,10 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
             type: m.contentType,
             text: m.text,
             ...(mediaForMcp(m.media) ? { media: mediaForMcp(m.media) } : {}),
+            ...(m.reactions?.length
+              ? { reactions: m.reactions.map((r) => ({ icon: reactionName(r.icon), by: r.reactorName || r.reactorId })) }
+              : {}),
+            can_react: m.canReact === true,
             ...(m.meta && typeof m.meta === "object" && (m.meta as { quote?: { text?: string } }).quote?.text
               ? { reply_to: (m.meta as { quote: { text: string } }).quote.text }
               : {}),
@@ -655,6 +671,84 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
       },
     );
   }
+
+  // ===== Thả cảm xúc (quyền zalo:send) =====
+  const reactionEnum = z
+    .enum(["heart", "like", "haha", "wow", "cry", "angry", "none"])
+    .describe("heart ❤️, like 👍, haha 😆, wow 😮, cry 😢, angry 😡, none = gỡ cảm xúc của mình.");
+  const reactErr = (e: Error & { code?: string }) =>
+    ["NOT_CONNECTED", "MESSAGE_NOT_FOUND", "CANNOT_REACT"].includes(e.code ?? "")
+      ? fail(e.code!, e.message)
+      : fail("REACT_FAILED", `Zalo lỗi khi thả cảm xúc: ${e.message}`);
+
+  reg(
+    "zalo_react_latest",
+    "Thả cảm xúc tin mới nhất của khách",
+    "Thả cảm xúc (mặc định ❤️) vào tin mới nhất KHÁCH gửi trong 1 hội thoại cá nhân/nhóm — không cần đọc nội dung tin. Tìm hội thoại bằng zalo_list_contacts / zalo_list_groups (thread_id = uid hoặc group_id).",
+    "zalo:send",
+    {
+      thread_id: z.string().regex(/^\d{1,30}$/).describe("uid người hoặc group_id."),
+      reaction: reactionEnum.optional(),
+      count: z.number().int().min(1).max(5).optional().describe("Thả cho N tin mới nhất của khách (mặc định 1, tối đa 5)."),
+      channel_id: channelId,
+    },
+    false,
+    async (args) => {
+      const ch = await resolveChannel(deps, p, args.channel_id);
+      if (isResult(ch)) return ch;
+      const rows = await latestIncomingZaloMessages(deps.db, p.ctx, ch.id, args.thread_id, args.count ?? 1);
+      if (!rows.length) return fail("NO_MESSAGE", "Hội thoại chưa có tin nào của khách (từ bản 1.5.0) để thả cảm xúc.");
+      const done: string[] = [];
+      for (const m of rows) {
+        try {
+          await reactZaloMessage(deps.db, p.ctx, {
+            channelId: ch.id,
+            threadId: args.thread_id,
+            messageId: m.id,
+            reaction: args.reaction ?? "heart",
+            source: "mcp",
+            webUserId: p.ctx.userId,
+          });
+          done.push(m.id);
+        } catch (err) {
+          if (!done.length) return reactErr(err as Error & { code?: string });
+          break;
+        }
+      }
+      return ok({ success: true, channel_id: ch.id, thread_id: args.thread_id, reaction: args.reaction ?? "heart", message_ids: done });
+    },
+  );
+
+  reg(
+    "zalo_react_message",
+    "Thả cảm xúc vào 1 tin",
+    "Thả/gỡ cảm xúc vào một tin cụ thể (message_id = id lấy từ zalo_get_messages hoặc zalo_search_messages).",
+    "zalo:send",
+    {
+      thread_id: z.string().regex(/^\d{1,30}$/).describe("thread_id của hội thoại."),
+      message_id: z.string().regex(/^\d{1,19}$/).describe("id tin nhắn (trường id trong zalo_get_messages)."),
+      reaction: reactionEnum,
+      channel_id: channelId,
+    },
+    false,
+    async (args) => {
+      const ch = await resolveChannel(deps, p, args.channel_id);
+      if (isResult(ch)) return ch;
+      try {
+        await reactZaloMessage(deps.db, p.ctx, {
+          channelId: ch.id,
+          threadId: args.thread_id,
+          messageId: args.message_id,
+          reaction: args.reaction,
+          source: "mcp",
+          webUserId: p.ctx.userId,
+        });
+        return ok({ success: true, channel_id: ch.id, thread_id: args.thread_id, message_id: args.message_id, reaction: args.reaction });
+      } catch (err) {
+        return reactErr(err as Error & { code?: string });
+      }
+    },
+  );
 
   reg(
     "zalo_send_message",

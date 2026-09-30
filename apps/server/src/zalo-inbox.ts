@@ -31,6 +31,10 @@ import {
   setZaloThreadAi,
   setZaloThreadName,
   updateChannel,
+  upsertZaloReaction,
+  setZaloMessageCliId,
+  getZaloMessageById,
+  latestIncomingZaloMessages,
   upsertZaloContacts,
   recordAudit,
   type Db,
@@ -39,6 +43,11 @@ import {
 } from "@penai/db";
 import {
   ZaloPersonalChannel,
+  isZaloReactionKey,
+  parseAutoReaction,
+  ZALO_REACTIONS,
+  type ZaloReactionKey,
+  type ChannelReaction,
   type ChannelContact,
   type ChannelMessageLog,
   type ZaloSendSource,
@@ -60,6 +69,8 @@ export function readInboxConfig(config: Record<string, unknown>): {
   enabled: boolean;
   pauseMinutes: number;
   mcpReadMessages: boolean;
+  autoReaction: "heart" | "like" | null;
+  agentReply: boolean;
 } {
   const raw = Number(config["inbox_pause_minutes"]);
   return {
@@ -67,6 +78,10 @@ export function readInboxConfig(config: Record<string, unknown>): {
     pauseMinutes: Number.isFinite(raw) && raw >= 0 ? Math.min(raw, 24 * 60) : 30,
     // Ứng dụng AI bên ngoài (MCP) đọc hội thoại + nội dung tin: MẶC ĐỊNH TẮT, quản trị bật theo từng kênh.
     mcpReadMessages: config["mcp_read_messages"] === true,
+    // Tự thả cảm xúc khi khách nhắn (cá nhân + nhóm): MẶC ĐỊNH TẮT.
+    autoReaction: parseAutoReaction(config),
+    // Công tắc "Agent tự trả lời" (Channels → Sửa): mặc định bật.
+    agentReply: config["agent_reply"] !== false,
   };
 }
 
@@ -190,8 +205,71 @@ export function zaloInboxHooks(
     onThreadName: (threadId: string, name: string) => {
       void setZaloThreadName(db, ctx, ch.id, threadId, name).catch(() => {});
     },
+    onMessageCliId: (msgId: string, cliMsgId: string) => {
+      // Bản dội lại có thể tới trước khi tin kịp ghi DB → thử lại sau 3 giây nếu chưa thấy.
+      const apply = (retry: boolean) =>
+        setZaloMessageCliId(db, ctx, ch.id, msgId, cliMsgId)
+          .then((m) => {
+            if (m) broadcast(ch.workspaceId, ch.id, "message_update", { channelId: ch.id, threadId: m.threadId, message: publicMessage(m, ch.workspaceId) });
+            else if (retry) setTimeout(() => void apply(false), 3_000).unref?.();
+          })
+          .catch((err) => logger.warn(`zalo.cli_id_store lỗi: ${(err as Error).message}`));
+      void apply(true);
+    },
+    onReaction: (r: ChannelReaction) => {
+      void upsertZaloReaction(db, ctx, ch.id, {
+        threadId: r.threadId,
+        msgId: r.targetMsgId,
+        reactorId: r.reactorId,
+        reactorName: r.reactorName,
+        icon: r.icon,
+        source: r.source,
+        webUserId: r.webUserId ?? null,
+      })
+        .then((reactions) =>
+          broadcast(ch.workspaceId, ch.id, "reaction", { channelId: ch.id, threadId: r.threadId, msgId: r.targetMsgId, reactions }),
+        )
+        .catch((err) => logger.warn(`zalo.reaction_store lỗi: ${(err as Error).message}`));
+    },
   };
 }
+
+/**
+ * Thả/gỡ cảm xúc vào 1 tin đã lưu (Inbox + MCP). Lỗi rõ ràng:
+ * NOT_CONNECTED / MESSAGE_NOT_FOUND / CANNOT_REACT.
+ */
+export async function reactZaloMessage(
+  db: Db,
+  ctx: WorkspaceContext,
+  input: {
+    channelId: string;
+    threadId: string;
+    messageId: string;
+    reaction: ZaloReactionKey;
+    source: "web" | "mcp";
+    webUserId?: string;
+  },
+): Promise<void> {
+  const err = (code: string, message: string) => Object.assign(new Error(message), { code });
+  const rt = zaloRuntime(input.channelId);
+  if (!rt?.isConnected()) throw err("NOT_CONNECTED", "Kênh Zalo chưa kết nối — vào Channels → Kết nối QR để quét lại.");
+  const msg = await getZaloMessageById(db, ctx, input.channelId, input.threadId, input.messageId);
+  if (!msg) throw err("MESSAGE_NOT_FOUND", "Không có tin nhắn này trong hội thoại.");
+  const cli = typeof msg.meta?.cliMsgId === "string" ? msg.meta.cliMsgId : "";
+  if (!msg.msgId || !cli) throw err("CANNOT_REACT", "Tin này không thả cảm xúc được (tin lưu trước bản 1.5.0 hoặc tin do hệ thống gửi).");
+  const thread = await getZaloThread(db, ctx, input.channelId, input.threadId);
+  await rt.react({
+    threadId: input.threadId,
+    peerKind: thread?.kind ?? "direct",
+    msgId: msg.msgId,
+    cliMsgId: cli,
+    reaction: input.reaction,
+    source: input.source,
+    ...(input.webUserId ? { webUserId: input.webUserId } : {}),
+  });
+}
+
+export { latestIncomingZaloMessages, ZALO_REACTIONS, isZaloReactionKey };
 
 export function forgetZaloInboxChannel(channelId: string): void {
   inboxState.delete(channelId);
@@ -417,7 +495,10 @@ const InboxSettingsBody = z.object({
   enabled: z.boolean().optional(),
   pauseMinutes: z.number().int().min(0).max(1440).optional(),
   mcpReadMessages: z.boolean().optional(),
+  autoReaction: z.enum(["off", "heart", "like"]).optional(),
 });
+
+const ReactBody = z.object({ reaction: z.enum(["heart", "like", "haha", "wow", "cry", "angry", "none"]) });
 
 function sendError(reply: FastifyReply, err: unknown) {
   const e = err as Error & { code?: string };
@@ -457,6 +538,8 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
           inbox: cfg.enabled,
           pauseMinutes: cfg.pauseMinutes,
           mcpReadMessages: cfg.mcpReadMessages,
+          autoReaction: cfg.autoReaction,
+          agentReply: cfg.agentReply,
         };
       }),
       canManage: hasRole(req.authCtx.role, "operator"),
@@ -625,6 +708,32 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
     }
   });
 
+  // Nhân viên thả / gỡ cảm xúc vào tin trong Inbox
+  app.post("/v1/zalo-inbox/:channelId/threads/:threadId/messages/:messageId/react", async (req, reply) => {
+    const { channelId, threadId, messageId } = req.params as { channelId: string; threadId: string; messageId: string };
+    if (!(await guard(req, reply, channelId))) return;
+    const parsed = ReactBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Cảm xúc không hợp lệ" });
+    try {
+      await reactZaloMessage(db, req.authCtx, {
+        channelId,
+        threadId,
+        messageId,
+        reaction: parsed.data.reaction,
+        source: "web",
+        webUserId: req.authCtx.userId,
+      });
+      return { ok: true };
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      if (e.code === "NOT_CONNECTED") return reply.code(409).send({ error: e.message, code: e.code });
+      if (e.code === "MESSAGE_NOT_FOUND") return reply.code(404).send({ error: e.message, code: e.code });
+      if (e.code === "CANNOT_REACT") return reply.code(422).send({ error: e.message, code: e.code });
+      logger.warn(`zalo.inbox_react lỗi: ${e.message}`);
+      return reply.code(502).send({ error: `Zalo lỗi khi thả cảm xúc: ${e.message}` });
+    }
+  });
+
   // Bật/tắt lưu nội dung + số phút AI tạm im sau khi nhân viên trả lời (ws_admin)
   app.put("/v1/zalo-inbox/:channelId/settings", async (req, reply) => {
     const { channelId } = req.params as { channelId: string };
@@ -637,10 +746,12 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
     if (parsed.data.enabled !== undefined) config["inbox"] = parsed.data.enabled;
     if (parsed.data.pauseMinutes !== undefined) config["inbox_pause_minutes"] = parsed.data.pauseMinutes;
     if (parsed.data.mcpReadMessages !== undefined) config["mcp_read_messages"] = parsed.data.mcpReadMessages;
+    if (parsed.data.autoReaction !== undefined) config["auto_reaction"] = parsed.data.autoReaction;
     await updateChannel(db, req.authCtx, channelId, { config });
     const cfg = readInboxConfig(config);
     const st = inboxState.get(channelId);
     if (st) Object.assign(st, { enabled: cfg.enabled, pauseMinutes: cfg.pauseMinutes });
+    zaloRuntime(channelId)?.setAutoReaction(cfg.autoReaction);
     await recordAudit(db, req.authCtx, "zalo_inbox.settings", { channelId, ...cfg });
     return cfg;
   });

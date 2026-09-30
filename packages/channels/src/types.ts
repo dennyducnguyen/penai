@@ -144,6 +144,26 @@ export interface ChannelDeps {
   onContactsSynced?: (items: ChannelContact[]) => void;
   /** Zalo Personal — tra được tên nhóm (sau khi tin đầu tiên tới). */
   onThreadName?: (threadId: string, name: string) => void;
+  /** Zalo Personal — có người thả/gỡ cảm xúc vào một tin (khách, chủ tài khoản, hoặc PenAI vừa thả). */
+  onReaction?: (r: ChannelReaction) => void;
+  /** Zalo Personal — bản dội lại của tin PenAI vừa gửi mang cliMsgId → bổ sung vào tin đã lưu. */
+  onMessageCliId?: (msgId: string, cliMsgId: string) => void;
+}
+
+/** Một lượt thả/gỡ cảm xúc vào tin nhắn. icon rỗng = gỡ. */
+export interface ChannelReaction {
+  threadId: string;
+  peerKind: "direct" | "group";
+  /** msgId của tin được thả cảm xúc */
+  targetMsgId: string;
+  reactorId: string;
+  reactorName: string;
+  /** mã icon Zalo ("/-heart", "/-strong"…) — "" = gỡ */
+  icon: string;
+  /** zalo = khách/thành viên nhóm · app = chủ tài khoản trên điện thoại · web/auto/mcp = PenAI thả */
+  source: "zalo" | "app" | "web" | "auto" | "mcp";
+  webUserId?: string;
+  at: Date;
 }
 
 /** Một tin nhắn (đến hoặc đi) cho Inbox. */
