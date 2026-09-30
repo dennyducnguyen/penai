@@ -34,6 +34,8 @@ import {
   createSession,
   createChannel,
   listChannels,
+  exportContacts,
+  listAllZaloThreads,
   deleteChannel,
   getChannelById,
   getChannelSession,
@@ -266,6 +268,7 @@ import {
 } from "./web-auth.js";
 import { registerLibraryRoutes } from "./library.js";
 import { registerZaloInboxRoutes } from "./zalo-inbox.js";
+import { buildXlsx, type XlsxCell } from "./xlsx.js";
 import { isMcpPublicPath, registerMcpServerRoutes } from "./mcp-server.js";
 
 declare module "fastify" {
@@ -2041,6 +2044,62 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // ===== Contacts: hồ sơ, nhãn, chỉ dẫn cho AI theo từng người (0029) =====
   // Xem danh sách: mọi role (trừ member). Xem chi tiết + sửa hồ sơ/chỉ dẫn của
   // một người: operator trở lên. Nhãn có chỉ dẫn áp cho NHIỀU người → ws_admin.
+  // Xuất Contacts ra Excel (.xlsx) — lọc theo kênh; kênh Zalo cá nhân kèm thêm sheet danh bạ Zalo đầy đủ.
+  app.get("/v1/contacts/export.xlsx", async (req, reply) => {
+    if (!requireRole(req, reply, "operator")) return;
+    const q = req.query as { channelId?: string };
+    const channelId = q.channelId && /^[0-9a-f-]{36}$/i.test(q.channelId) ? q.channelId : null;
+    const allChannels = await listChannels(db, req.authCtx);
+    const channel = channelId ? allChannels.find((c) => c.id === channelId) : null;
+    if (channelId && !channel) return reply.code(404).send({ error: "Kênh không tồn tại" });
+    const rows = await exportContacts(db, req.authCtx, channelId);
+    const PAIR: Record<string, string> = {
+      da_duyet: "Đã duyệt", cho_duyet: "Chờ duyệt", chua_duyet: "Chưa duyệt", khong_can: "Không cần duyệt", khong_ro: "Không rõ",
+    };
+    const kindLabel = (k: "direct" | "group" | null) => (k === "group" ? "Nhóm" : k === "direct" ? "Cá nhân" : "");
+    const sheets = [
+      {
+        name: "Contacts",
+        widths: [24, 16, 10, 22, 24, 24, 16, 16, 16, 22, 14, 16, 16, 24, 20, 28, 40, 14, 17, 17],
+        rows: [
+          ["Kênh", "Loại kênh", "Loại", "UID / ID", "Tên trên kênh", "Tên hồ sơ", "AI gọi là", "AI xưng", "SĐT (hồ sơ)",
+            "SĐT (Zalo)", "Email", "Vai trò", "Ngôn ngữ", "Khóa người dùng", "Nhãn", "Trường tùy chỉnh", "Chỉ dẫn cho AI",
+            "Duyệt", "Nhắn lần đầu", "Nhắn gần nhất"],
+          ...rows.map((r): XlsxCell[] => [
+            r.channelName, r.channelKind, kindLabel(r.peerKind), r.externalId, r.displayName, r.profileName, r.addressAs,
+            r.selfAddress, r.phone, r.zaloPhone, r.email, r.roleTitle, r.language, r.userKey, r.tags, r.customFields,
+            r.aiInstructions, r.peerKind === "group" ? "" : (PAIR[r.pairing] ?? r.pairing), r.firstSeen, r.lastSeen,
+          ]),
+        ],
+      },
+    ];
+    const zaloChannels = allChannels.filter((c) => c.kind === "zalo_personal" && (!channelId || c.id === channelId));
+    for (const zc of zaloChannels) {
+      const threads = await listAllZaloThreads(db, req.authCtx, zc.id);
+      sheets.push({
+        name: `Danh bạ Zalo - ${zc.name}`,
+        widths: [10, 22, 30, 16, 12, 12, 17, 10, 12],
+        rows: [
+          ["Loại", "UID / ID", "Tên", "SĐT", "Bạn bè / đang trong nhóm", "Số thành viên", "Tin gần nhất", "Chưa đọc", "AI"],
+          ...threads.map((t): XlsxCell[] => [
+            t.kind === "group" ? "Nhóm" : "Cá nhân", t.threadId, t.name, t.phone, t.isContact ? "Có" : "", t.memberCount ?? "",
+            t.lastMessageAt ? new Date(t.lastMessageAt) : "", t.unreadCount || "", t.aiMode === "off" ? "Tắt" : "",
+          ]),
+        ],
+      });
+    }
+    const buf = buildXlsx(sheets);
+    await recordAudit(db, req.authCtx, "contacts.export", { channelId, rows: rows.length });
+    const slug = (channel?.name ?? "tat-ca-kenh").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D")
+      .replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "kenh";
+    const fname = `contacts-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    return reply
+      .header("cache-control", "no-store")
+      .header("content-disposition", `attachment; filename="${fname}"`)
+      .type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+      .send(buf);
+  });
+
   app.get("/v1/contacts", async (req) => {
     return { contacts: await listContactsOverview(db, req.authCtx) };
   });

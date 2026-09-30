@@ -33,6 +33,7 @@ import {
   updateChannel,
   upsertZaloReaction,
   setZaloMessageCliId,
+  upsertContact,
   getZaloMessageById,
   latestIncomingZaloMessages,
   upsertZaloContacts,
@@ -132,6 +133,35 @@ function zaloRuntime(channelId: string): ZaloPersonalChannel | null {
 
 const groupNameLookups = new Set<string>();
 
+/** Ghi Contacts tối đa 1 lần/phút cho mỗi người/nhóm (nhóm đông tin không làm DB bận). */
+const contactSeen = new Map<string, { at: number; name: string }>();
+setInterval(() => {
+  const cut = Date.now() - 10 * 60_000;
+  for (const [k, v] of contactSeen) if (v.at < cut) contactSeen.delete(k);
+}, 10 * 60_000).unref();
+
+function recordZaloContact(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+  externalId: string,
+  name: string,
+  kind: "user" | "group",
+): void {
+  if (!externalId || externalId === "0") return;
+  const key = `${channelId}:${externalId}`;
+  const prev = contactSeen.get(key);
+  if (prev && Date.now() - prev.at < 60_000 && (!name || prev.name === name)) return;
+  contactSeen.set(key, { at: Date.now(), name });
+  void upsertContact(db, ctx, {
+    channelId,
+    channelKind: "zalo_personal",
+    externalId,
+    ...(name ? { displayName: name } : {}),
+    metadata: { zalo_kind: kind },
+  }).catch((err) => logger.warn(`zalo.contact_store lỗi: ${(err as Error).message}`));
+}
+
 /** Hook onMessageLog / onContactsSynced / onThreadName cho 1 kênh zalo_personal. */
 export function zaloInboxHooks(
   db: Db,
@@ -142,6 +172,14 @@ export function zaloInboxHooks(
   const ctx = ctxOf(ch.workspaceId);
   return {
     onMessageLog: (entry: ChannelMessageLog) => {
+      // Contacts: MỌI người nhắn tới (tin riêng + người gửi trong nhóm) và cả NHÓM — ghi ngay,
+      // không phụ thuộc thread demo / công tắc agent / lưu Inbox (chỉ tên + uid).
+      if (entry.direction === "in" && entry.source === "zalo") {
+        if (entry.peerKind === "group") {
+          recordZaloContact(db, ctx, ch.id, entry.threadId, entry.threadName ?? "", "group");
+        }
+        recordZaloContact(db, ctx, ch.id, entry.senderId, entry.senderName, "user");
+      }
       const st = inboxState.get(ch.id);
       if (!st?.enabled) return;
       void (async () => {
@@ -180,6 +218,7 @@ export function zaloInboxHooks(
           const name = await zaloRuntime(ch.id)?.lookupGroupName(entry.threadId);
           if (name) {
             await setZaloThreadName(db, ctx, ch.id, entry.threadId, name);
+            recordZaloContact(db, ctx, ch.id, entry.threadId, name, "group");
             broadcast(ch.workspaceId, ch.id, "thread", { channelId: ch.id, thread: { ...saved.thread, name } });
           }
         }
@@ -204,6 +243,7 @@ export function zaloInboxHooks(
     },
     onThreadName: (threadId: string, name: string) => {
       void setZaloThreadName(db, ctx, ch.id, threadId, name).catch(() => {});
+      recordZaloContact(db, ctx, ch.id, threadId, name, "group");
     },
     onMessageCliId: (msgId: string, cliMsgId: string) => {
       // Bản dội lại có thể tới trước khi tin kịp ghi DB → thử lại sau 3 giây nếu chưa thấy.

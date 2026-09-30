@@ -266,8 +266,16 @@ export async function listPendingPairings(db: Db, ctx: WorkspaceContext) {
 export async function upsertContact(
   db: Db,
   ctx: WorkspaceContext,
-  input: { channelId?: string; channelKind: string; externalId: string; displayName?: string },
+  input: {
+    channelId?: string;
+    channelKind: string;
+    externalId: string;
+    displayName?: string;
+    /** Gộp vào contacts.metadata (vd { zalo_kind: "group" }) — không xóa khóa cũ. */
+    metadata?: Record<string, unknown>;
+  },
 ): Promise<{ contactId: string; principalId: string }> {
+  const metaJson = input.metadata ? JSON.stringify(input.metadata) : null;
   return withWorkspace(db, ctx, async (tx) => {
     const existing = input.channelId
       ? await tx.execute(sql`
@@ -286,7 +294,8 @@ export async function upsertContact(
       await tx.execute(sql`
         UPDATE contacts SET
           last_seen = now(),
-          display_name = COALESCE(${input.displayName ?? null}, display_name)
+          display_name = COALESCE(${input.displayName ?? null}, display_name),
+          metadata = CASE WHEN ${metaJson}::jsonb IS NULL THEN metadata ELSE metadata || ${metaJson}::jsonb END
         WHERE id = ${found.id}
       `);
       if (input.displayName) {
@@ -342,6 +351,7 @@ export async function upsertContact(
         channelKind: input.channelKind,
         externalId: input.externalId,
         displayName: input.displayName ?? null,
+        ...(input.metadata ? { metadata: input.metadata } : {}),
         lastSeen: new Date(),
       })
       .returning({ id: contacts.id });

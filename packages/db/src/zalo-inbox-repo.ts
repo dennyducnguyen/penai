@@ -315,6 +315,19 @@ export async function listZaloThreads(
   });
 }
 
+/** Toàn bộ danh bạ + hội thoại Zalo của 1 kênh (xuất Excel), tối đa 100.000 dòng. */
+export async function listAllZaloThreads(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+): Promise<ZaloThread[]> {
+  const res = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`SELECT * FROM zalo_threads WHERE channel_id = ${channelId}
+      ORDER BY kind, last_message_at DESC NULLS LAST, name LIMIT 100000`),
+  );
+  return (res.rows as Raw[]).map(mapThread);
+}
+
 export async function getZaloThread(
   db: Db,
   ctx: WorkspaceContext,

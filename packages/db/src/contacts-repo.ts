@@ -43,6 +43,10 @@ export interface ContactOverview {
   pairing: PairingState;
   hasInstructions: boolean;
   tags: ContactTagRef[];
+  /** Zalo cá nhân: "direct" = người, "group" = nhóm; kênh khác = null. */
+  peerKind: "direct" | "group" | null;
+  /** SĐT lấy từ danh bạ Zalo (nếu tài khoản thấy được). */
+  zaloPhone: string | null;
 }
 
 export interface PrincipalProfile {
@@ -150,6 +154,8 @@ function mapOverview(r: Record<string, unknown>): ContactOverview {
     pairing: r.pairing as PairingState,
     hasInstructions: Boolean(r.has_instructions),
     tags: tags.map((t) => ({ id: t.id, name: t.name, color: t.color ?? "" })),
+    peerKind: r.zalo_kind === "group" ? "group" : r.zalo_kind === "user" || r.channel_kind === "zalo_personal" ? "direct" : null,
+    zaloPhone: str(r.zalo_phone),
   };
 }
 
@@ -159,6 +165,9 @@ async function queryOverview(db: Db, ctx: WorkspaceContext, contactId: string | 
       SELECT c.id, c.channel_id, c.channel_kind, c.external_id, c.display_name, c.principal_id,
              c.first_seen, c.last_seen,
              ch.name AS channel_name,
+             c.metadata->>'zalo_kind' AS zalo_kind,
+             (SELECT NULLIF(zt.phone, '') FROM zalo_threads zt
+               WHERE zt.channel_id = c.channel_id AND zt.thread_id = c.external_id) AS zalo_phone,
              pp.display_name AS profile_name,
              COALESCE(pp.ai_instructions, '') <> '' AS has_instructions,
              CASE
@@ -189,6 +198,74 @@ async function queryOverview(db: Db, ctx: WorkspaceContext, contactId: string | 
       ORDER BY c.last_seen DESC
     `);
     return (res.rows as Array<Record<string, unknown>>).map(mapOverview);
+  });
+}
+
+export interface ContactExportRow {
+  channelName: string;
+  channelKind: string;
+  peerKind: "direct" | "group" | null;
+  externalId: string;
+  userKey: string;
+  displayName: string;
+  profileName: string;
+  addressAs: string;
+  selfAddress: string;
+  roleTitle: string;
+  language: string;
+  phone: string;
+  zaloPhone: string;
+  email: string;
+  tags: string;
+  customFields: string;
+  aiInstructions: string;
+  pairing: string;
+  firstSeen: Date;
+  lastSeen: Date;
+}
+
+/** Toàn bộ thông tin contact (kèm hồ sơ) để xuất Excel; channelId null = mọi kênh. */
+export async function exportContacts(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string | null,
+): Promise<ContactExportRow[]> {
+  const overview = (await queryOverview(db, ctx, null)).filter((o) => !channelId || o.channelId === channelId);
+  if (!overview.length) return [];
+  const profiles = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`SELECT * FROM principal_profiles`),
+  );
+  const byPrincipal = new Map<string, Record<string, unknown>>();
+  for (const r of profiles.rows as Array<Record<string, unknown>>) byPrincipal.set(String(r.principal_id), r);
+  const s = (v: unknown) => (v == null ? "" : String(v));
+  return overview.map((o) => {
+    const p = (o.principalId && byPrincipal.get(o.principalId)) || {};
+    const cf = (p as Record<string, unknown>).custom_fields;
+    return {
+      channelName: o.channelName ?? "",
+      channelKind: o.channelKind,
+      peerKind: o.peerKind,
+      externalId: o.externalId,
+      userKey: o.userKey,
+      displayName: o.displayName ?? "",
+      profileName: o.profileName ?? "",
+      addressAs: s((p as Record<string, unknown>).address_as),
+      selfAddress: s((p as Record<string, unknown>).self_address),
+      roleTitle: s((p as Record<string, unknown>).role_title),
+      language: s((p as Record<string, unknown>).language),
+      phone: s((p as Record<string, unknown>).phone),
+      zaloPhone: o.zaloPhone ?? "",
+      email: s((p as Record<string, unknown>).email),
+      tags: o.tags.map((t) => t.name).join(", "),
+      customFields:
+        cf && typeof cf === "object" && !Array.isArray(cf)
+          ? Object.entries(cf as Record<string, unknown>).map(([k, v]) => `${k}: ${String(v)}`).join("; ")
+          : "",
+      aiInstructions: s((p as Record<string, unknown>).ai_instructions),
+      pairing: o.pairing,
+      firstSeen: o.firstSeen,
+      lastSeen: o.lastSeen,
+    };
   });
 }
 

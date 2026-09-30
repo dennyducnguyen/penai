@@ -2777,10 +2777,11 @@ export const INDEX_HTML = `<!doctype html>
     var c = card(m);
     c.innerHTML =
       '<div class="row">' +
-      '<input id="ctQ" placeholder="🔍 Tìm theo tên hoặc ID">' +
+      '<input id="ctQ" placeholder="🔍 Tìm theo tên, UID/ID hoặc SĐT">' +
       '<select id="ctCh"><option value="">Mọi kênh</option></select>' +
       '<select id="ctTag"><option value="">Mọi nhãn</option></select>' +
       (isAdmin() ? '<button id="ctTags" class="ghost">🏷️ Quản lý nhãn</button>' : "") +
+      (state.me && (state.me.role === "ws_admin" || state.me.role === "operator") ? '<button id="ctExport" class="ghost" title="Tải file Excel toàn bộ thông tin contact của kênh đang chọn (kênh Zalo cá nhân kèm danh bạ Zalo đầy đủ)">⬇ Xuất Excel</button>' : "") +
       "</div>" +
       '<div id="ctList" style="margin-top:12px"><span class="muted">Đang tải…</span></div>';
     var all = [];
@@ -2788,13 +2789,13 @@ export const INDEX_HTML = `<!doctype html>
       var box = $("#ctList"); if (!box) return;
       var q = $("#ctQ").value.trim().toLowerCase(), ch = $("#ctCh").value, tg = $("#ctTag").value;
       var rows = all.filter(function (r) {
-        if (ch && r.channelKind !== ch) return false;
+        if (ch && r.channelId !== ch) return false;
         if (tg && !r.tags.some(function (t) { return t.id === tg; })) return false;
         if (!q) return true;
-        return [r.profileName, r.displayName, r.externalId].some(function (v) { return !!v && String(v).toLowerCase().indexOf(q) >= 0; });
+        return [r.profileName, r.displayName, r.externalId, r.zaloPhone].some(function (v) { return !!v && String(v).toLowerCase().indexOf(q) >= 0; });
       });
       box.innerHTML = "";
-      box.appendChild(table(["Tên", "Kênh", "ID", "Duyệt", "Nhắn gần nhất"], rows, function (r) {
+      box.appendChild(table(["Tên", "Kênh", "Loại", "UID / ID", "Duyệt", "Nhắn gần nhất"], rows, function (r) {
         var tr = el("tr", { "class": "ct-row", title: "Bấm để mở hồ sơ" });
         var p = PAIR_LABELS[r.pairing] || [r.pairing, ""];
         tr.innerHTML =
@@ -2803,24 +2804,33 @@ export const INDEX_HTML = `<!doctype html>
           (r.profileName && r.displayName && r.profileName !== r.displayName ? "<div class='muted'>" + esc(r.displayName) + "</div>" : "") +
           (r.tags.length ? "<div style='margin-top:3px'>" + r.tags.map(tagPill).join(" ") + "</div>" : "") + "</td>" +
           "<td>" + esc(r.channelName || chLabel(r.channelKind)) + "<div class='muted'>" + esc(chLabel(r.channelKind)) + "</div></td>" +
-          "<td><code>" + esc(r.externalId) + "</code></td>" +
-          "<td><span class='pill " + p[1] + "'>" + esc(p[0]) + "</span></td>" +
+          "<td>" + (r.peerKind === "group" ? "👥 Nhóm" : r.peerKind === "direct" ? "👤 Cá nhân" : '<span class="muted">—</span>') + "</td>" +
+          "<td><code>" + esc(r.externalId) + '</code> <button type="button" class="ghost sm ct-copy" title="Sao chép UID/ID để gửi tin lại">📋</button>' +
+          (r.zaloPhone ? "<div class='muted'>" + esc(r.zaloPhone) + "</div>" : "") + "</td>" +
+          "<td>" + (r.peerKind === "group" ? '<span class="muted">—</span>' : "<span class='pill " + p[1] + "'>" + esc(p[0]) + "</span>") + "</td>" +
           "<td class='muted'>" + esc(fmtTime(r.lastSeen)) + "</td>";
         tr.onclick = function () { openContact(r.id, load); };
+        var cp = tr.querySelector(".ct-copy");
+        if (cp) cp.onclick = function (e) {
+          e.stopPropagation();
+          try { navigator.clipboard.writeText(r.externalId).then(function () { toast("Đã sao chép " + r.externalId); }); } catch (x) { toast(r.externalId); }
+        };
         return tr;
       }));
       box.appendChild(el("div", { "class": "muted", style: "margin-top:8px" }, rows.length + " / " + all.length + " người"));
     }
     function load() {
-      Promise.all([api("/v1/contacts"), api("/v1/contact-tags")]).then(function (res) {
+      Promise.all([api("/v1/contacts"), api("/v1/contact-tags"), api("/v1/channels").then(function (j) { return j.channels || []; }).catch(function () { return []; })]).then(function (res) {
         if (!$("#ctList")) return;
         all = res[0].contacts || [];
         var tags = res[1].tags || [];
-        var kinds = {};
-        all.forEach(function (r) { kinds[r.channelKind] = 1; });
+        var chans = {};
+        (res[2] || []).forEach(function (c) { chans[c.id] = { name: c.name, kind: c.kind }; });
+        all.forEach(function (r) { if (r.channelId && !chans[r.channelId]) chans[r.channelId] = { name: r.channelName || r.channelId, kind: r.channelKind }; });
         var chSel = $("#ctCh"), curC = chSel.value;
-        chSel.innerHTML = '<option value="">Mọi kênh</option>' + Object.keys(kinds).map(function (k) {
-          return '<option value="' + esc(k) + '"' + (k === curC ? " selected" : "") + ">" + esc(chLabel(k)) + "</option>";
+        chSel.innerHTML = '<option value="">Mọi kênh</option>' + Object.keys(chans).map(function (id) {
+          var c = chans[id];
+          return '<option value="' + esc(id) + '"' + (id === curC ? " selected" : "") + ">" + esc(c.name + " (" + chLabel(c.kind) + ")") + "</option>";
         }).join("");
         var tgSel = $("#ctTag"), curT = tgSel.value;
         tgSel.innerHTML = '<option value="">Mọi nhãn</option>' + tags.map(function (t) {
@@ -2833,6 +2843,11 @@ export const INDEX_HTML = `<!doctype html>
     $("#ctCh").onchange = render;
     $("#ctTag").onchange = render;
     if ($("#ctTags")) $("#ctTags").onclick = function () { openTagManager(load); };
+    if ($("#ctExport")) $("#ctExport").onclick = function () {
+      var ch = $("#ctCh").value;
+      toast("Đang tạo file Excel…");
+      window.location.href = "/v1/contacts/export.xlsx" + (ch ? "?channelId=" + encodeURIComponent(ch) : "");
+    };
     load();
   };
 

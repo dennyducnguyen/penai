@@ -4,6 +4,14 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.6.0 — 2026-09-30
+
+- **Contacts ghi đủ người nhắn Zalo cá nhân**: mỗi khi có người nhắn tới (tin riêng, người gửi trong nhóm) và **cả nhóm Zalo**, hệ thống ghi ngay vào Contacts — không còn phụ thuộc việc chỉ định thread demo hay bật agent. Trước đây Contacts trống với Zalo cá nhân vì chỉ ghi người được agent xử lý.
+- Trang Contacts: cột **Loại** (👤 Cá nhân / 👥 Nhóm), cột **UID / ID** có nút 📋 sao chép (lấy uid để gửi tin lại), hiện SĐT Zalo nếu có, lọc theo **từng kênh** (thay vì theo loại kênh), tìm được theo SĐT.
+- **⬇ Xuất Excel** (Vận hành trở lên): chọn kênh rồi tải file .xlsx đầy đủ — tên, loại, UID, kênh, hồ sơ (xưng hô, SĐT, email, vai trò, nhãn, trường tùy chỉnh, chỉ dẫn AI), trạng thái duyệt, thời gian nhắn. Kênh Zalo cá nhân kèm sheet "Danh bạ Zalo" gồm toàn bộ bạn bè + nhóm đã đồng bộ. UID dài và SĐT có số 0 đầu được giữ nguyên dạng chữ.
+
+Cập nhật: `sudo penai update` (không có migration, không phải làm gì thêm). Người/nhóm đã nhắn trước bản này sẽ tự vào Contacts ở lần nhắn kế tiếp.
+
 ## 1.5.1 — 2026-09-30
 
 - Trang **Channels**: mục "Danh sách kênh" chuyển lên đầu trang (ngay dưới nút ＋ Thêm kênh), các mục chờ duyệt xếp phía dưới.
