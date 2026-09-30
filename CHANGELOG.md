@@ -4,6 +4,16 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.3.0 — 2026-09-30
+
+- **Inbox Zalo cá nhân** (Dashboard → 📥 Inbox Zalo): nhiều người dùng PenAI cùng xem và trả lời khách trên kênh Zalo cá nhân, tin mới hiện ngay không cần tải lại trang. Gửi chữ, **gửi ảnh** (chọn file hoặc dán ảnh), nhắn tin mới theo **số điện thoại** / uid / ID nhóm, tìm theo tên – uid – SĐT, lọc cá nhân/nhóm/chưa đọc. Danh bạ bạn bè + nhóm tự kéo về mỗi lần kết nối (nút Đồng bộ danh bạ).
+- **AI và nhân viên cùng trực**: nhân viên trả lời (từ Inbox hoặc từ điện thoại) → AI tự im 30 phút trong hội thoại đó (đổi được, 0 = không tạm dừng); nút "Cho AI trả lời lại"; tắt AI riêng cho từng người/nhóm.
+- **Phân quyền Inbox**: Quản trị + Vận hành trực mọi kênh Zalo; Thành viên chỉ trực kênh được gán (Người dùng → Sửa → "Kênh Zalo được trực").
+- **Kết nối AI bên ngoài (MCP)** — Dashboard → 🔗 Kết nối AI bên ngoài: địa chỉ `https://<tên-miền>/mcp` cho **Claude, ChatGPT**, Cursor… hoặc chính PenAI (trang MCP) kết nối bằng đăng nhập tài khoản Dashboard. Công cụ: xem danh sách người liên hệ/nhóm, tìm người theo SĐT, **gửi tin + ảnh theo uid hoặc số điện thoại**. Ứng dụng AI không đọc được nội dung tin nhắn. Chống gửi trùng khi ứng dụng thử lại, gửi tuần tự 1 tin/2 giây. Xem/thu hồi kết nối và lượt gửi gần đây ngay trên trang này.
+- Lưu ý riêng tư: từ bản này kênh Zalo cá nhân **mặc định lưu nội dung mọi tin nhắn** (kể cả tin riêng) để hiện trong Inbox. Không muốn: Inbox Zalo → ⚙️ Cài đặt → bỏ tick "Lưu nội dung tin nhắn". Zalo không cho lấy lịch sử cũ — Inbox có tin từ lúc cập nhật trở đi.
+
+Chi tiết: `docs/zalo-inbox-mcp.md`. Cập nhật: `sudo penai update` (migration `0031` thêm bảng mới, tự chạy — không phải làm gì thêm; địa chỉ MCP dùng `PENAI_PUBLIC_URL` đã có sẵn trong `penai.env`).
+
 ## 1.2.0 — 2026-09-27
 
 - **Agent tự đặt lịch ngay trong lúc chat**: người dùng nhắn *"nhắc tôi 8h sáng mai gọi anh Nam"*, *"30 phút nữa báo tôi…"*, *"sáng thứ Hai hằng tuần gửi tôi tóm tắt tin AI"* là agent tự tạo lịch (4 tool mới: `cron_create`, `cron_list`, `cron_update`, `cron_delete`). Tới giờ, agent chạy lại và **gửi kết quả về đúng cuộc trò chuyện** đó — Telegram, Zalo, Discord… (chat riêng hoặc nhóm) hoặc trang Chat trên web. Người dùng cũng hỏi được "tôi đang có lịch nào", nhờ đổi giờ, tạm dừng, hủy. Chi tiết: `docs/lich-hen.md`.
