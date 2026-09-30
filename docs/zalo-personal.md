@@ -1,52 +1,221 @@
-# Zalo Personal trong PenAI
+# Zalo cá nhân trong PenAI
 
-> Từ 1.3.0: mọi tin nhắn của tài khoản được lưu vào **Inbox Zalo** để nhân viên cùng xem/trả lời, và có **MCP server** cho Claude/ChatGPT gửi tin — xem [zalo-inbox-mcp.md](zalo-inbox-mcp.md). Chế độ an toàn bên dưới vẫn áp dụng cho việc **AI tự trả lời**; gửi tay từ Inbox/MCP không bị giới hạn bởi danh sách thread demo.
+Tài liệu đầy đủ về kênh **Zalo cá nhân** (`zalo_personal`) — cập nhật tới bản **1.6.0**.
 
-PenAI hỗ trợ kênh `zalo_personal` bằng `zca-js` 2.1.x để một tài khoản Zalo cá nhân làm đầu vào/đầu ra cho agent.
+Một tài khoản Zalo cá nhân đăng nhập bằng QR trở thành một kênh của PenAI. Trên kênh đó có:
 
-> Đây là API không chính thức, mô phỏng Zalo Web. Zalo có thể giới hạn hoặc khóa tài khoản; nên dùng tài khoản riêng cho bot. Mỗi tài khoản chỉ nên có một listener web, vì mở Zalo Web cùng lúc có thể làm listener PenAI bị ngắt.
+| Tính năng | Có từ | Mục |
+|---|---|---|
+| Kết nối QR, agent tự trả lời trong thread được phép (chế độ an toàn) | 1.0 | [1](#1-kết-nối-và-chế-độ-an-toàn), [2](#2-agent-tự-trả-lời) |
+| Công tắc "Agent tự trả lời" theo kênh | 1.5.0 | [2](#2-agent-tự-trả-lời) |
+| Inbox Zalo — nhiều người cùng xem và trả lời khách | 1.3.0 | [3](#3-inbox-zalo) |
+| Thả cảm xúc (reaction): thả tay, tự thả khi khách nhắn | 1.5.0 | [4](#4-cảm-xúc-reaction) |
+| Contacts ghi mọi người/nhóm nhắn tới, UID, xuất Excel | 1.6.0 | [5](#5-contacts-uid-và-xuất-excel) |
+| MCP server — Claude/ChatGPT… tra danh bạ, gửi tin + ảnh, đọc hội thoại, thả cảm xúc | 1.3.0 → 1.5.0 | [6](#6-kết-nối-ai-bên-ngoài-mcp) |
 
-## Chế độ an toàn (luôn bật)
+> **Lưu ý quan trọng.** Zalo cá nhân dùng thư viện không chính thức `zca-js` (mô phỏng Zalo Web). Zalo có thể giới hạn hoặc khóa tài khoản — nhất là khi gửi/thả cảm xúc hàng loạt cho người lạ. Mỗi tài khoản chỉ nên có **một** nơi đăng nhập Zalo Web: mở Zalo Web trên trình duyệt bằng cùng tài khoản có thể làm PenAI mất kết nối.
 
-Kênh `zalo_personal` được thiết kế để có thể đăng nhập bằng **tài khoản Zalo cá nhân đang dùng thật** mà không ảnh hưởng người đang chat với tài khoản đó:
+---
 
-- Sau khi quét QR, bot **chỉ quan sát**: ghi nhận ai/nhóm nào nhắn tới (tên, thread id, người gửi, số tin — **không lưu nội dung tin**), không chạy agent, không trả lời, không tự gửi bất kỳ tin nào.
-- Chỉ những thread được admin **chỉ định làm thread demo** (`config.demo_threads`, dạng `group:<id>` / `direct:<id>`) mới được nhận tin vào agent và gửi tin ra. Mọi outbound — kể cả test message của admin — ngoài allowlist đều bị chặn (fail-closed).
-- Danh sách chờ duyệt xem tại Channels → Kết nối QR → mục **Danh sách chờ duyệt**: ai/nhóm nhắn tới tự hiện tên Zalo + uid, nhóm được gắn nhãn «nhóm»; bấm «Chỉ định demo» trên thread muốn duyệt. Cập nhật áp dụng nóng, không cần đăng nhập lại. Từ 26/08/2026 danh sách lưu bền trong DB (bảng `zalo_observed_peers`, migration 0017) — không mất khi restart server.
-- Trong nhóm (demo), bot **mặc định chỉ trả lời khi được `@mention`, reply tin của bot, hoặc lệnh `/...`** (đổi mặc định 31/08/2026). Muốn bot trả lời MỌI tin trong nhóm demo (hội thoại tự nhiên) thì đặt rõ `config.require_mention = false`. Orchestrator/interceptor vẫn thấy mọi tin bất kể cấu hình này.
-- **Ngoại lệ openDirect (31/08/2026)**: nếu channel **tắt "yêu cầu pairing"** (`requirePairing = false`), mọi tin nhắn **RIÊNG (DM)** được nhận/trả lời liền — không cần chỉ định demo, không cần duyệt. **Nhóm vẫn phải chỉ định demo** (không mở nhóm tự do để bot không tự trả lời trong mọi nhóm tài khoản tham gia). Outbound tới DM bất kỳ cũng được phép ở chế độ này. Toggle checkbox pairing trong Channels sẽ rebuild channel và áp dụng ngay. ⚠️ Chỉ tắt pairing khi tài khoản đăng nhập là tài khoản DÀNH RIÊNG cho bot — tài khoản cá nhân thật mà mở DM là bot trả lời cả bạn bè/người thân nhắn tới.
+## 1. Kết nối và chế độ an toàn
 
-## Khả năng đã hỗ trợ
+### Thiết lập
 
-- Đăng nhập QR ngay trong Dashboard → Channels; credential được mã hóa bằng `PENAI_MASTER_KEY` và tự khôi phục sau restart.
-- Tin nhắn riêng và group trong thread demo; group mặc định cần `@mention`/reply/lệnh `/...` — tắt bằng `require_mention: false`.
-- Pairing tùy chọn theo channel và mặc định bật. Khi bật, chỉ sau khi admin duyệt mã tại Channels → Yêu cầu chờ duyệt thì agent mới trả lời; admin có thể bỏ chọn **Yêu cầu pairing** khi muốn mở kênh.
-- Typing indicator, chia câu trả lời dài tối đa 2.000 ký tự, gửi file/ảnh agent tạo ra.
-- Nhận text và tải ảnh/tệp từ các CDN Zalo tin cậy, tối đa 10 MB. Voice/video/sticker chỉ được ghi chú cho agent nếu không thể xử lý như Telegram.
-  - **08/09/2026**: CDN tin cậy gồm `*.zalo.me`, `*.zaloapp.com`, `*.zadn.vn`, `*.zdn.vn` (file/ảnh chat thật nằm ở `f18-zpg.zdn.vn`, `f47-photo.talk.zdn.vn` — trước đây thiếu `zdn.vn` nên file gửi lên chỉ thành ghi chú "nội dung Zalo loại " rỗng, agent báo không có file). Loại media lấy từ `msgType` của tin (`chat.file`, `chat.photo`, `chat.voice`, `chat.video.msg`, `chat.sticker`), đuôi/kích thước lấy từ `params` (`fileExt`, `fileSize`). `chat.file` luôn lưu thành document giữ nguyên tên. Log chẩn đoán: `zalo.media:` (tải OK), `zalo.media_skip:` (host không tin cậy — kèm hostname để bổ sung allowlist), `zalo.media_fail:` (tải lỗi).
-  - Luồng nhận file (runtime chung mọi kênh): người dùng chỉ gửi file, không caption → lưu vào `users/<kind>-<senderId>/` (tên slug hóa, trùng → hậu tố -2), ghi `[Đã gửi N file: ...]` vào hội thoại, trả lời "📎 Đã lưu: ..." và **không chạy LLM** — đợi lệnh ở lượt sau; gửi kèm caption → lưu rồi chạy agent ngay với `[Người dùng gửi file, đã lưu tại: ...]`.
-- Đổi agent, bật/tắt channel và ngắt/kết nối lại Zalo áp dụng ngay.
+1. Dashboard → **Channels** → **＋ Thêm kênh** → loại `zalo_personal`, đặt tên, chọn agent.
+2. Bấm **Kết nối QR** → **Tạo mã QR** → mở Zalo trên điện thoại, quét và xác nhận.
+3. Xong. Phiên đăng nhập được mã hóa bằng `PENAI_MASTER_KEY` và tự khôi phục sau khi khởi động lại — không phải quét lại.
+4. Sau mỗi lần kết nối, danh bạ (bạn bè + nhóm đang tham gia) tự kéo về cho Inbox, Contacts và MCP.
 
-## Cách thiết lập
+### Chế độ an toàn (luôn bật)
 
-1. Vào `https://ai.example.com/#/channels`, bấm **＋ Thêm kênh**.
-2. Chọn `zalo_personal`, đặt tên, chọn agent; giữ hoặc bỏ chọn **Yêu cầu pairing** tùy nhu cầu.
-3. Sau khi tạo, bấm **Kết nối QR** → **Tạo mã QR**.
-4. Mở Zalo trên điện thoại, quét QR và xác nhận đăng nhập.
-5. Sau đăng nhập, bot ở chế độ **chỉ quan sát**. Nhắn 1 tin bất kỳ vào nhóm cần demo (bằng chính tài khoản bot cũng được — tin trong group của chính chủ vẫn được ghi nhận), bấm **Làm mới** ở mục Đã quan sát rồi bấm **Chỉ định demo** cho nhóm đó — từ lúc này bot mới nhận/gửi tin trong đúng nhóm được chỉ định.
-6. Nếu pairing đang bật, người gửi trong thread demo chưa duyệt sẽ KHÔNG nhận được gì (ngoại lệ riêng zalo_personal từ 26/08/2026 — bot im lặng, không gửi mã pair như các kênh khác); mã vẫn được cấp ngầm trong DB và admin duyệt trong mục **Yêu cầu chờ duyệt**. Với nhóm demo nội bộ nên tắt pairing để hội thoại liền mạch.
+Kênh được thiết kế để đăng nhập được cả **tài khoản Zalo đang dùng thật** mà agent không tự nhắn lung tung:
 
-## API quản trị
+- Agent **chỉ tự trả lời** trong các hội thoại được cho phép:
+  - Hội thoại được **"Chỉ định demo"** (Channels → Kết nối QR → danh sách ai/nhóm đã nhắn tới → bấm Chỉ định demo; lưu ở `config.demo_threads`, dạng `group:<id>` / `direct:<id>`).
+  - **Mọi tin riêng** nếu kênh **bỏ tick "Yêu cầu pairing"**. Nhóm vẫn phải chỉ định demo. ⚠️ Chỉ bỏ tick khi tài khoản dành riêng cho bot — tài khoản thật mà mở tin riêng là agent trả lời cả bạn bè/người thân.
+- Trong nhóm được phép, agent mặc định chỉ trả lời khi được **@nhắc tên**, **trả lời vào tin của bot**, hoặc lệnh `/...`. Muốn trả lời mọi tin trong nhóm: đặt `config.require_mention = false`.
+- Pairing bật mà người gửi chưa được duyệt → agent **im lặng** (không gửi mã ghép nối như các kênh khác); mã vẫn được cấp, quản trị duyệt ở Channels → Yêu cầu chờ duyệt.
+- Chế độ an toàn chỉ giới hạn **agent tự trả lời**. Người trực gửi tay từ Inbox, ứng dụng AI gửi qua MCP thì gửi được cho mọi người/nhóm.
 
-- `GET /v1/channels/:id/zalo-personal/status`
-- `POST /v1/channels/:id/zalo-personal/login`
-- `GET /v1/channels/:id/zalo-personal/login/:loginId`
-- `POST /v1/channels/:id/zalo-personal/logout`
-- `GET /v1/channels/:id/zalo-personal/targets` — danh sách bạn bè/nhóm cho admin kiểm tra.
-- `POST /v1/channels/:id/zalo-personal/test-message` — gửi tin kiểm tra có chủ đích (chỉ vào thread demo).
-- `GET /v1/channels/:id/zalo-personal/observed` — ai/nhóm nào đã nhắn tới + allowlist hiện tại.
-- `PUT /v1/channels/:id/zalo-personal/demo-threads` — cập nhật allowlist thread demo (áp dụng nóng).
+### Agent nhận được gì
 
-Các endpoint yêu cầu API key có role `ws_admin`. QR và credential không được ghi log hoặc trả trong API danh sách channel.
+- Chữ; ảnh và file từ CDN Zalo (tối đa 10 MB, lưu vào thư mục riêng của người gửi). Tin nhắn thoại, video, sticker chỉ được ghi chú cho agent.
+- Chỉ gửi file mà không kèm chữ → lưu file, báo "📎 Đã lưu", chờ lệnh ở tin sau (không chạy AI).
+- Agent trả lời: hiệu ứng "đang soạn", câu dài tự chia ≤ 2.000 ký tự, gửi được file/ảnh agent tạo.
 
-Tham khảo: [zca-js trên npm](https://www.npmjs.com/package/zca-js), [source zca-js](https://github.com/RFS-ADRENO/zca-js), và implementation đang hoạt động tại `D:\laragon\www\zalochat`.
+---
+
+## 2. Agent tự trả lời
+
+Channels → **Sửa** kênh → ô **"Agent tự trả lời"** (trên cùng, mặc định có tick).
+
+- **Bỏ tick**: agent không trả lời trên kênh này, nhưng kênh **vẫn kết nối**, Inbox vẫn lưu và hiện tin, nhân viên vẫn chat tay, MCP vẫn chạy, Contacts vẫn ghi người nhắn. **Lịch hẹn** agent đã đặt vẫn gửi bình thường.
+- Bật lại: danh sách thread demo giữ nguyên, không phải chọn lại.
+- Dùng được cho mọi loại kênh (Telegram, Teams…), không riêng Zalo. Khóa cấu hình: `config.agent_reply` (thiếu = bật).
+
+Tắt AI **cho một người/nhóm** thay vì cả kênh: Inbox → mở hội thoại → ô "AI trả lời" → "Tắt cho hội thoại này".
+
+---
+
+## 3. Inbox Zalo
+
+Dashboard → **📥 Inbox Zalo**.
+
+- **Danh sách hội thoại** (trái): cá nhân 👤 / nhóm 👥, số tin chưa đọc, tìm theo tên / uid / SĐT (tìm cả danh bạ chưa từng chat), lọc Cá nhân / Nhóm / Chưa đọc. Biểu tượng ⏸️ = AI đang tạm dừng, 🚫 = AI đã tắt cho hội thoại.
+- **Tin nhắn** (phải): cập nhật tức thì, không cần tải lại trang. Nhãn tin gửi đi: 🤖 AI · 👤 tên nhân viên · 📱 gửi từ điện thoại · 🔌 ứng dụng AI qua MCP.
+- **Gửi**: chữ, ảnh (nút 🖼️ hoặc dán ảnh vào ô nhập). Enter gửi, Shift+Enter xuống dòng.
+- **＋ Nhắn tin mới**: theo số điện thoại (tự tra Zalo), uid cá nhân hoặc ID nhóm.
+- **🔄 Đồng bộ danh bạ** (Vận hành trở lên): kéo lại bạn bè + nhóm.
+- **⚙️ Cài đặt** (Quản trị), theo từng kênh:
+
+| Cài đặt | Mặc định | Ý nghĩa |
+|---|---|---|
+| Lưu nội dung tin nhắn | Bật | Tắt thì tin mới không lưu/hiện trong Inbox (tin cũ giữ nguyên) |
+| AI tạm im sau khi nhân viên trả lời | 30 phút | 0 = không tạm dừng |
+| Tự thả cảm xúc khi khách nhắn | Tắt | Xem mục 4 |
+| Cho ứng dụng AI bên ngoài (MCP) đọc hội thoại và nội dung tin nhắn | Tắt | Xem mục 6 |
+
+**AI và nhân viên cùng trực:** nhân viên trả lời (từ Inbox **hoặc** từ điện thoại) → AI tự im trong hội thoại đó theo số phút ở Cài đặt. Nút **"Cho AI trả lời lại"** bỏ tạm dừng ngay.
+
+**Lưu gì:** mọi tin đến/đi của tài khoản (kể cả tin riêng) kể từ lúc kết nối — Zalo không cho lấy lịch sử cũ. Ảnh/file khách gửi chỉ lưu link CDN Zalo; ảnh gửi đi lưu tại `/var/lib/<bản-cài>/data/<workspace>/zalo-inbox/`.
+
+**Ai được vào Inbox:**
+
+| Vai trò | Quyền |
+|---|---|
+| Quản trị, Vận hành | Mọi kênh Zalo của workspace |
+| Thành viên | Chỉ kênh được gán: Người dùng → Sửa → tick **"Kênh Zalo được trực"** |
+| Chỉ xem | Không |
+
+---
+
+## 4. Cảm xúc (reaction)
+
+- **Thả tay trong Inbox**: rê chuột vào tin của khách → ❤️ 👍 😆 😮 😢 😡; bấm lại icon đang chọn để gỡ. Cảm xúc của khách và của mình hiện dưới tin, cập nhật tức thì.
+- **Tự thả khi khách nhắn**: Inbox → ⚙️ Cài đặt → Tắt (mặc định) / ❤️ / 👍.
+  - Áp dụng **cả tin riêng và nhóm**, độc lập với "Agent tự trả lời".
+  - Thả vào **tin cuối** của mỗi đợt khách nhắn, sau 1–4 giây; cả kênh tối đa ~1 lần/giây.
+  - Nhóm đông người nhắn nhiều → tài khoản thả rất nhiều, Zalo có thể giới hạn tài khoản.
+- Chỉ thả được vào tin lưu **từ bản 1.5.0** trở đi (thả cảm xúc cần hai mã của tin mà bản cũ chưa lưu).
+
+---
+
+## 5. Contacts, UID và xuất Excel
+
+- Mỗi khi có người nhắn tới — **tin riêng**, **người gửi trong nhóm** — và **cả nhóm** đó, hệ thống ghi ngay vào Dashboard → **Contacts** (chỉ tên + UID). Không phụ thuộc thread demo hay công tắc agent. Người/nhóm nhắn trước bản 1.6.0 sẽ vào ở lần nhắn kế tiếp.
+- Trang Contacts: lọc theo **từng kênh**, cột **Loại** (👤 Cá nhân / 👥 Nhóm), cột **UID / ID** có nút 📋 sao chép (dùng để gửi tin lại qua Inbox → Nhắn tin mới hoặc MCP `zalo_send_message`), SĐT Zalo nếu tài khoản thấy được. Bấm vào một người để đặt hồ sơ, nhãn, chỉ dẫn riêng cho AI ([ho-so-contact.md](ho-so-contact.md)).
+- **⬇ Xuất Excel** (Vận hành trở lên): chọn kênh (hoặc Mọi kênh) → tải file `.xlsx`:
+  - Sheet **Contacts**: kênh, loại, UID, tên, tên hồ sơ, xưng hô, SĐT, email, vai trò, ngôn ngữ, nhãn, trường tùy chỉnh, chỉ dẫn cho AI, trạng thái duyệt, lần đầu / gần nhất nhắn.
+  - Sheet **Danh bạ Zalo** (mỗi kênh Zalo cá nhân một sheet): toàn bộ bạn bè + nhóm đã đồng bộ — loại, UID, tên, SĐT, bạn bè/đang trong nhóm, số thành viên, tin gần nhất, chưa đọc.
+  - UID dài và SĐT có số 0 đầu được giữ nguyên dạng chữ (Excel không làm tròn).
+
+---
+
+## 6. Kết nối AI bên ngoài (MCP)
+
+MCP (Model Context Protocol) là chuẩn để ứng dụng AI gọi công cụ bên ngoài. Địa chỉ: `https://<tên-miền-PenAI>/mcp` — xem và sao chép ở Dashboard → **🔗 Kết nối AI bên ngoài** (trang này còn liệt kê kết nối đã cấp quyền, nút Thu hồi, lượt gửi gần đây và kênh nào đang cho đọc tin).
+
+### Kết nối
+
+- **Claude** (claude.ai / Claude Desktop): Settings → Connectors → *Add custom connector* → dán địa chỉ → Connect.
+- **ChatGPT**: Settings → Apps & Connectors → Advanced → bật *Developer mode* → Create → dán địa chỉ, chọn OAuth.
+- **Chính PenAI** (cho agent dùng): Dashboard → MCP → Tạo mới → transport `http`, URL là địa chỉ trên → Đăng nhập OAuth. Nên để phạm vi `granted` rồi gán cho đúng agent cần dùng.
+- Công cụ khác có MCP từ xa + OAuth (Cursor, Claude Code…): thêm địa chỉ trên; callback `http://localhost:<cổng>` được chấp nhận.
+
+Trình duyệt mở **trang cấp quyền của PenAI**: đăng nhập bằng email + mật khẩu Dashboard (đang đăng nhập sẵn thì chỉ cần bấm), tick quyền → **Cấp quyền**. Mật khẩu không chuyển cho ứng dụng AI.
+
+| Quyền | Cho phép |
+|---|---|
+| `zalo:read` | Danh sách người liên hệ, nhóm; tra người theo SĐT |
+| `zalo:send` | Gửi tin + ảnh; thả cảm xúc |
+| `zalo:messages` | Danh sách hội thoại + toàn bộ nội dung tin nhắn — **chỉ ở kênh quản trị đã bật** (Inbox → ⚙️ Cài đặt; mặc định tắt, khi tắt ứng dụng AI không thấy các công cụ này) |
+
+Quyền tính theo tài khoản đã cấp, ở thời điểm **hiện tại**: Vận hành trở lên dùng mọi kênh Zalo; Thành viên chỉ kênh được gán; Chỉ xem không gửi được. Đổi mật khẩu, khóa tài khoản hoặc gỡ khỏi workspace → mọi kết nối của tài khoản đó mất hiệu lực. Kết nối tạo trước 1.4.0 chưa có `zalo:messages` → kết nối lại để dùng công cụ đọc tin.
+
+### Công cụ
+
+| Tool | Quyền | Tham số → kết quả |
+|---|---|---|
+| `zalo_list_channels` | read | — → kênh, trạng thái kết nối |
+| `zalo_list_contacts` | read | `query?`, `limit?` (≤100), `cursor?`, `channel_id?` → `uid`, tên, SĐT, `is_friend` |
+| `zalo_list_groups` | read | như trên → `group_id`, tên, số thành viên |
+| `zalo_find_user_by_phone` | read | `phone` → `uid`, tên |
+| `zalo_send_message` | send | `to` (uid / group_id), `thread_type?`, `message?`, `image_url?`, `request_id?`, `channel_id?` — cũng dùng để **trả lời vào hội thoại** (`to` = `thread_id`) |
+| `zalo_send_message_by_phone` | send | `phone`, `message?`, `image_url?`, `request_id?`, `channel_id?` |
+| `zalo_react_latest` | send | `thread_id`, `reaction?` (heart mặc định / like / haha / wow / cry / angry / none), `count?` (≤5) → thả vào tin mới nhất của khách, không cần quyền đọc tin |
+| `zalo_react_message` | send | `thread_id`, `message_id` (từ `zalo_get_messages` / `zalo_search_messages`), `reaction` |
+| `zalo_list_conversations` | messages | `query?`, `type?`, `unread_only?`, `limit?` (≤200), `cursor?` → `thread_id`, tên, tin cuối, chưa đọc |
+| `zalo_get_messages` | messages | `thread_id`, `limit?` (mặc định 500, ≤2000), `before?` → lịch sử cũ → mới (người gửi, nguồn, ảnh/file, cảm xúc); `has_more` + `next_before` để lấy tiếp tới hết |
+| `zalo_search_messages` | messages | `query`, `thread_id?`, `since?` (ISO), `limit?` (≤200) → tin khớp từ khóa kèm hội thoại |
+
+- `channel_id` chỉ cần khi workspace có nhiều kênh Zalo.
+- Ảnh: `image_url` là URL http(s) công khai hoặc `data:image/...;base64,...`; PNG/JPEG/GIF/WEBP ≤ 10 MB. URL trỏ vào mạng nội bộ bị từ chối.
+- **Gửi tuần tự** mỗi kênh 1 tin / 2 giây (dồn → `RATE_LIMITED` kèm `retry_after_seconds`).
+- **Chống gửi trùng**: truyền `request_id` (UUID) mỗi tin; thử lại cùng tin thì giữ nguyên `request_id` + tham số.
+- Zalo **không cho gửi vào chính uid** của tài khoản đang kết nối.
+
+| Mã lỗi | Ý nghĩa |
+|---|---|
+| `NOT_CONNECTED` | Kênh mất kết nối — quét QR lại |
+| `USER_NOT_FOUND` | SĐT chưa dùng Zalo hoặc chặn tìm kiếm |
+| `RATE_LIMITED` / `SEND_IN_PROGRESS` | Chờ rồi thử lại cùng `request_id` |
+| `ZALO_REJECTED` | Zalo trả lỗi, tin **chưa** gửi (sai uid/loại, gửi cho chính tài khoản…) |
+| `SEND_OUTCOME_UNKNOWN` | Có thể đã gửi — kiểm tra Inbox, không tự gửi lại bằng mã mới |
+| `IDEMPOTENCY_CONFLICT` | `request_id` đã dùng cho tin khác |
+| `IMAGE_INVALID` | Ảnh sai định dạng / quá lớn / URL nội bộ |
+| `CHANNEL_REQUIRED` / `CHANNEL_NOT_ALLOWED` / `NO_CHANNEL` | Chọn đúng kênh / tài khoản chưa được trực kênh nào |
+| `INSUFFICIENT_SCOPE` | Kết nối chưa có quyền đó — kết nối lại, tick quyền |
+| `MESSAGES_DISABLED` | Kênh chưa bật cho ứng dụng AI đọc tin |
+| `THREAD_NOT_FOUND` | Không có hội thoại / chưa có tin được lưu |
+| `CANNOT_REACT` / `NO_MESSAGE` | Tin lưu trước 1.5.0 / hội thoại chưa có tin của khách để thả |
+
+---
+
+## 7. API (tích hợp)
+
+Gọi bằng khóa `psk_…` (Dashboard → Khóa API) hoặc phiên Dashboard.
+
+**Quản trị kênh** (`ws_admin`):
+
+- `GET /v1/channels/:id/zalo-personal/status` · `POST …/login` · `GET …/login/:loginId` · `POST …/logout`
+- `GET …/targets` (bạn bè/nhóm) · `GET …/resolve-phone?phone=` · `POST …/test-message` (chỉ vào thread demo)
+- `GET …/observed` (ai/nhóm đã nhắn tới) · `PUT …/demo-threads`
+- `PATCH /v1/channels/:id` với `{ "config": { "agent_reply": false } }` — tắt agent tự trả lời.
+
+**Inbox** (người trực kênh):
+
+- `GET /v1/zalo-inbox/channels` · `GET /v1/zalo-inbox/events` (SSE realtime)
+- `GET /v1/zalo-inbox/:channelId/threads?q=&kind=&unread=1` · `GET …/threads/:threadId/messages?before=&limit=`
+- `POST …/threads/:threadId/send` `{ text?, image? }` · `POST …/new` `{ to? | phone?, peerKind?, text?, image? }`
+- `POST …/threads/:threadId/read` · `PUT …/threads/:threadId/ai` `{ mode?: "auto"|"off", resume?: true }`
+- `POST …/threads/:threadId/messages/:messageId/react` `{ reaction: "heart"|"like"|"haha"|"wow"|"cry"|"angry"|"none" }`
+- `GET …/find-phone?phone=` · `POST …/sync-contacts` (Vận hành+) · `PUT …/settings` (Quản trị) `{ enabled?, pauseMinutes?, mcpReadMessages?, autoReaction?: "off"|"heart"|"like" }`
+
+**Contacts**: `GET /v1/contacts` · `GET /v1/contacts/export.xlsx?channelId=` (Vận hành+).
+
+QR và thông tin đăng nhập Zalo không bao giờ được ghi log hay trả qua API.
+
+---
+
+## 8. Kỹ thuật (cho người sửa mã)
+
+| Thành phần | File |
+|---|---|
+| Adapter Zalo (QR, listener, gửi, danh bạ, cảm xúc, ghi Inbox) | `packages/channels/src/zalo-personal.ts` |
+| Inbox: lưu tin, SSE, gửi, ảnh, Contacts, cảm xúc, route | `apps/server/src/zalo-inbox.ts` |
+| MCP server + OAuth | `apps/server/src/mcp-server.ts` |
+| Chặn agent (demo thread, AI tắt/tạm dừng, `agent_reply`) | `apps/server/src/channels-runtime.ts` (`makeInboundHandler`) |
+| Xuất Excel | `apps/server/src/xlsx.ts` (tạo .xlsx bằng adm-zip) + route trong `app.ts` |
+| DB | `packages/db/src/zalo-inbox-repo.ts`, `mcp-oauth-repo.ts`; migration `0017` (quan sát), `0031` (Inbox, MCP OAuth), `0032` (cảm xúc) |
+
+Cấu hình kênh (`channels.config`): `demo_threads`, `require_mention`, `agent_reply`, `inbox`, `inbox_pause_minutes`, `mcp_read_messages`, `auto_reaction`. Biến môi trường: `PENAI_PUBLIC_URL` (bắt buộc cho MCP — bản cài có sẵn), `PENAI_MCP_ALLOWED_ORIGINS` (thêm Origin được gọi `/mcp`).
+
+Những điểm dễ làm hỏng:
+
+- **Tin dội lại.** Tin do PenAI gửi (agent/web/MCP) quay lại qua listener với `isSelf`. Adapter nhớ `msgId` lúc gửi để bỏ qua bản dội lại; bản dội lại có thể tới **trước** khi lệnh gửi trả kết quả nên listener chờ 1,5 giây rồi kiểm tra lại. Bỏ bước chờ → tin bị lưu trùng thành "gửi từ điện thoại" và AI tự tạm dừng sau chính câu trả lời của mình.
+- **Thả cảm xúc cần `msgId` + `cliMsgId`.** `cliMsgId` lưu trong `zalo_messages.meta`; tin PenAI gửi lấy `cliMsgId` từ bản dội lại (kết quả gửi của zca-js không có).
+- **zca-js**: `imageMetadataGetter` bắt buộc (trả `{ width, height, size }`); đường dẫn file phải dùng `/`; nhóm tra tên theo lô 10 ID; listener phải bắt sự kiện `error`/`closed` để không làm sập tiến trình.
+- **Media đến** chỉ tải từ CDN Zalo tin cậy (`*.zalo.me`, `*.zaloapp.com`, `*.zadn.vn`, `*.zdn.vn`, qua https). Log chẩn đoán: `zalo.media:` / `zalo.media_skip:` / `zalo.media_fail:`.
+- **OAuth MCP**: issuer = origin của `PENAI_PUBLIC_URL` (không có `/` cuối); PKCE S256 bắt buộc; access token 1 giờ, refresh 30 ngày xoay vòng (dùng lại refresh cũ sau 60 giây → thu hồi kết nối); token/code/secret chỉ lưu sha256.
+
+Tham khảo: [zca-js](https://github.com/RFS-ADRENO/zca-js).
