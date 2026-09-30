@@ -4,6 +4,12 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.7.1 — 2026-10-01
+
+- Sửa `sudo penai doctor` / `sudo penai install-browser` báo sai "Chromium không khởi động được" trên Ubuntu khi chạy lệnh từ thư mục `/root` (lỗi của bước kiểm tra, trình duyệt của agent vẫn chạy bình thường).
+
+Cập nhật: `sudo penai update` (không có migration, không phải làm gì thêm).
+
 ## 1.7.0 — 2026-10-01
 
 - **Agent dùng trình duyệt thật**: tool `browser` nâng cấp từ "chỉ đọc chữ một trang" thành trình duyệt **giữ trang mở suốt cuộc trò chuyện**. Agent mở trang, đọc danh sách nút/ô nhập/link (mỗi phần tử một mã như `e12`), rồi **bấm, gõ, chọn, cuộn, quay lại, nhấn phím**, và **chụp màn hình để tự xem** (mô hình đọc được ảnh như ChatGPT/codex). Ảnh chụp cũng lưu vào thư mục làm việc để gửi cho người dùng. Chạy được trang cần JavaScript (Tiki, Lazada, trang quản trị…). Agent được dặn hỏi lại trước khi bấm nút có hậu quả thật (đặt hàng, thanh toán, gửi, xóa) và dừng lại khi gặp CAPTCHA.

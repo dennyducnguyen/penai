@@ -486,9 +486,11 @@ cmd_install_browser() {
 }
 
 browser_launch_ok() { # browser_launch_ok <thư mục playwright-core> — mở thử Chromium bằng user dịch vụ
-  as_app env PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" timeout 60 "$NODE_BIN/node" -e '
+  # Chạy từ /tmp: đứng ở /root (thư mục hiện tại của sudo) thì Node dưới user dịch vụ
+  # báo "Cannot read package config /root/package.json" dù Chromium vẫn chạy được.
+  (cd /tmp && as_app env PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" timeout 60 "$NODE_BIN/node" -e '
     require(process.argv[1]).chromium.launch({ channel: "chromium", args: ["--disable-dev-shm-usage"] })
-      .then((b) => b.close()).then(() => process.exit(0), (e) => { console.error(e.message); process.exit(1); });' "$1" >>"${log:-/dev/null}" 2>&1
+      .then((b) => b.close()).then(() => process.exit(0), (e) => { console.error(e.message); process.exit(1); });' "$1") >>"${log:-/dev/null}" 2>&1
 }
 
 cmd_auto_update() {
