@@ -234,6 +234,7 @@ import {
   QwenProvider,
   isEmbeddingProvider,
   startLoginFlow,
+  parseCodexCallback,
   type LoginFlow,
   type ProviderRegistry,
 } from "@penai/providers";
@@ -2511,14 +2512,19 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Lý do: server callback bind 127.0.0.1:1455 của CHÍNH máy chạy PenAI, còn trình
   // duyệt người dùng redirect về localhost:1455 trên MÁY HỌ → chạy trên VPS thì
   // callback không bao giờ tới. Dán link vào là đổi được code (verifier PKCE nằm ở đây).
-  let pendingCodexLogin:
-    | { providerName: string; workspaceId: string; flow: LoginFlow; startedAt: number }
-    | null = null;
+  //
+  // NHIỀU phiên cùng lúc, tra theo state (01/10/2026): lớp học dùng chung một tài
+  // khoản quản trị, mỗi người bấm "Đăng nhập" — trước đây chỉ giữ 1 phiên nên người
+  // bấm sau hủy phiên người trước → ai dán link cũng báo "state không khớp".
+  type PendingCodexLogin = { providerName: string; workspaceId: string; flow: LoginFlow; startedAt: number };
+  const pendingCodexLogins = new Map<string, PendingCodexLogin>();
+  const CODEX_LOGIN_MAX_PENDING = 20;
 
   // Đăng nhập ChatGPT (Codex OAuth) — mở trình duyệt server-side, trả URL ngay.
   // Dùng cho cả THÊM tài khoản mới lẫn đăng nhập lại: sau khi OAuth xong,
   // accountId trùng tài khoản có sẵn → cập nhật tại chỗ; mới → thêm vào pool.
-  // Chỉ 1 flow chạy tại 1 thời điểm (callback bind cổng cố định 1455).
+  // Nhiều flow chạy song song được: cổng callback 1455 chỉ phiên đầu giữ (dùng khi
+  // PenAI chạy trên chính máy người dùng), các phiên khác hoàn tất bằng dán link.
   app.post("/v1/providers/:name/login", async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { name } = req.params as { name: string };
@@ -2552,19 +2558,19 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     }
     const codex = provider;
     try {
-      // Phiên cũ chưa hoàn tất vẫn giữ cổng 1455 → hủy để người dùng khỏi phải
-      // chờ hết 10 phút mới đăng nhập lại được.
-      if (pendingCodexLogin) {
-        pendingCodexLogin.flow.cancel();
-        pendingCodexLogin = null;
+      // Giữ tối đa N phiên đang chờ — quá thì hủy phiên cũ nhất
+      while (pendingCodexLogins.size >= CODEX_LOGIN_MAX_PENDING) {
+        const oldest = pendingCodexLogins.keys().next().value as string;
+        pendingCodexLogins.get(oldest)?.flow.cancel();
+        pendingCodexLogins.delete(oldest);
       }
-      const flow = startLoginFlow({ save: false, openBrowser: true });
-      pendingCodexLogin = {
+      const flow = startLoginFlow({ save: false, openBrowser: true, optionalListen: true });
+      pendingCodexLogins.set(flow.state, {
         providerName: name,
         workspaceId: req.authCtx.workspaceId,
         flow,
         startedAt: Date.now(),
-      };
+      });
       // hoàn tất chạy nền: đưa tài khoản vào pool; UI poll /v1/providers
       flow.done
         .then((auth) => {
@@ -2573,7 +2579,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         })
         .catch(() => {})
         .finally(() => {
-          if (pendingCodexLogin?.flow === flow) pendingCodexLogin = null;
+          pendingCodexLogins.delete(flow.state);
         });
       return {
         authorizeUrl: flow.url,
@@ -2610,15 +2616,29 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (!(provider instanceof CodexProvider)) {
       return reply.code(400).send({ error: "Provider này không dùng luồng dán link callback" });
     }
-    const pending = pendingCodexLogin;
-    if (
-      !pending ||
-      pending.providerName !== name ||
-      pending.workspaceId !== req.authCtx.workspaceId
-    ) {
+    // Tìm đúng phiên theo state trong link; chỉ dán code (không có state) thì
+    // dùng được khi workspace này chỉ có đúng một phiên đang chờ.
+    let parsedState: string | undefined;
+    try {
+      parsedState = parseCodexCallback(raw).state;
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+    const mine = [...pendingCodexLogins.values()].filter(
+      (p) => p.providerName === name && p.workspaceId === req.authCtx.workspaceId,
+    );
+    const pending = parsedState
+      ? mine.find((p) => p.flow.state === parsedState)
+      : mine.length === 1
+        ? mine[0]
+        : undefined;
+    if (!pending) {
       return reply.code(409).send({
-        error:
-          "Không có phiên đăng nhập nào đang chờ (hết hạn hoặc server đã khởi động lại) — bấm Đăng nhập để lấy link mới",
+        error: parsedState
+          ? "Link này thuộc phiên đăng nhập đã hết hạn, đã dùng hoặc đã bị hủy (server khởi động lại / quá 10 phút) — bấm Đăng nhập để lấy link mới"
+          : mine.length
+            ? "Đang có nhiều phiên đăng nhập chờ — hãy dán TOÀN BỘ link callback (có cả state), không chỉ mã code"
+            : "Không có phiên đăng nhập nào đang chờ (hết hạn hoặc server đã khởi động lại) — bấm Đăng nhập để lấy link mới",
       });
     }
     try {
@@ -2626,7 +2646,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       // addAccount idempotent theo accountId; gọi ở đây để chắc chắn vào pool kể cả
       // khi promise done đã bị timeout reject trước đó.
       const acc = provider.accounts.addAccount(auth);
-      pendingCodexLogin = null;
+      pendingCodexLogins.delete(pending.flow.state);
       logger.info(`ChatGPT pool: đã thêm/cập nhật tài khoản ${acc.email ?? acc.alias} (dán link)`);
       return { ok: true, email: acc.email ?? acc.alias, alias: acc.alias };
     } catch (err) {

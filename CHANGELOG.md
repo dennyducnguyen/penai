@@ -4,6 +4,12 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.7.2 — 2026-10-01
+
+- Sửa lỗi **đăng nhập ChatGPT báo "Link callback thuộc phiên đăng nhập khác (state không khớp)"** khi nhiều người cùng bấm Providers → Đăng nhập (vd cả lớp dùng chung một tài khoản quản trị). Trước đây máy chủ chỉ giữ một phiên đăng nhập, người bấm sau làm hỏng phiên người trước. Nay giữ được nhiều phiên cùng lúc (tối đa 20, mỗi phiên 10 phút), mỗi người dán đúng link của mình là xong.
+
+Cập nhật: `sudo penai update` (không có migration, không phải làm gì thêm).
+
 ## 1.7.1 — 2026-10-01
 
 - Sửa `sudo penai doctor` / `sudo penai install-browser` báo sai "Chromium không khởi động được" trên Ubuntu khi chạy lệnh từ thư mục `/root` (lỗi của bước kiểm tra, trình duyệt của agent vẫn chạy bình thường).
