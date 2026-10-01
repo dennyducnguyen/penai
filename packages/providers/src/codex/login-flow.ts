@@ -28,7 +28,7 @@ export interface LoginFlow {
 }
 
 /** Tách code + state từ URL callback dán vào, hoặc coi cả chuỗi là code. */
-function parseCallback(raw: string): { code: string; state?: string } {
+export function parseCodexCallback(raw: string): { code: string; state?: string } {
   const text = raw.trim();
   if (!text) throw new Error("Chưa nhập gì");
   if (text.includes("://") || text.includes("?")) {
@@ -59,6 +59,12 @@ export function startLoginFlow(opts: {
   timeoutMs?: number;
   /** false = KHÔNG tự ghi authFile — caller tự quyết định lưu đâu (pool). */
   save?: boolean;
+  /**
+   * true = cổng callback 1455 chỉ là "nếu được": đang có phiên khác giữ cổng
+   * (nhiều người đăng nhập cùng lúc trên server) thì bỏ qua, phiên vẫn hoàn tất
+   * bằng cách dán link callback (submit). Mặc định false = lỗi cổng làm hỏng phiên.
+   */
+  optionalListen?: boolean;
 } = {}): LoginFlow {
   const authFile = opts.authFile ?? DEFAULT_AUTH_FILE;
   const openBrowser = opts.openBrowser ?? true;
@@ -118,8 +124,13 @@ export function startLoginFlow(opts: {
       }
     });
 
-    closeServer = () => server.close();
-    server.on("error", reject);
+    closeServer = () => {
+      if (server.listening) server.close();
+    };
+    server.on("error", (e) => {
+      if (opts.optionalListen) return; // vẫn hoàn tất được bằng submit()
+      reject(e);
+    });
     server.listen(1455, "127.0.0.1", () => {
       if (openBrowser && process.platform === "win32") {
         spawn("cmd", ["/c", "start", "", url], {
@@ -130,7 +141,7 @@ export function startLoginFlow(opts: {
     });
 
     setTimeout(() => {
-      server.close();
+      closeServer();
       reject(new Error("Hết thời gian chờ đăng nhập"));
     }, timeoutMs).unref();
   });
@@ -146,7 +157,7 @@ export function startLoginFlow(opts: {
       settle.reject(new Error("Phiên đăng nhập đã bị hủy"));
     },
     submit(rawUrlOrCode: string) {
-      const parsed = parseCallback(rawUrlOrCode);
+      const parsed = parseCodexCallback(rawUrlOrCode);
       if (parsed.state && parsed.state !== state) {
         throw new Error(
           "Link callback thuộc phiên đăng nhập khác (state không khớp) — bấm Đăng nhập để lấy link mới",
