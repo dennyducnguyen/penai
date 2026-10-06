@@ -40,8 +40,10 @@
     providers: ["codex", "claude-code", "antigravity"],
     queue: {
       // Mỗi tiến trình Claude Code / Antigravity CLI tốn ~220 MB RAM → giới hạn
-      // số tiến trình chạy cùng lúc theo RAM của máy chủ.
-      concurrency: { codex: 4, "claude-code": 1, antigravity: 1 },
+      // số tiến trình chạy cùng lúc theo RAM của máy chủ. cliTotal là trần CHUNG
+      // của Claude + Antigravity (máy dưới 4 GB RAM được đặt 1 lúc cài).
+      // Đổi nhanh cả hai số: sudo penai cli-concurrency 2
+      concurrency: { codex: 4, "claude-code": 2, antigravity: 1 },
       cliTotal: {{CLI_TOTAL}},
       max: 20,
       waitMs: 180000,

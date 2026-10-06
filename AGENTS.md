@@ -57,6 +57,9 @@ Báo người dùng: phiên bản cũ → mới và danh sách "Thay đổi" mà
 | Đổi tên hiển thị, khẩu hiệu, màu | Sửa khối `branding` trong `/etc/<bản-cài>/penai.config.json5` (định dạng JSON5), tải lại trang là thấy. `theme`: `xanh-duong`, `tim`, `xanh-ngoc`; màu riêng `primaryColor: "#rrggbb"` |
 | Dùng logo riêng | Chép ảnh lên máy chủ: `sudo install -m 0640 -o root -g <bản-cài> logo.png /etc/<bản-cài>/logo.png`, thêm `logoFile: "/etc/<bản-cài>/logo.png"` vào `branding` |
 | Dùng provider Claude / Antigravity | `sudo penai install-cli claude` / `sudo penai install-cli agy`, rồi Dashboard → Providers → Đăng nhập |
+| Claude báo lỗi "Illegal instruction" / không chạy sau khi cài | CPU của VPS không có tập lệnh AVX2 (kiểu CPU ảo hóa cũ). `sudo penai install-cli claude` tự cài bản 2.1.112 chạy được; `sudo penai doctor` báo rõ. Muốn bản mới: nhờ nhà cung cấp VPS đổi kiểu CPU sang "host" rồi chạy lại lệnh cài |
+| Claude chậm vì nhiều người/kênh/lịch hẹn dùng cùng lúc ("Chờ quá … trong hàng đợi") | Xem: `sudo penai cli-concurrency`. Nâng số tiến trình Claude chạy song song: `sudo penai cli-concurrency 2` (mỗi tiến trình ~220 MB RAM, không cần khởi động lại). Và đặt model dự phòng (dòng dưới) |
+| Bot im lặng khi Claude hết hạn mức hoặc quá tải | Dashboard → Agents → Cấu hình → "Model dự phòng" → ＋ Thêm model dự phòng (nên khác provider, vd agent Claude thì dự phòng bằng `codex`). Model chính lỗi, hết hạn mức hoặc chờ quá lâu thì tự chuyển |
 | Xem lỗi | `sudo penai logs -n 200` |
 | Sao lưu thủ công | `sudo penai backup` (thêm `--with-data` để lấy cả file người dùng) |
 | Quay về bản trước | `sudo penai rollback --yes` |

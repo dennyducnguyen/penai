@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync, rmSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import { logger, type ToolCallData } from "@penai/shared";
@@ -33,7 +33,58 @@ interface ClaudeResult {
   is_error?: boolean;
   session_id?: string;
   num_turns?: number;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+}
+
+/**
+ * Nối tiếp phiên CLI giữa các vòng tool (`--resume`).
+ *
+ * Bridge này không trạng thái: mỗi vòng tool là một tiến trình `claude -p` mới.
+ * Nếu vòng nào cũng gửi lại toàn bộ lịch sử trong MỘT khối prompt thì cache
+ * prompt của Anthropic không bao giờ trúng (đo 06/10/2026, ngữ cảnh ~31k token:
+ * mỗi vòng ghi mới 30,9k token vào cache, đọc lại 0). Nối tiếp đúng phiên của
+ * vòng trước và chỉ gửi phần mới (kết quả tool) thì vòng sau ĐỌC 30,8k token
+ * từ cache, chỉ ghi mới ~500 — nhanh hơn và tốn hạn mức gói ít hơn nhiều.
+ *
+ * Khoá tra cứu là id của tool call do chính provider này sinh ra (`cc_<uuid>`),
+ * nên chỉ nối tiếp trong vòng lặp tool của một lượt trả lời. Mọi trường hợp
+ * không chắc chắn (lịch sử đã bị cắt/sửa, đổi model, phiên không còn) đều quay
+ * về cách gọi mới với toàn bộ lịch sử.
+ */
+interface ResumeEntry {
+  sessionId: string;
+  model: string;
+  /** Số message của request đã sinh ra tool call này (= vị trí message assistant ở vòng sau). */
+  prefixCount: number;
+  prefixHash: string;
+  at: number;
+}
+
+interface ResumePlan {
+  sessionId: string;
+  /** Chỉ gửi các message từ vị trí này trở đi. */
+  fromIndex: number;
+  callId: string;
+}
+
+const RESUME_MAX_ENTRIES = 300;
+const RESUME_TTL_MS = 2 * 60 * 60 * 1000;
+
+function hashMessages(messages: ChatRequest["messages"]): string {
+  const h = createHash("sha1");
+  for (const m of messages) {
+    if (m.role === "user") h.update(`u\0${m.content}\0${m.images?.length ?? 0}\0`);
+    else if (m.role === "assistant") {
+      h.update(`a\0${m.content ?? ""}\0`);
+      for (const tc of m.toolCalls ?? []) h.update(`${tc.id}\0${tc.name}\0${JSON.stringify(tc.args)}\0`);
+    } else h.update(`t\0${m.toolCallId}\0${m.content}\0`);
+  }
+  return h.digest("hex");
 }
 
 /**
@@ -72,6 +123,8 @@ export class ClaudeCodeProvider implements Provider {
   private authState: ClaudeCodeAuthState = "unknown";
   private loginChild: ReturnType<typeof spawn> | null = null;
   private loginBuffer = "";
+  /** tool call id → phiên CLI đã sinh ra nó (xem ResumeEntry). */
+  private resumeByCall = new Map<string, ResumeEntry>();
 
   constructor(
     readonly name: string,
@@ -321,9 +374,10 @@ export class ClaudeCodeProvider implements Provider {
   private buildArgs(
     req: ChatRequest,
     streaming: boolean,
+    resume?: ResumePlan | null,
   ): { args: string[]; stdinData?: string; cleanup: () => void } {
     const model = req.model?.trim() || DEFAULT_CLAUDE_CODE_MODEL;
-    const prompt = buildClaudePrompt(req);
+    const prompt = buildClaudePrompt(req, resume?.fromIndex ?? 0);
     const systemPrompt = buildClaudeSystemPrompt(req);
     const tmpFiles: string[] = [];
     const args: string[] = ["-p"];
@@ -334,6 +388,9 @@ export class ClaudeCodeProvider implements Provider {
       args.push(prompt);
     }
     args.push("--model", model, "--tools", "", "--max-turns", "3");
+    // --fork-session: mỗi lượt ra một phiên MỚI, phiên gốc giữ nguyên — nên
+    // lượt sửa định dạng (repair) vẫn bắt đầu lại từ lịch sử sạch.
+    if (resume) args.push("--resume", resume.sessionId, "--fork-session");
     if (Buffer.byteLength(systemPrompt, "utf8") > ClaudeCodeProvider.ARG_SAFE_BYTES) {
       const file = path.join(this.scratchDir, `sysprompt-${randomUUID()}.txt`);
       writeFileSync(file, systemPrompt, "utf8");
@@ -368,11 +425,12 @@ export class ClaudeCodeProvider implements Provider {
     const deadline = Date.now() + 300_000;
     const usage = { inputTokens: 0, outputTokens: 0 };
     let nextReq = req;
-    for (let attempt = 0; ; attempt++) {
+    let resume = this.planResume(req);
+    for (let attempt = 0; ; ) {
       req.signal?.throwIfAborted();
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) throw new Error("Claude đã hết thời gian xử lý và sửa định dạng phản hồi. Vui lòng thử lại.");
-      const built = this.buildArgs(nextReq, false);
+      const built = this.buildArgs(nextReq, false, resume);
       let stdout: string, stderr: string, code: number | null;
       try {
         ({ stdout, stderr, code } = await this.run(built.args, remainingMs, req.signal, built.stdinData));
@@ -381,6 +439,15 @@ export class ClaudeCodeProvider implements Provider {
       }
       req.signal?.throwIfAborted();
       const result = parseClaudeResult(stdout);
+      if (resume && (!result || result.is_error)) {
+        // Phiên không còn (CLI dọn, đổi máy...) hoặc lỗi bất kỳ khi nối tiếp →
+        // gọi lại MỘT lần theo cách cũ với toàn bộ lịch sử. Lỗi thật (hết hạn
+        // mức, chưa đăng nhập) sẽ lặp lại ở lượt đó và được báo như thường.
+        logger.warn({ event: "claude.resume_failed", provider: this.name, model: req.model, exit: code }, "Không nối tiếp được phiên Claude — gọi lại với toàn bộ lịch sử");
+        this.resumeByCall.delete(resume.callId);
+        resume = null;
+        continue;
+      }
       if (!result) {
         const combined = (stderr + "\n" + stdout).slice(0, 400);
         throw new Error(this.authError(combined) ?? `claude không trả JSON hợp lệ (exit ${code}): ${combined}`);
@@ -395,6 +462,20 @@ export class ClaudeCodeProvider implements Provider {
       try {
         const response = this.toResponse(req, result);
         if (attempt > 0) logger.info({ event: "claude.output_repaired", provider: this.name, model: req.model, repairs: attempt }, "Claude đã sửa định dạng đầu ra");
+        // Lượt đã phải sửa định dạng thì phiên CLI có chứa bản nháp bị từ chối —
+        // không nối tiếp từ đó (bản nháp không bao giờ được thành lịch sử).
+        if (attempt === 0) this.rememberSession(req, response, result);
+        logger.debug(
+          {
+            event: "claude.usage",
+            provider: this.name,
+            model: req.model,
+            resumed: !!resume,
+            cacheRead: result.usage?.cache_read_input_tokens ?? 0,
+            cacheCreate: result.usage?.cache_creation_input_tokens ?? 0,
+          },
+          "Claude: số liệu cache của lượt gọi",
+        );
         return { ...response, usage };
       } catch (err) {
         if (!(err instanceof ClaudeOutputError)) throw err;
@@ -403,6 +484,7 @@ export class ClaudeCodeProvider implements Provider {
         if (attempt >= maxRepairs) {
           throw new Error("Claude vẫn trả phản hồi sai định dạng sau 2 lần yêu cầu sửa. Bước tiếp theo chưa được thực thi; vui lòng thử lại.");
         }
+        attempt++;
         // Start from the original history each time. Invalid output is a rejected
         // draft, never an assistant/tool event and never persisted to the session.
         nextReq = {
@@ -410,6 +492,58 @@ export class ClaudeCodeProvider implements Provider {
           messages: [...req.messages, { role: "user", content: claudeRepairPrompt(err.reason, result.result ?? "") }],
         };
       }
+    }
+  }
+
+  /**
+   * Request này có nối tiếp được phiên CLI của vòng trước không. Điều kiện:
+   * message assistant CUỐI CÙNG là tool call do provider này sinh ra, phần lịch
+   * sử trước nó còn y nguyên, cùng model, và phía sau chỉ có kết quả tool/tin
+   * người dùng (không có lượt assistant nào mà phiên CLI chưa biết).
+   */
+  private planResume(req: ChatRequest): ResumePlan | null {
+    const messages = req.messages;
+    let idx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]!.role === "assistant") {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0 || idx === messages.length - 1) return null;
+    const last = messages[idx]!;
+    if (last.role !== "assistant" || last.toolCalls?.length !== 1) return null;
+    const callId = last.toolCalls[0]!.id;
+    const entry = this.resumeByCall.get(callId);
+    if (!entry) return null;
+    const model = req.model?.trim() || DEFAULT_CLAUDE_CODE_MODEL;
+    if (
+      Date.now() - entry.at > RESUME_TTL_MS ||
+      entry.model !== model ||
+      entry.prefixCount !== idx ||
+      entry.prefixHash !== hashMessages(messages.slice(0, idx))
+    ) {
+      this.resumeByCall.delete(callId);
+      return null;
+    }
+    return { sessionId: entry.sessionId, fromIndex: idx + 1, callId };
+  }
+
+  /** Ghi nhớ phiên CLI vừa sinh ra một tool call, để vòng sau nối tiếp. */
+  private rememberSession(req: ChatRequest, response: ChatResponse, result: ClaudeResult): void {
+    if (response.stopReason !== "tool_use" || response.toolCalls.length !== 1 || !result.session_id) return;
+    this.resumeByCall.set(response.toolCalls[0]!.id, {
+      sessionId: result.session_id,
+      model: req.model?.trim() || DEFAULT_CLAUDE_CODE_MODEL,
+      prefixCount: req.messages.length,
+      prefixHash: hashMessages(req.messages),
+      at: Date.now(),
+    });
+    // Map giữ thứ tự chèn → bỏ mục cũ nhất khi vượt trần.
+    while (this.resumeByCall.size > RESUME_MAX_ENTRIES) {
+      const oldest = this.resumeByCall.keys().next().value;
+      if (oldest === undefined) break;
+      this.resumeByCall.delete(oldest);
     }
   }
 
@@ -626,11 +760,20 @@ export function buildClaudeSystemPrompt(req: ChatRequest): string {
   return parts.join("\n");
 }
 
-/** Prompt -p: lịch sử hội thoại serialize (bridge stateless như antigravity). */
-export function buildClaudePrompt(req: ChatRequest): string {
-  const parts: string[] = ["[LỊCH SỬ HỘI THOẠI]"];
+/**
+ * Prompt -p: lịch sử hội thoại serialize (bridge stateless như antigravity).
+ * fromIndex > 0 = nối tiếp phiên CLI (`--resume`): phiên đã có các message
+ * trước đó nên chỉ serialize phần mới, không lặp lại tiêu đề lịch sử.
+ */
+export function buildClaudePrompt(req: ChatRequest, fromIndex = 0): string {
+  const parts: string[] = fromIndex > 0 ? [] : ["[LỊCH SỬ HỘI THOẠI]"];
   const callNames = new Map<string, string>();
-  for (const m of req.messages) {
+  for (const [i, m] of req.messages.entries()) {
+    if (i < fromIndex) {
+      // Vẫn cần tên tool của các lượt gọi trước để ghi nhãn tool_result.
+      if (m.role === "assistant") for (const tc of m.toolCalls ?? []) callNames.set(tc.id, tc.name);
+      continue;
+    }
     if (m.role === "user") {
       const imgNote = m.images?.length ? ` (kèm ${m.images.length} ảnh — bản bridge chưa xem được ảnh)` : "";
       parts.push(`<user>${imgNote}\n${m.content}\n</user>`);

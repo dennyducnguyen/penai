@@ -771,7 +771,8 @@ export const INDEX_HTML = `<!doctype html>
         '<label style="display:flex;align-items:center;gap:7px;margin-top:6px"><input id="dLibW" type="checkbox" style="flex:0"> Cho agent ghi vào Thư viện file của mình <span class="muted">— mặc định chỉ đọc · <a href="#/library?agent=' + esc(a.id) + '" id="dLibLink">mở thư viện của agent</a></span></label>' +
         '<div id="dBrWrap" hidden><label>Hồ sơ trình duyệt <span class="muted">— cookie đăng nhập sẵn cho tool browser (quản lý ở <a href="#/browser" id="dBrLink">Trình duyệt</a>)</span></label><select id="dBr" style="width:100%"><option value="">(trình duyệt trống — không đăng nhập sẵn)</option></select></div>' +
         '<label>System prompt</label><textarea id="dPrompt" rows="8" style="width:100%;font-size:.85rem"></textarea>' +
-        '<label>Fallback (JSON: [{"provider":"...","model":"..."}])</label><input id="dFb" style="width:100%">' +
+        '<label>Model dự phòng <span class="muted">— model chính lỗi, hết hạn mức hoặc quá tải thì thử lần lượt từ trên xuống</span></label>' +
+        '<div id="dFbList"></div><div><button class="ghost" id="dFbAdd" type="button">＋ Thêm model dự phòng</button></div>' +
         '<label>Tools (bỏ tick = tắt cho agent này)</label><div id="dTools" class="row" style="max-height:150px;overflow:auto"></div>' +
         '<label>Skills được cấp (grant riêng cho agent — skill phạm vi "granted" chỉ agent được cấp mới thấy)</label><div id="dSkills" style="max-height:170px;overflow:auto"></div>' +
         '<label>MCP servers được cấp (server phạm vi "granted" chỉ agent được cấp mới dùng tool)</label><div id="dMcp" style="max-height:170px;overflow:auto"></div>' +
@@ -794,7 +795,20 @@ export const INDEX_HTML = `<!doctype html>
         $("#dBrWrap", dlg).hidden = false; brLoaded = true;
       }).catch(function () {});
       $("#dPrompt", dlg).value = a.systemPrompt || "";
-      $("#dFb", dlg).value = JSON.stringify(a.providerFallback || []);
+      // Mỗi dòng dự phòng = chọn provider + model (như ô Model phía trên), ✕ để bỏ.
+      function addFallbackRow(init) {
+        var row = el("div", { "class": "row fbrow", style: "margin:4px 0" },
+          '<select class="fbP" style="flex:1"></select><select class="fbM" style="flex:2"></select>' +
+          '<input class="fbF" placeholder="hoặc gõ model id" style="flex:1">' +
+          '<button class="ghost fbX" type="button" title="Bỏ dòng này" style="flex:0">✕</button>');
+        $("#dFbList", dlg).appendChild(row);
+        wireModelPicker(row, ".fbP", ".fbM", ".fbF", init);
+        $(".fbX", row).onclick = function () { row.remove(); };
+      }
+      (Array.isArray(a.providerFallback) ? a.providerFallback : []).forEach(function (f) {
+        if (f && f.provider && f.model) addFallbackRow({ provider: f.provider, model: f.model });
+      });
+      $("#dFbAdd", dlg).onclick = function () { addFallbackRow(null); };
       var disabled = a.disabledTools || [];
       api("/v1/tools").then(function (j) {
         $("#dTools", dlg).innerHTML = j.tools.map(function (t) {
@@ -818,8 +832,13 @@ export const INDEX_HTML = `<!doctype html>
       });
       $("#dClose", dlg).onclick = function () { dlg.close(); dlg.remove(); };
       $("#dSave", dlg).onclick = function () {
-        var fb;
-        try { fb = JSON.parse($("#dFb", dlg).value || "[]"); } catch (e) { $("#dMsg", dlg).innerHTML = '<span class="err">Fallback JSON lỗi</span>'; return; }
+        var fb = [], fbMissing = false;
+        dlg.querySelectorAll(".fbrow").forEach(function (row) {
+          var fp = $(".fbP", row).value, fm = $(".fbF", row).value.trim() || $(".fbM", row).value;
+          if (!fp || !fm) { fbMissing = true; return; }
+          fb.push({ provider: fp, model: fm });
+        });
+        if (fbMissing) { $("#dMsg", dlg).innerHTML = '<span class="err">Model dự phòng: chọn đủ provider và model, hoặc bấm ✕ để bỏ dòng</span>'; return; }
         var disabledNow = [];
         dlg.querySelectorAll(".tk").forEach(function (cb) { if (!cb.checked) disabledNow.push(cb.value); });
         var model = $("#dModelFree", dlg).value.trim() || $("#dModel", dlg).value;

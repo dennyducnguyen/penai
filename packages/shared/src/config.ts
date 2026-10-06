@@ -93,7 +93,7 @@ export const ApiConfigSchema = z.object({
     .object({
       concurrency: z.record(z.string(), z.number().int().min(1)).default({
         codex: 4,
-        "claude-code": 1,
+        "claude-code": 2,
         antigravity: 1,
       }),
       /** Trần CHUNG cho mọi tiến trình CLI (claude-code + antigravity). */
