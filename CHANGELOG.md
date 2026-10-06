@@ -4,6 +4,18 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.8.0 — 2026-10-06
+
+Bản này dành cho ai dùng provider **Claude** (gói Pro/Max qua Claude Code CLI): chạy nhanh hơn, tốn hạn mức ít hơn, và không còn im lặng khi Claude bận hoặc hết hạn mức.
+
+- **Claude tốn hạn mức ít hơn nhiều ở việc nhiều bước** (báo cáo, tra cứu nhiều lần gọi công cụ). Trước đây mỗi bước agent gọi công cụ, PenAI gửi lại toàn bộ cuộc trò chuyện cho Claude như một yêu cầu mới, nên Claude phải đọc lại từ đầu và tính đủ tiền từng lần. Nay các bước sau **nối tiếp phiên của bước trước** và chỉ gửi phần mới. Đo thật với ngữ cảnh khoảng 31 nghìn token: bước sau đọc lại 30,8 nghìn token từ bộ nhớ đệm (tính bằng khoảng 1/10) và chỉ xử lý mới khoảng 500 token, thay vì xử lý mới cả 31 nghìn. Không phải cấu hình gì; lỗi ở phiên cũ thì tự quay về cách gọi cũ.
+- **Model dự phòng chạy đúng lúc cần nhất.** Trước đây khi Claude đang bận và yêu cầu phải chờ quá lâu, agent báo lỗi luôn dù đã khai model dự phòng; và khi đã chuyển sang model dự phòng thì lượt đó vẫn chiếm chỗ của Claude. Nay Claude bận quá hạn chờ, lỗi, hay hết hạn mức đều chuyển sang model dự phòng, và lượt chạy ở model dự phòng không còn chiếm chỗ của Claude.
+- **Chọn model dự phòng bằng danh sách**: Dashboard → Agents → Cấu hình → mục "Model dự phòng" → ＋ Thêm model dự phòng, chọn provider và model như ô Model chính (trước đây phải gõ JSON). Nên đặt ít nhất một model dự phòng khác provider, ví dụ agent chạy Claude thì dự phòng bằng ChatGPT (codex).
+- **Claude chạy 2 yêu cầu cùng lúc**: bản cài mới trên máy từ 4 GB RAM mặc định cho 2 tiến trình Claude song song. Bản đã cài giữ nguyên cấu hình cũ (1). Muốn nâng: `sudo penai cli-concurrency 2`, không cần khởi động lại. Xem số hiện tại và RAM trống: `sudo penai cli-concurrency`. Mỗi tiến trình Claude cần khoảng 220 MB RAM; lệnh sẽ cảnh báo nếu máy không đủ.
+- **Máy chủ có CPU kiểu cũ (không có AVX2)**: Claude Code từ sau bản 2.1.112 không chạy được trên các máy này (lỗi "Illegal instruction"), thường gặp ở VPS giá rẻ. Nay `sudo penai install-cli claude` tự nhận ra và cài bản 2.1.112 chạy được; `sudo penai doctor` kiểm tra Claude CLI có thực sự khởi động được không và báo rõ nguyên nhân. Muốn dùng bản Claude Code mới: nhờ nhà cung cấp VPS đổi kiểu CPU của máy ảo sang "host", rồi chạy lại `sudo penai install-cli claude`.
+
+Cập nhật: `sudo penai update` (không có migration, không phải làm gì thêm). Sau khi cập nhật nên vào Agents → Cấu hình để thêm model dự phòng cho các agent đang chạy Claude.
+
 ## 1.7.2 — 2026-10-01
 
 - Sửa lỗi **đăng nhập ChatGPT báo "Link callback thuộc phiên đăng nhập khác (state không khớp)"** khi nhiều người cùng bấm Providers → Đăng nhập (vd cả lớp dùng chung một tài khoản quản trị). Trước đây máy chủ chỉ giữ một phiên đăng nhập, người bấm sau làm hỏng phiên người trước. Nay giữ được nhiều phiên cùng lúc (tối đa 20, mỗi phiên 10 phút), mỗi người dán đúng link của mình là xong.

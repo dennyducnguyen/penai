@@ -204,6 +204,7 @@ Cách dùng: sudo penai [--instance <tên>] <lệnh> [tùy chọn]
   doctor                      Kiểm tra sức khỏe hệ thống
   reset-password <email>      Đặt lại mật khẩu đăng nhập Dashboard
   install-cli claude|agy|all  Cài/nâng cấp CLI cho provider Claude / Antigravity
+  cli-concurrency [số]        Xem/đổi số tiến trình Claude chạy cùng lúc (vd 2)
   install-browser [--force]   Cài/nâng cấp Chromium cho tool trình duyệt của agent
   auto-update on|off [--channel stable|main] [--every 5min]
   set-repo <url>              Đổi kho mã nguồn (vd bản fork của bạn)
@@ -400,6 +401,78 @@ cmd_reset_password() {
   (cd "$rel" && as_pg env PENAI_USER_PASSWORD="$pw" "$rel/node_modules/.bin/tsx" "$rel/packages/db/src/cli-password.ts" --email "$email")
 }
 
+# Claude Code từ sau bản 2.1.112 là file chạy biên dịch sẵn, cần CPU có tập lệnh
+# AVX2. Nhiều VPS giá rẻ ảo hóa CPU kiểu cũ (qemu64/kvm64) không có AVX2 → bản
+# mới chết ngay khi khởi động ("Illegal instruction"). Máy như vậy cài bản
+# 2.1.112 — bản cuối cùng chạy bằng Node.js — qua npm.
+CLAUDE_LEGACY_VERSION="2.1.112"
+CLAUDE_LEGACY_MARK="penai-claude-legacy"
+
+cpu_has_avx2() { [[ $(uname -m) != x86_64 ]] || grep -qw avx2 /proc/cpuinfo; }
+
+claude_cli_runs() { # CLI claude khởi động được dưới user dịch vụ (chạy từ /tmp như browser_launch_ok)
+  (cd /tmp && as_app timeout 30 "$DATA_HOME/.local/bin/claude" --version) >/dev/null 2>&1
+}
+
+install_claude_cli() {
+  local bin="$DATA_HOME/.local/bin/claude" legacy="$DATA_HOME/.local/share/claude-legacy" tmp
+  if cpu_has_avx2; then
+    # Máy từng cài bản 2.1.112 (file bọc), nay CPU đã có AVX2 → gỡ file bọc để nhận bản mới.
+    if [[ -f $bin && ! -L $bin ]] && grep -q "$CLAUDE_LEGACY_MARK" "$bin" 2>/dev/null; then rm -f "$bin"; fi
+    info "Cài Claude Code CLI (script chính thức claude.ai/install.sh) cho user $APP_USER"
+    if as_app bash -c 'curl -fsSL https://claude.ai/install.sh | bash' ; then ok "Claude Code CLI: $bin"
+    else warn "Cài Claude Code CLI thất bại — thử lại sau: sudo penai install-cli claude"; fi
+    return 0
+  fi
+  warn "CPU của máy chủ không có tập lệnh AVX2 — Claude Code bản mới không chạy được trên máy này (lỗi \"Illegal instruction\")."
+  info "Cài Claude Code $CLAUDE_LEGACY_VERSION (bản cuối chạy bằng Node.js) qua npm cho user $APP_USER"
+  install -d -m 0750 -o "$APP_USER" -g "$APP_USER" "$DATA_HOME/.local/share" "$legacy"
+  if ! (cd /tmp && as_app npm install --silent --no-audit --no-fund --prefix "$legacy" "@anthropic-ai/claude-code@$CLAUDE_LEGACY_VERSION"); then
+    warn "Cài Claude Code $CLAUDE_LEGACY_VERSION thất bại (mạng?) — thử lại sau: sudo penai install-cli claude"; return 0
+  fi
+  tmp="$(mktemp)"
+  printf '#!/bin/sh\n# %s — do lệnh penai install-cli tạo vì CPU không có AVX2. Đừng sửa tay.\nexec "%s/node" "%s/node_modules/@anthropic-ai/claude-code/cli.js" "$@"\n' \
+    "$CLAUDE_LEGACY_MARK" "$NODE_BIN" "$legacy" > "$tmp"
+  rm -f "$bin"   # có thể là liên kết tới bản mới không chạy được — xóa liên kết, không ghi đè qua nó
+  install -m 0750 -o "$APP_USER" -g "$APP_USER" "$tmp" "$bin"; rm -f "$tmp"
+  if claude_cli_runs; then ok "Claude Code CLI $CLAUDE_LEGACY_VERSION: $bin"
+  else warn "Đã cài Claude Code $CLAUDE_LEGACY_VERSION nhưng chưa chạy được — xem: sudo -u $APP_USER $bin --version"; fi
+  warn "Bản $CLAUDE_LEGACY_VERSION không tự nâng cấp và có thể không nhận tên model mới. Nếu Agents báo lỗi model, hãy gõ ID model đầy đủ thay cho tên tắt (sonnet/opus/haiku)."
+  warn "Muốn dùng bản mới: nhờ nhà cung cấp VPS đổi kiểu CPU của máy ảo sang \"host\" (host-passthrough), khởi động lại máy, rồi chạy lại: sudo penai install-cli claude"
+}
+
+# Số tiến trình Claude Code chạy cùng lúc — sửa hai số trong penai.config.json5
+# (ứng dụng tự nạp lại, không cần khởi động lại).
+cmd_cli_concurrency() {
+  load_conf
+  local cfg="$ETC_DIR/penai.config.json5" n="${1:-}" cur_c cur_t
+  cur_c="$(grep -oE '"claude-code"[[:space:]]*:[[:space:]]*[0-9]+' "$cfg" 2>/dev/null | grep -oE '[0-9]+$' | head -n1 || true)"
+  cur_t="$(grep -oE 'cliTotal[[:space:]]*:[[:space:]]*[0-9]+' "$cfg" 2>/dev/null | grep -oE '[0-9]+$' | head -n1 || true)"
+  if [[ -z $n ]]; then
+    echo "Claude chạy cùng lúc     : ${cur_c:-?} (khóa \"claude-code\" trong api.queue.concurrency)"
+    echo "Trần chung các CLI       : ${cur_t:-?} (khóa cliTotal — Claude + Antigravity cộng lại)"
+    echo "RAM trống                : $(free -m | awk '/^Mem:/{print $7}') MB (mỗi tiến trình Claude/Antigravity cần khoảng 220 MB)"
+    echo "Đổi: sudo penai cli-concurrency <số>   (vd 2)"
+    return 0
+  fi
+  need_root cli-concurrency
+  [[ $n =~ ^[1-8]$ ]] || die "Số tiến trình phải từ 1 tới 8"
+  [[ -n $cur_c && -n $cur_t ]] || die "Không tìm thấy khóa \"claude-code\" / cliTotal trong $cfg — sửa tay mục api.queue của file này"
+  local free_mb need_mb; free_mb="$(free -m | awk '/^Mem:/{print $7}')"; need_mb=$(( n * 220 + 150 ))
+  if (( free_mb < need_mb )); then
+    warn "RAM trống chỉ còn ${free_mb} MB, $n tiến trình Claude cần khoảng ${need_mb} MB — máy có thể treo hoặc dịch vụ bị tắt khi đủ $n tiến trình cùng chạy"
+    confirm "Vẫn đặt $n?" || die "Đã hủy"
+  fi
+  if [[ -n $MEMORY_MAX ]] && (( MEMORY_MAX < n * 220 + 400 )); then
+    warn "Dịch vụ đang bị giới hạn ${MEMORY_MAX} MB RAM (MEMORY_MAX trong $CONF_FILE) — thấp so với $n tiến trình Claude"
+  fi
+  local tmp; tmp="$(mktemp)"
+  sed -E -e "s/(\"claude-code\"[[:space:]]*:[[:space:]]*)[0-9]+/\\1$n/" -e "s/(cliTotal[[:space:]]*:[[:space:]]*)[0-9]+/\\1$n/" "$cfg" > "$tmp"
+  cat "$tmp" > "$cfg"; rm -f "$tmp"   # ghi tại chỗ: giữ quyền file và để ứng dụng thấy thay đổi
+  set_conf CLI_TOTAL "$n"
+  ok "Claude chạy cùng lúc: ${cur_c} → $n, trần chung các CLI: ${cur_t} → $n (ứng dụng tự nạp lại sau vài giây)"
+}
+
 cmd_install_cli() {
   need_root install-cli
   local which="${1:-all}" force=0
@@ -407,11 +480,7 @@ cmd_install_cli() {
   [[ ${2:-} == --force ]] && force=1
   load_conf
   install -d -m 0750 -o "$APP_USER" -g "$APP_USER" "$DATA_HOME/.local" "$DATA_HOME/.local/bin"
-  if [[ $which == claude || $which == all ]]; then
-    info "Cài Claude Code CLI (script chính thức claude.ai/install.sh) cho user $APP_USER"
-    if as_app bash -c 'curl -fsSL https://claude.ai/install.sh | bash' ; then ok "Claude Code CLI: $DATA_HOME/.local/bin/claude"
-    else warn "Cài Claude Code CLI thất bại — thử lại sau: sudo penai install-cli claude"; fi
-  fi
+  if [[ $which == claude || $which == all ]]; then install_claude_cli; fi
   if [[ $which == agy || $which == all ]]; then
     if [[ -x $DATA_HOME/.local/bin/agy && $force == 0 ]]; then
       ok "Antigravity CLI đã có ($DATA_HOME/.local/bin/agy) — nâng cấp: sudo penai install-cli agy --force"
@@ -530,14 +599,26 @@ cmd_set_repo() {
 
 cmd_doctor() {
   load_conf
-  local fail=0 b
+  local fail=0
   check() { if eval "$2" >/dev/null 2>&1; then ok "$1"; else warn "$1 — KHÔNG ĐẠT${3:+: $3}"; fail=1; fi; }
   check "Dịch vụ $SERVICE đang chạy" "systemctl is-active --quiet $SERVICE" "sudo penai logs"
   check "Ứng dụng trả lời /healthz" "curl -fsS --max-time 5 http://127.0.0.1:$PORT/healthz"
   check "PostgreSQL (cổng $DB_PORT) + database $DB_NAME" "sudo -u postgres psql -h /var/run/postgresql -p $DB_PORT -d $DB_NAME -tAc 'select 1'"
   check "Extension pgvector" "sudo -u postgres psql -h /var/run/postgresql -p $DB_PORT -d $DB_NAME -tAc \"select 1 from pg_extension where extname='vector'\" | grep -q 1"
   check "Sandbox bubblewrap cho lệnh exec của agent" "sudo -u $APP_USER bwrap --ro-bind / / --dev /dev --proc /proc true" "agent chạy lệnh không cách ly"
-  for b in claude agy; do check "CLI $b đã cài" "test -x $DATA_HOME/.local/bin/$b" "sudo penai install-cli $b"; done
+  if [[ ! -x $DATA_HOME/.local/bin/claude ]]; then
+    warn "CLI claude đã cài — KHÔNG ĐẠT: sudo penai install-cli claude"; fail=1
+  elif claude_cli_runs; then
+    ok "CLI claude chạy được ($(cd /tmp && as_app timeout 30 "$DATA_HOME/.local/bin/claude" --version 2>/dev/null | head -n1))"
+  elif ! cpu_has_avx2; then
+    warn "CLI claude KHÔNG chạy được: CPU máy chủ không có tập lệnh AVX2 mà bản đang cài cần — sửa: sudo penai install-cli claude (tự cài bản $CLAUDE_LEGACY_VERSION chạy được trên CPU này)"; fail=1
+  else
+    warn "CLI claude đã cài nhưng không chạy được — cài lại: sudo penai install-cli claude"; fail=1
+  fi
+  if ! cpu_has_avx2; then
+    warn "CPU không có AVX2 (kiểu CPU ảo hóa cũ): Claude Code bị giữ ở bản $CLAUDE_LEGACY_VERSION. Muốn bản mới: nhờ nhà cung cấp VPS đổi kiểu CPU sang \"host\" rồi chạy sudo penai install-cli claude"
+  fi
+  check "CLI agy đã cài" "test -x $DATA_HOME/.local/bin/agy" "sudo penai install-cli agy"
   local pwdir; pwdir="$(current_release)/packages/tools/node_modules/playwright-core"
   if [[ -d $pwdir ]]; then
     check "Trình duyệt Chromium cho agent" "browser_launch_ok $pwdir" "sudo penai install-browser"
@@ -568,6 +649,7 @@ case "$cmd" in
   doctor) cmd_doctor ;;
   reset-password) cmd_reset_password "$@" ;;
   install-cli) cmd_install_cli "$@" ;;
+  cli-concurrency) cmd_cli_concurrency "$@" ;;
   install-browser) cmd_install_browser "$@" ;;
   auto-update) cmd_auto_update "$@" ;;
   set-repo) cmd_set_repo "$@" ;;

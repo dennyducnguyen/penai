@@ -74,6 +74,7 @@ import {
   antigravityImageBackend,
   codexImageBackend,
   type ImageBackend,
+  type Provider,
   type ProviderRegistry,
 } from "@penai/providers";
 import {
@@ -430,29 +431,34 @@ export async function buildLoopDeps(
   } = {},
 ): Promise<AgentLoopDeps> {
   const { db } = rt.db;
-  let provider = rt.providers.get(providerName, ctx.workspaceId);
+  // Tran dong thoi: boc o TANG PROVIDER nen moi loi vao cung dem chung mot
+  // tran. Do tren VPS: moi tien trinh claude/agy ~220 MB tren ~1,1 GB trong,
+  // khong chan thi mot vong lap loi phia app du lam OOM ca may.
+  // Bọc TỪNG chặng (chính + từng chặng dự phòng) theo đúng tên provider của nó,
+  // rồi mới ghép chuỗi dự phòng: chặng chính đầy chỗ/chờ quá hạn → chuyển chặng
+  // sau, và lượt chạy ở chặng dự phòng không chiếm chỗ của chặng chính.
+  const gate = rt.gate;
+  const gated = (p: Provider, key: string): Provider =>
+    gate
+      ? gatedProvider(gate, p, {
+          providerKey: key,
+          ...(opts.gateBucket ? { bucket: opts.gateBucket } : {}),
+          priority: opts.gatePriority ?? (opts.sourceKind === "api" ? 1 : 0),
+        })
+      : p;
+  let provider: Provider = gated(rt.providers.get(providerName, ctx.workspaceId), providerName);
   // Model fallback: bọc provider chính + danh sách fallback
   if (opts.providerFallback && opts.providerFallback.length) {
     const steps = opts.providerFallback
       .map((f) => {
         try {
-          return { provider: rt.providers.get(f.provider, ctx.workspaceId), model: f.model };
+          return { provider: gated(rt.providers.get(f.provider, ctx.workspaceId), f.provider), model: f.model };
         } catch {
           return null;
         }
       })
-      .filter((s): s is { provider: ReturnType<ProviderRegistry["get"]>; model: string } => s !== null);
+      .filter((s): s is { provider: Provider; model: string } => s !== null);
     if (steps.length) provider = new FallbackProvider(provider, steps);
-  }
-  // Tran dong thoi: boc o TANG PROVIDER nen moi loi vao cung dem chung mot
-  // tran. Do tren VPS: moi tien trinh claude/agy ~220 MB tren ~1,1 GB trong,
-  // khong chan thi mot vong lap loi phia app du lam OOM ca may.
-  if (rt.gate) {
-    provider = gatedProvider(rt.gate, provider, {
-      providerKey: providerName,
-      ...(opts.gateBucket ? { bucket: opts.gateBucket } : {}),
-      priority: opts.gatePriority ?? (opts.sourceKind === "api" ? 1 : 0),
-    });
   }
   const workspaceDataDir = resolve(join(rt.config.dataDir, ctx.workspaceId));
   // Mỗi người dùng kênh có thư mục làm việc riêng; agent có thư mục dùng chung.
