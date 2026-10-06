@@ -468,9 +468,21 @@ cmd_cli_concurrency() {
   fi
   local tmp; tmp="$(mktemp)"
   sed -E -e "s/(\"claude-code\"[[:space:]]*:[[:space:]]*)[0-9]+/\\1$n/" -e "s/(cliTotal[[:space:]]*:[[:space:]]*)[0-9]+/\\1$n/" "$cfg" > "$tmp"
-  cat "$tmp" > "$cfg"; rm -f "$tmp"   # ghi tại chỗ: giữ quyền file và để ứng dụng thấy thay đổi
+  cat "$tmp" > "$cfg"; rm -f "$tmp"   # ghi tại chỗ: giữ nguyên quyền của file
   set_conf CLI_TOTAL "$n"
-  ok "Claude chạy cùng lúc: ${cur_c} → $n, trần chung các CLI: ${cur_t} → $n (ứng dụng tự nạp lại sau vài giây)"
+  # Ứng dụng có thể đọc đúng lúc file đang ghi dở và bỏ qua lần đó → chờ ghi xong
+  # rồi "chạm" file để nó nạp lại bản đầy đủ, sau đó kiểm tra nhật ký.
+  local since reloaded=0
+  since="$(date '+%Y-%m-%d %H:%M:%S')"
+  sleep 1; touch "$cfg"
+  for _ in 1 2 3 4 5 6 7 8; do
+    sleep 1
+    if journalctl -u "$SERVICE" --since "$since" --no-pager -o cat 2>/dev/null | grep -q "nạp lại config"; then reloaded=1; break; fi
+  done
+  ok "Claude chạy cùng lúc: ${cur_c} → $n, trần chung các CLI: ${cur_t} → $n"
+  if [[ $reloaded == 1 ]]; then ok "Ứng dụng đã nạp cấu hình mới (không cần khởi động lại)"
+  elif systemctl is-active --quiet "$SERVICE"; then warn "Chưa thấy ứng dụng nạp cấu hình mới — áp dụng bằng: sudo penai restart"
+  fi
 }
 
 cmd_install_cli() {
