@@ -599,7 +599,7 @@ cmd_set_repo() {
 
 cmd_doctor() {
   load_conf
-  local fail=0 b
+  local fail=0
   check() { if eval "$2" >/dev/null 2>&1; then ok "$1"; else warn "$1 — KHÔNG ĐẠT${3:+: $3}"; fail=1; fi; }
   check "Dịch vụ $SERVICE đang chạy" "systemctl is-active --quiet $SERVICE" "sudo penai logs"
   check "Ứng dụng trả lời /healthz" "curl -fsS --max-time 5 http://127.0.0.1:$PORT/healthz"
