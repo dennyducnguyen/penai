@@ -110,6 +110,25 @@ interface ILogger {
   error(obj: unknown, msg?: string): void;
 }
 
+/**
+ * Thư viện mã hóa của WhatsApp (libsignal) in thẳng ra console cả đối tượng phiên — kèm KHÓA BÍ MẬT —
+ * mỗi lần mở/đóng phiên với một người ("Closing session: SessionEntry {…}"). Chặn đúng các dòng đó
+ * để khóa không lọt vào nhật ký hệ thống.
+ */
+const SIGNAL_SESSION_DUMP = /^(Closing session:|Opening session:|Removing old closed session:|Session already closed|Session already open)/;
+let signalConsoleMuted = false;
+function muteSignalSessionDumps(): void {
+  if (signalConsoleMuted) return;
+  signalConsoleMuted = true;
+  for (const level of ["info", "warn", "log"] as const) {
+    const original = console[level].bind(console);
+    console[level] = (...args: unknown[]) => {
+      if (typeof args[0] === "string" && SIGNAL_SESSION_DUMP.test(args[0])) return;
+      original(...args);
+    };
+  }
+}
+
 const silentLogger: ILogger = {
   level: "silent",
   child: () => silentLogger,
@@ -178,6 +197,21 @@ export function describeWhatsappContent(message: proto.IMessage | null | undefin
       const lat = l?.degreesLatitude, lng = l?.degreesLongitude;
       return { contentType: "link", text: lat != null && lng != null ? `Vị trí: https://maps.google.com/?q=${lat},${lng}` : "Vị trí" };
     }
+    case "templateMessage": {
+      // Tin mẫu của tài khoản doanh nghiệp (mã xác thực, thông báo đơn hàng…)
+      const t = content.templateMessage;
+      const h = t?.hydratedTemplate ?? t?.hydratedFourRowTemplate;
+      const text = [h?.hydratedTitleText, h?.hydratedContentText, h?.hydratedFooterText].filter((x) => x && x.trim()).join("\n");
+      return { contentType: text ? "text" : "other", text };
+    }
+    case "buttonsMessage":
+      return { contentType: "text", text: content.buttonsMessage?.contentText ?? "" };
+    case "listMessage":
+      return { contentType: "text", text: [content.listMessage?.title, content.listMessage?.description].filter(Boolean).join("\n") };
+    case "interactiveMessage":
+      return { contentType: "text", text: content.interactiveMessage?.body?.text ?? "" };
+    case "groupInviteMessage":
+      return { contentType: "other", text: `Lời mời vào nhóm: ${content.groupInviteMessage?.groupName ?? ""}`.trim() };
     case "contactMessage":
       return { contentType: "other", text: `Danh thiếp: ${content.contactMessage?.displayName ?? ""}`.trim() };
     case "contactsArrayMessage":
@@ -189,6 +223,7 @@ export function describeWhatsappContent(message: proto.IMessage | null | undefin
       return { contentType: "other", text: `Bình chọn: ${p?.name ?? ""}`.trim() };
     }
     // Không phải nội dung trò chuyện: cảm xúc (đi đường riêng), thu hồi/sửa tin, khóa, cuộc gọi…
+    case "placeholderMessage":
     case "reactionMessage":
     case "protocolMessage":
     case "senderKeyDistributionMessage":
@@ -241,6 +276,7 @@ export class WhatsappPersonalChannel implements Channel {
   private contactSync: Promise<{ friends: number; groups: number }> | null = null;
   private pendingThreadName = "";
   private historyCount = 0;
+  private historySyncTimer: ReturnType<typeof setTimeout> | null = null;
   private version: [number, number, number] | undefined;
 
   constructor(private deps: ChannelDeps) {
@@ -250,6 +286,7 @@ export class WhatsappPersonalChannel implements Channel {
     this.openDirect = deps.requirePairing === false;
     this.autoReaction = parseAutoReaction(deps.config);
     this.runner = new BoundedRunner(20, (error) => deps.onError?.(error));
+    muteSignalSessionDumps();
   }
 
   private get authDir(): string {
@@ -282,6 +319,8 @@ export class WhatsappPersonalChannel implements Channel {
     this.generation++;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    if (this.historySyncTimer) clearTimeout(this.historySyncTimer);
+    this.historySyncTimer = null;
     for (const t of this.autoReactTimers.values()) clearTimeout(t);
     this.autoReactTimers.clear();
     this.currentQrId = null;
@@ -556,8 +595,8 @@ export class WhatsappPersonalChannel implements Channel {
     if (!sock || !this.connected) throw new WhatsappNotConnectedError();
     const targets: ZaloPersonalTarget[] = [];
     for (const [id, name] of this.names) {
-      if (id.includes("@")) continue;
-      targets.push({ id, type: "direct", name, phone: `+${id}` });
+      if (id.endsWith("@lid")) targets.push({ id, type: "direct", name });
+      else if (!id.includes("@")) targets.push({ id, type: "direct", name, phone: `+${id}` });
     }
     const groups = await sock.groupFetchAllParticipating();
     for (const g of Object.values(groups)) {
@@ -992,6 +1031,15 @@ export class WhatsappPersonalChannel implements Channel {
   /** Tin cũ WhatsApp gửi về ngay sau khi liên kết thiết bị → lưu Inbox (không tải file, không chạy agent). */
   private async importHistory(contacts: Contact[], messages: WAMessage[]): Promise<void> {
     this.rememberContacts(contacts);
+    // WhatsApp gửi danh bạ SAU tin nhắn → đồng bộ lại tên sau khi các gói về hết (gộp nhiều gói thành 1 lần)
+    if (contacts.length) {
+      if (this.historySyncTimer) clearTimeout(this.historySyncTimer);
+      this.historySyncTimer = setTimeout(() => {
+        this.historySyncTimer = null;
+        if (this.isConnected()) void this.syncContacts().catch(() => {});
+      }, 8_000);
+      this.historySyncTimer.unref?.();
+    }
     if (!this.deps.onHistory || !messages.length || this.historyCount >= HISTORY_MAX_MESSAGES) return;
     const entries: ChannelMessageLog[] = [];
     for (const m of messages) {

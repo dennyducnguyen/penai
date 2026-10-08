@@ -51,6 +51,15 @@ describe("WhatsApp cá nhân — tiện ích", () => {
       contentType: "text",
       text: "Tin tự hủy",
     });
+    // Tin mẫu của tài khoản doanh nghiệp, lời mời vào nhóm
+    expect(
+      describeWhatsappContent({ templateMessage: { hydratedTemplate: { hydratedContentText: "Mã xác thực của bạn là 123456" } } }),
+    ).toEqual({ contentType: "text", text: "Mã xác thực của bạn là 123456" });
+    expect(describeWhatsappContent({ groupInviteMessage: { groupName: "Nhóm bán hàng" } })).toEqual({
+      contentType: "other",
+      text: "Lời mời vào nhóm: Nhóm bán hàng",
+    });
+    expect(describeWhatsappContent({ placeholderMessage: {} })).toBeNull();
     // Không phải nội dung trò chuyện
     expect(describeWhatsappContent({ reactionMessage: { text: "❤️" } })).toBeNull();
     expect(describeWhatsappContent({ protocolMessage: {} })).toBeNull();

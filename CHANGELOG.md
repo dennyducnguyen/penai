@@ -4,6 +4,16 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.9.1 — 2026-10-08
+
+Sửa lỗi của kênh WhatsApp cá nhân vừa ra ở 1.9.0. Ai đã tạo kênh WhatsApp nên cập nhật ngay.
+
+- **Bảo mật — khóa mã hóa của WhatsApp không còn bị ghi vào nhật ký máy chủ.** Ở 1.9.0, mỗi lần mở hoặc đóng phiên mã hóa với một người, thư viện WhatsApp in cả khóa của phiên đó vào nhật ký dịch vụ (`journalctl`, chỉ tài khoản root trên máy chủ đọc được). Bản này chặn hẳn các dòng đó. Nếu máy chủ có người khác vào được bằng quyền root hoặc bạn từng gửi nhật ký cho ai, hãy ngắt kết nối WhatsApp (Channels → Kết nối QR → Ngắt kết nối) rồi quét lại để tạo phiên mới.
+- **Đặt "số phút AI tạm im" về 0 có hiệu lực ngay.** Trước đây hội thoại vừa có người trả lời tay vẫn im tới hết giờ tạm dừng cũ dù đã đặt về 0 (áp dụng cho cả Zalo cá nhân).
+- **Tin cũ của WhatsApp hiện đủ hơn**: tin mẫu của tài khoản doanh nghiệp (mã xác thực, thông báo đơn hàng) và lời mời vào nhóm hiện đúng nội dung thay vì "[Nội dung chưa hỗ trợ hiển thị]"; hội thoại nhập từ tin cũ được điền tên người sau khi WhatsApp gửi danh bạ về.
+
+Cập nhật: `sudo penai update` (không có migration, không phải làm gì thêm).
+
 ## 1.9.0 — 2026-10-08
 
 Bản này thêm kênh **WhatsApp cá nhân** và gộp Inbox thành một nơi dùng chung cho Zalo cá nhân và WhatsApp cá nhân.

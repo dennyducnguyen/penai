@@ -20,6 +20,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { hasRole, logger, type WorkspaceContext } from "@penai/shared";
 import {
+  clearInboxPauses,
   getChannelById,
   getInboxThread,
   listChannels,
@@ -825,6 +826,12 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     if (parsed.data.autoReaction !== undefined) config["auto_reaction"] = parsed.data.autoReaction;
     await updateChannel(db, req.authCtx, channelId, { config });
     const cfg = readInboxConfig(config);
+    // Đặt "số phút AI tạm im" về 0 = không tạm dừng nữa → gỡ luôn các lượt tạm dừng đang treo,
+    // nếu không hội thoại vừa có người trả lời vẫn im tới hết giờ cũ.
+    if (parsed.data.pauseMinutes === 0) {
+      const cleared = await clearInboxPauses(db, req.authCtx, channelId);
+      if (cleared) broadcast(req.authCtx.workspaceId, channelId, "contacts", { channelId, count: cleared });
+    }
     const st = inboxState.get(channelId);
     if (st) Object.assign(st, { enabled: cfg.enabled, pauseMinutes: cfg.pauseMinutes });
     inboxRuntime(channelId)?.setAutoReaction(cfg.autoReaction);

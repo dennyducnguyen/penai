@@ -535,6 +535,15 @@ export async function setInboxThreadAi(
 }
 
 /** AI có được trả lời trong hội thoại này lúc này không (tắt tay / đang tạm dừng). */
+/** Bỏ mọi lượt "AI tạm dừng" đang treo của một kênh (khi quản trị đặt số phút tạm dừng về 0). */
+export async function clearInboxPauses(db: Db, ctx: WorkspaceContext, channelId: string): Promise<number> {
+  const res = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`UPDATE inbox_threads SET paused_until = NULL, updated_at = now()
+      WHERE channel_id = ${channelId} AND paused_until IS NOT NULL`),
+  );
+  return res.rowCount ?? 0;
+}
+
 export async function getInboxThreadAgentBlock(
   db: Db,
   ctx: WorkspaceContext,

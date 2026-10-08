@@ -5,6 +5,7 @@ import {
   createChannel,
   createDb,
   getInboxThread,
+  clearInboxPauses,
   getInboxThreadAgentBlock,
   listInboxMessages,
   listUserInboxChannelIds,
@@ -91,6 +92,20 @@ describe("Inbox dùng chung (0034)", () => {
     );
     expect(fresh?.thread).toMatchObject({ lastMessage: "Chỉ có tin cũ", unreadCount: 0 });
     expect((await listInboxMessages(dbh.db, ctxA(), wa, "84938583264", { limit: 50 })).length).toBe(3);
+  });
+
+  it("đặt số phút tạm dừng về 0 → gỡ các lượt AI tạm dừng đang treo của kênh", async () => {
+    await recordInboxMessage(
+      dbh.db,
+      ctxA(),
+      wa,
+      msg({ msgId: "wa-app-1", direction: "out", source: "app", text: "Chủ tài khoản trả lời từ điện thoại" }),
+      { pauseMinutes: 30 },
+    );
+    expect(await getInboxThreadAgentBlock(dbh.db, ctxA(), wa, "84938583264")).toBe("paused");
+    expect(await clearInboxPauses(dbh.db, ctxA(), wa)).toBe(1);
+    expect(await getInboxThreadAgentBlock(dbh.db, ctxA(), wa, "84938583264")).toBeNull();
+    expect(await clearInboxPauses(dbh.db, ctxA(), wa)).toBe(0);
   });
 
   it("thành viên được gán trực kênh WhatsApp như kênh Zalo", async () => {
