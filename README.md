@@ -16,7 +16,7 @@ PenAI là hệ thống "trợ lý AI của công ty": bạn tạo các **agent**
 - **Nhà cung cấp AI (provider)**:
   - Gói thuê bao: **ChatGPT** (Plus/Pro/Team), **Claude** (Pro/Max qua Claude Code), **Google Antigravity** — đăng nhập ngay trong Dashboard.
   - API key: **OpenAI**, **Gemini**, **Qwen**, **Anthropic**, hoặc bất kỳ dịch vụ tương thích OpenAI (OpenRouter, DeepSeek...).
-- **Kênh chat**: Telegram, Zalo OA, Zalo cá nhân, Microsoft Teams, Discord, Slack, WhatsApp, Feishu — cùng trang Chat ngay trong Dashboard.
+- **Kênh chat**: Telegram, Zalo cá nhân, WhatsApp cá nhân, Zalo OA, Microsoft Teams, Discord, Slack, Feishu — cùng trang Chat ngay trong Dashboard.
 - **Hồ sơ contact**: mỗi người nhắn tới bot có hồ sơ riêng (tên, cách xưng hô, vai trò, nhãn VIP/Đại lý…) và chỉ dẫn riêng cho AI — AI biết đang nói chuyện với ai và trả lời đúng từng người.
 - **Kho tri thức (Vault)**: tải lên PDF/Word/Excel/TXT, tìm kiếm ngữ nghĩa, phân quyền theo bộ sưu tập, agent đọc toàn văn khi tìm trúng tài liệu.
 - **Skill & MCP**: nạp skill (thư mục `SKILL.md` + script), kết nối MCP server (Canva, Google, công cụ nội bộ...), phân quyền theo agent và theo người dùng.

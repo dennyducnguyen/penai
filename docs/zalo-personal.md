@@ -184,6 +184,7 @@ Gọi bằng khóa `psk_…` (Dashboard → Khóa API) hoặc phiên Dashboard.
 
 **Inbox** (người trực kênh):
 
+- Từ 1.9.0 địa chỉ chung là `/v1/inbox/…` (dùng cho cả WhatsApp cá nhân); `/v1/zalo-inbox/…` dưới đây vẫn chạy y như cũ.
 - `GET /v1/zalo-inbox/channels` · `GET /v1/zalo-inbox/events` (SSE realtime)
 - `GET /v1/zalo-inbox/:channelId/threads?q=&kind=&unread=1` · `GET …/threads/:threadId/messages?before=&limit=`
 - `POST …/threads/:threadId/send` `{ text?, image? }` · `POST …/new` `{ to? | phone?, peerKind?, text?, image? }`
@@ -202,18 +203,18 @@ QR và thông tin đăng nhập Zalo không bao giờ được ghi log hay trả
 | Thành phần | File |
 |---|---|
 | Adapter Zalo (QR, listener, gửi, danh bạ, cảm xúc, ghi Inbox) | `packages/channels/src/zalo-personal.ts` |
-| Inbox: lưu tin, SSE, gửi, ảnh, Contacts, cảm xúc, route | `apps/server/src/zalo-inbox.ts` |
+| Inbox: lưu tin, SSE, gửi, ảnh, Contacts, cảm xúc, route | `apps/server/src/inbox.ts` |
 | MCP server + OAuth | `apps/server/src/mcp-server.ts` |
 | Chặn agent (demo thread, AI tắt/tạm dừng, `agent_reply`) | `apps/server/src/channels-runtime.ts` (`makeInboundHandler`) |
 | Xuất Excel | `apps/server/src/xlsx.ts` (tạo .xlsx bằng adm-zip) + route trong `app.ts` |
-| DB | `packages/db/src/zalo-inbox-repo.ts`, `mcp-oauth-repo.ts`; migration `0017` (quan sát), `0031` (Inbox, MCP OAuth), `0032` (cảm xúc) |
+| DB | `packages/db/src/inbox-repo.ts`, `mcp-oauth-repo.ts`; migration `0017` (quan sát), `0031` (Inbox, MCP OAuth), `0032` (cảm xúc), `0034` (đổi tên bảng `zalo_*` → `inbox_*`, dùng chung với WhatsApp) |
 
 Cấu hình kênh (`channels.config`): `demo_threads`, `require_mention`, `agent_reply`, `inbox`, `inbox_pause_minutes`, `mcp_read_messages`, `auto_reaction`. Biến môi trường: `PENAI_PUBLIC_URL` (bắt buộc cho MCP — bản cài có sẵn), `PENAI_MCP_ALLOWED_ORIGINS` (thêm Origin được gọi `/mcp`).
 
 Những điểm dễ làm hỏng:
 
 - **Tin dội lại.** Tin do PenAI gửi (agent/web/MCP) quay lại qua listener với `isSelf`. Adapter nhớ `msgId` lúc gửi để bỏ qua bản dội lại; bản dội lại có thể tới **trước** khi lệnh gửi trả kết quả nên listener chờ 1,5 giây rồi kiểm tra lại. Bỏ bước chờ → tin bị lưu trùng thành "gửi từ điện thoại" và AI tự tạm dừng sau chính câu trả lời của mình.
-- **Thả cảm xúc cần `msgId` + `cliMsgId`.** `cliMsgId` lưu trong `zalo_messages.meta`; tin PenAI gửi lấy `cliMsgId` từ bản dội lại (kết quả gửi của zca-js không có).
+- **Thả cảm xúc cần `msgId` + `cliMsgId`.** `cliMsgId` lưu trong `inbox_messages.meta`; tin PenAI gửi lấy `cliMsgId` từ bản dội lại (kết quả gửi của zca-js không có).
 - **zca-js**: `imageMetadataGetter` bắt buộc (trả `{ width, height, size }`); đường dẫn file phải dùng `/`; nhóm tra tên theo lô 10 ID; listener phải bắt sự kiện `error`/`closed` để không làm sập tiến trình.
 - **Media đến** chỉ tải từ CDN Zalo tin cậy (`*.zalo.me`, `*.zaloapp.com`, `*.zadn.vn`, `*.zdn.vn`, qua https). Log chẩn đoán: `zalo.media:` / `zalo.media_skip:` / `zalo.media_fail:`.
 - **OAuth MCP**: issuer = origin của `PENAI_PUBLIC_URL` (không có `/` cuối); PKCE S256 bắt buộc; access token 1 giờ, refresh 30 ngày xoay vòng (dùng lại refresh cũ sau 60 giây → thu hồi kết nối); token/code/secret chỉ lưu sha256.

@@ -17,7 +17,7 @@ Monorepo pnpm, TypeScript chạy trực tiếp bằng `tsx` (không có bước 
 | `packages/providers` | Kết nối LLM: OpenAI/Gemini/Qwen/Anthropic bằng API key; ChatGPT (codex), Claude Code, Antigravity qua gói thuê bao |
 | `packages/core` | Vòng lặp agent (nghĩ → gọi tool → quan sát), hàng đợi, trần đồng thời theo provider |
 | `packages/tools` | Tool có sẵn của agent (file, exec trong sandbox bubblewrap, tạo ảnh, vault, skill…) |
-| `packages/channels` | Kênh chat: Telegram, Zalo OA, Zalo cá nhân, Microsoft Teams, Discord, Slack, WhatsApp, Feishu |
+| `packages/channels` | Kênh chat: Telegram, Zalo OA, Zalo cá nhân, WhatsApp cá nhân, Microsoft Teams, Discord, Slack, WhatsApp, Feishu |
 | `packages/mcp` | Kết nối MCP server (stdio/SSE/HTTP, OAuth) |
 | `deploy/` | Script cài/cập nhật trên VPS, mẫu cấu hình, systemd, nginx |
 
