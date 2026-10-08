@@ -423,7 +423,7 @@ function buildMcpServer(
           ? { group_id: t.threadId, name: t.name, member_count: t.memberCount, in_group: t.isContact }
           : { uid: t.threadId, name: t.name, phone: t.phone || null, is_friend: t.isContact, last_chat_at: t.lastMessageAt },
       ),
-      note: "Dữ liệu đã lưu trong PenAI (bạn bè, nhóm đang tham gia, người đã nhắn). Thiếu → nhờ quản trị bấm Đồng bộ danh bạ trong Inbox Zalo.",
+      note: "Dữ liệu đã lưu trong PenAI (bạn bè, nhóm đang tham gia, người đã nhắn). Thiếu → nhờ quản trị bấm Đồng bộ danh bạ trong Inbox.",
     });
   };
 
