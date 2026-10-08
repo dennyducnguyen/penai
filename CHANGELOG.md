@@ -4,6 +4,19 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.9.0 — 2026-10-08
+
+Bản này thêm kênh **WhatsApp cá nhân** và gộp Inbox thành một nơi dùng chung cho Zalo cá nhân và WhatsApp cá nhân.
+
+- **Kênh WhatsApp cá nhân** (`whatsapp_personal`): nối tài khoản WhatsApp đang dùng trên điện thoại vào PenAI bằng cách quét mã QR (hoặc nhập mã 8 ký tự nếu không quét được) — giống WhatsApp Web, điện thoại vẫn dùng bình thường. Có tin riêng và nhóm, gửi/nhận chữ, ảnh, file, thả cảm xúc. Chế độ an toàn như Zalo cá nhân: mặc định chỉ lưu tin, agent chỉ tự trả lời ở hội thoại bạn chỉ định. Tạo ở Channels → ＋ Thêm kênh → `whatsapp_personal` → Kết nối QR. Đây là kết nối không chính thức: nên dùng số dành riêng và đừng gửi hàng loạt, WhatsApp có thể khóa số. Hướng dẫn: [docs/whatsapp-personal.md](docs/whatsapp-personal.md).
+- **Inbox dùng chung**: menu "Inbox Zalo" đổi thành **Inbox**, chọn kênh (Zalo hoặc WhatsApp) ở ô đầu trang. Mọi thứ của Inbox Zalo giữ nguyên. Với WhatsApp, ngay sau khi liên kết PenAI nhập luôn phần tin cũ mà WhatsApp gửi về.
+- **MCP cho WhatsApp**: Claude, ChatGPT… hoặc agent của PenAI gửi tin WhatsApp bằng bộ công cụ `whatsapp_…` (cùng cách dùng với `zalo_…`). Kết nối MCP đã tạo từ trước cần **kết nối lại** để được cấp quyền WhatsApp; phần Zalo không bị ảnh hưởng.
+- **Phân quyền theo kênh** cho thành viên (Người dùng → Sửa → "Kênh được trực") áp dụng cho cả kênh WhatsApp, cả trong Inbox lẫn qua MCP.
+- Loại kênh `zalo` hiển thị là **Zalo OA** cho khỏi nhầm với Zalo cá nhân. Loại `whatsapp` (WhatsApp Cloud API) tạm ẩn khỏi ô Thêm kênh vì chưa hoàn thiện; kênh đã tạo vẫn chạy.
+- Địa chỉ API mới `/v1/inbox/…` dùng cho cả hai nền tảng. Địa chỉ `/v1/zalo-inbox/…` và các công cụ MCP `zalo_…` **giữ nguyên**, tích hợp đang chạy không phải sửa gì.
+
+Cập nhật: `sudo penai update`. Có một bước nâng cấp database tự chạy: các bảng Inbox đổi tên từ `zalo_…` sang `inbox_…` (không sao chép, không xóa dữ liệu). Tên cũ vẫn dùng được nên `sudo penai rollback` về bản trước vẫn chạy bình thường. Không phải làm gì thêm; kênh Zalo đang kết nối không cần quét lại.
+
 ## 1.8.0 — 2026-10-06
 
 Bản này dành cho ai dùng provider **Claude** (gói Pro/Max qua Claude Code CLI): chạy nhanh hơn, tốn hạn mức ít hơn, và không còn im lặng khi Claude bận hoặc hết hạn mức.

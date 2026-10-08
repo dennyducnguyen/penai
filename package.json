@@ -1,6 +1,6 @@
 {
   "name": "penai",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "PenAI — nền tảng AI Agent cho doanh nghiệp (chat đa kênh, kho tri thức, skill, MCP) chạy trên VPS riêng",
   "license": "SEE LICENSE IN LICENSE",
   "private": true,
