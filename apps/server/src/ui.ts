@@ -1350,6 +1350,8 @@ export const INDEX_HTML = `<!doctype html>
 
   // Tên hiển thị của loại kênh: mã "zalo" là Zalo Official Account — ghi rõ để khỏi nhầm với zalo_personal
   function channelKindLabel(k) { return k === "zalo" ? "Zalo OA" : k; }
+  // Loại kênh chưa hoàn thiện: không cho tạo mới từ Dashboard (kênh đã tạo vẫn chạy và sửa được)
+  var HIDDEN_CHANNEL_KINDS = { whatsapp: true };
 
   function agentSelectHtml(id) {
     return '<select id="' + id + '" style="flex:1"></select>';
@@ -1370,7 +1372,7 @@ export const INDEX_HTML = `<!doctype html>
       '<h3 style="margin:0 0 4px">' + (isEdit ? "Sửa channel: " + esc(existing.name) : "Thêm kênh chat") + "</h3>" +
       '<div class="muted" style="margin-bottom:12px">' + (isEdit ? "Đổi agent/token/pairing sẽ áp dụng NGAY sau khi lưu (channel tự khởi động lại)." : "Kênh nhắn tin (Telegram, Discord...) nối người dùng với một agent. Mỗi kênh gắn đúng 1 agent.") + "</div>" +
       '<div class="row"><div style="flex:1"><label>Loại kênh</label><select id="cKind" style="width:100%"' + (isEdit ? " disabled" : "") + ">" +
-      kinds.map(function (k) { return '<option value="' + esc(k) + '"' + (isEdit && existing.kind === k ? " selected" : "") + ">" + esc(channelKindLabel(k)) + "</option>"; }).join("") +
+      kinds.filter(function (k) { return !HIDDEN_CHANNEL_KINDS[k] || (isEdit && existing.kind === k); }).map(function (k) { return '<option value="' + esc(k) + '"' + (isEdit && existing.kind === k ? " selected" : "") + ">" + esc(channelKindLabel(k)) + "</option>"; }).join("") +
       '</select></div><div style="flex:1"><label>Tên kênh</label><input id="cName" placeholder="vd: Bot CSKH" style="width:100%" value="' + (isEdit ? esc(existing.name) : "") + '"></div></div>' +
       '<label style="margin-top:10px">Agent trả lời trên kênh này *</label><div class="row">' + agentSelectHtml("cAgent") + "</div>" +
       '<div id="cTokenWrap"><label style="margin-top:10px">Token / credential' + (isEdit ? ' <span class="muted">(bỏ trống = giữ token cũ)</span>' : " *") + "</label>" +
