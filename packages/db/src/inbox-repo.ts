@@ -5,14 +5,14 @@ import { withWorkspace } from "./context.js";
 
 // ===== Zalo Inbox (0031): hội thoại + tin nhắn kênh zalo_personal =====
 
-export type ZaloMessageSource = "zalo" | "app" | "agent" | "web" | "mcp" | "api";
+export type InboxMessageSource = "zalo" | "app" | "agent" | "web" | "mcp" | "api";
 
-export interface ZaloMessageInput {
+export interface InboxMessageInput {
   threadId: string;
   peerKind: "direct" | "group";
   msgId: string;
   direction: "in" | "out";
-  source: ZaloMessageSource;
+  source: InboxMessageSource;
   senderId: string;
   senderName: string;
   webUserId?: string | null;
@@ -25,7 +25,7 @@ export interface ZaloMessageInput {
   threadName?: string;
 }
 
-export interface ZaloThread {
+export interface InboxThread {
   threadId: string;
   kind: "direct" | "group";
   name: string;
@@ -41,7 +41,7 @@ export interface ZaloThread {
   pausedUntil: string | null;
 }
 
-export interface ZaloReactionRow {
+export interface InboxReactionRow {
   icon: string;
   reactorId: string;
   reactorName: string;
@@ -49,12 +49,12 @@ export interface ZaloReactionRow {
   webUserName: string | null;
 }
 
-export interface ZaloMessageRow {
+export interface InboxMessageRow {
   id: string;
   threadId: string;
   msgId: string;
   direction: "in" | "out";
-  source: ZaloMessageSource;
+  source: InboxMessageSource;
   senderId: string;
   senderName: string;
   webUserId: string | null;
@@ -65,7 +65,7 @@ export interface ZaloMessageRow {
   meta: Record<string, unknown> | null;
   sentAt: string;
   /** Cảm xúc trên tin (chỉ có khi truy vấn kèm reactions). */
-  reactions?: ZaloReactionRow[];
+  reactions?: InboxReactionRow[];
   /** Thả cảm xúc được không (có đủ msgId + cliMsgId — tin lưu từ bản 1.5.0). */
   canReact?: boolean;
 }
@@ -77,7 +77,7 @@ function iso(v: unknown): string | null {
   return v instanceof Date ? v.toISOString() : new Date(String(v)).toISOString();
 }
 
-function mapThread(r: Raw): ZaloThread {
+function mapThread(r: Raw): InboxThread {
   return {
     threadId: String(r.thread_id),
     kind: r.kind === "group" ? "group" : "direct",
@@ -95,7 +95,7 @@ function mapThread(r: Raw): ZaloThread {
   };
 }
 
-function mapReactions(v: unknown): ZaloReactionRow[] {
+function mapReactions(v: unknown): InboxReactionRow[] {
   if (!Array.isArray(v)) return [];
   return (v as Raw[]).map((x) => ({
     icon: String(x.icon ?? ""),
@@ -106,14 +106,14 @@ function mapReactions(v: unknown): ZaloReactionRow[] {
   }));
 }
 
-function mapMessage(r: Raw): ZaloMessageRow {
+function mapMessage(r: Raw): InboxMessageRow {
   const meta = (r.meta as Record<string, unknown> | null) ?? null;
   return {
     id: String(r.id),
     threadId: String(r.thread_id),
     msgId: String(r.msg_id ?? ""),
     direction: r.direction === "out" ? "out" : "in",
-    source: String(r.source) as ZaloMessageSource,
+    source: String(r.source) as InboxMessageSource,
     senderId: String(r.sender_id ?? ""),
     senderName: String(r.sender_name ?? ""),
     webUserId: (r.web_user_id as string | null) ?? null,
@@ -130,7 +130,7 @@ function mapMessage(r: Raw): ZaloMessageRow {
 
 const REACTIONS_SUBQUERY = sql`(SELECT COALESCE(json_agg(json_build_object('icon', zr.icon, 'reactor_id', zr.reactor_id,
     'reactor_name', zr.reactor_name, 'source', zr.source, 'web_user_name', zu.name) ORDER BY zr.updated_at), '[]'::json)
-  FROM zalo_reactions zr LEFT JOIN users zu ON zu.id = zr.web_user_id
+  FROM inbox_reactions zr LEFT JOIN users zu ON zu.id = zr.web_user_id
   WHERE zr.channel_id = m.channel_id AND zr.msg_id = m.msg_id AND m.msg_id <> '')`;
 
 const PREVIEW_LABEL: Record<string, string> = {
@@ -143,7 +143,7 @@ const PREVIEW_LABEL: Record<string, string> = {
   other: "[Nội dung khác]",
 };
 
-export function zaloPreview(contentType: string, text: string): string {
+export function inboxPreview(contentType: string, text: string): string {
   const t = text.replace(/\s+/g, " ").trim();
   const label = contentType === "text" ? "" : (PREVIEW_LABEL[contentType] ?? "[Nội dung khác]");
   return (label && t ? `${label} ${t}` : label || t).slice(0, 160);
@@ -153,16 +153,16 @@ export function zaloPreview(contentType: string, text: string): string {
  * Ghi 1 tin nhắn + cập nhật hội thoại. Trùng msg_id → bỏ qua (trả null).
  * `pauseMinutes` > 0 và tin do NGƯỜI gửi đi (web/app) → AI tạm im trong hội thoại đó.
  */
-export async function recordZaloMessage(
+export async function recordInboxMessage(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
-  input: ZaloMessageInput,
+  input: InboxMessageInput,
   opts: { pauseMinutes?: number } = {},
-): Promise<{ message: ZaloMessageRow; thread: ZaloThread } | null> {
+): Promise<{ message: InboxMessageRow; thread: InboxThread } | null> {
   return withWorkspace(db, ctx, async (tx) => {
     const ins = await tx.execute(sql`
-      INSERT INTO zalo_messages (workspace_id, channel_id, thread_id, msg_id, direction, source,
+      INSERT INTO inbox_messages (workspace_id, channel_id, thread_id, msg_id, direction, source,
         sender_id, sender_name, web_user_id, content_type, text, media, meta, sent_at)
       VALUES (${ctx.workspaceId}, ${channelId}, ${input.threadId}, ${input.msgId}, ${input.direction},
         ${input.source}, ${input.senderId}, ${input.senderName}, ${input.webUserId ?? null},
@@ -173,7 +173,7 @@ export async function recordZaloMessage(
       RETURNING *`);
     const row = ins.rows[0] as Raw | undefined;
     if (!row) return null;
-    const preview = zaloPreview(input.contentType, input.text);
+    const preview = inboxPreview(input.contentType, input.text);
     const human = input.direction === "out" && (input.source === "web" || input.source === "app");
     const pause =
       human && (opts.pauseMinutes ?? 0) > 0
@@ -181,20 +181,20 @@ export async function recordZaloMessage(
         : null;
     const unreadInc = input.direction === "in" ? 1 : 0;
     const th = await tx.execute(sql`
-      INSERT INTO zalo_threads (workspace_id, channel_id, thread_id, kind, name, last_message,
+      INSERT INTO inbox_threads (workspace_id, channel_id, thread_id, kind, name, last_message,
         last_message_at, last_direction, unread_count, paused_until, updated_at)
       VALUES (${ctx.workspaceId}, ${channelId}, ${input.threadId}, ${input.peerKind},
         ${input.threadName ?? ""}, ${preview}, ${input.sentAt.toISOString()}, ${input.direction},
         ${unreadInc}, ${pause}, now())
       ON CONFLICT (channel_id, thread_id) DO UPDATE SET
-        name = CASE WHEN EXCLUDED.name <> '' AND (zalo_threads.name = '' OR zalo_threads.kind = 'direct')
-                    THEN EXCLUDED.name ELSE zalo_threads.name END,
+        name = CASE WHEN EXCLUDED.name <> '' AND (inbox_threads.name = '' OR inbox_threads.kind = 'direct')
+                    THEN EXCLUDED.name ELSE inbox_threads.name END,
         last_message = EXCLUDED.last_message,
-        last_message_at = GREATEST(COALESCE(zalo_threads.last_message_at, EXCLUDED.last_message_at), EXCLUDED.last_message_at),
+        last_message_at = GREATEST(COALESCE(inbox_threads.last_message_at, EXCLUDED.last_message_at), EXCLUDED.last_message_at),
         last_direction = EXCLUDED.last_direction,
         -- Người trả lời (web/app) = đã đọc hết tin trước đó
-        unread_count = CASE WHEN ${human} THEN 0 ELSE zalo_threads.unread_count + ${unreadInc} END,
-        paused_until = COALESCE(EXCLUDED.paused_until, zalo_threads.paused_until),
+        unread_count = CASE WHEN ${human} THEN 0 ELSE inbox_threads.unread_count + ${unreadInc} END,
+        paused_until = COALESCE(EXCLUDED.paused_until, inbox_threads.paused_until),
         updated_at = now()
       RETURNING *`);
     const msg = mapMessage(row);
@@ -206,7 +206,7 @@ export async function recordZaloMessage(
   });
 }
 
-export interface ZaloContactInput {
+export interface InboxContactInput {
   threadId: string;
   kind: "direct" | "group";
   name: string;
@@ -215,12 +215,12 @@ export interface ZaloContactInput {
   memberCount?: number;
 }
 
-/** Đồng bộ danh bạ (bạn bè + nhóm) vào zalo_threads — không đụng tin nhắn/trạng thái AI. */
-export async function upsertZaloContacts(
+/** Đồng bộ danh bạ (bạn bè + nhóm) vào inbox_threads — không đụng tin nhắn/trạng thái AI. */
+export async function upsertInboxContacts(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
-  items: ZaloContactInput[],
+  items: InboxContactInput[],
 ): Promise<number> {
   if (!items.length) return 0;
   return withWorkspace(db, ctx, async (tx) => {
@@ -235,16 +235,16 @@ export async function upsertZaloContacts(
         sql`, `,
       );
       await tx.execute(sql`
-        INSERT INTO zalo_threads (workspace_id, channel_id, thread_id, kind, name, avatar, phone,
+        INSERT INTO inbox_threads (workspace_id, channel_id, thread_id, kind, name, avatar, phone,
           is_contact, member_count, synced_at, updated_at)
         VALUES ${values}
         ON CONFLICT (channel_id, thread_id) DO UPDATE SET
           kind = EXCLUDED.kind,
-          name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE zalo_threads.name END,
-          avatar = CASE WHEN EXCLUDED.avatar <> '' THEN EXCLUDED.avatar ELSE zalo_threads.avatar END,
-          phone = CASE WHEN EXCLUDED.phone <> '' THEN EXCLUDED.phone ELSE zalo_threads.phone END,
+          name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE inbox_threads.name END,
+          avatar = CASE WHEN EXCLUDED.avatar <> '' THEN EXCLUDED.avatar ELSE inbox_threads.avatar END,
+          phone = CASE WHEN EXCLUDED.phone <> '' THEN EXCLUDED.phone ELSE inbox_threads.phone END,
           is_contact = true,
-          member_count = COALESCE(EXCLUDED.member_count, zalo_threads.member_count),
+          member_count = COALESCE(EXCLUDED.member_count, inbox_threads.member_count),
           synced_at = now()`);
       n += batch.length;
     }
@@ -253,7 +253,7 @@ export async function upsertZaloContacts(
 }
 
 /** Cập nhật tên hội thoại (vd tên nhóm tra được sau). */
-export async function setZaloThreadName(
+export async function setInboxThreadName(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
@@ -262,12 +262,12 @@ export async function setZaloThreadName(
 ): Promise<void> {
   if (!name) return;
   await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`UPDATE zalo_threads SET name = ${name}, updated_at = now()
+    tx.execute(sql`UPDATE inbox_threads SET name = ${name}, updated_at = now()
       WHERE channel_id = ${channelId} AND thread_id = ${threadId}`),
   );
 }
 
-export interface ZaloThreadQuery {
+export interface InboxThreadQuery {
   q?: string;
   kind?: "direct" | "group";
   unreadOnly?: boolean;
@@ -281,12 +281,12 @@ export interface ZaloThreadQuery {
   stableOrder?: boolean;
 }
 
-export async function listZaloThreads(
+export async function listInboxThreads(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
-  query: ZaloThreadQuery = {},
-): Promise<{ threads: ZaloThread[]; total: number }> {
+  query: InboxThreadQuery = {},
+): Promise<{ threads: InboxThread[]; total: number }> {
   const limit = Math.min(Math.max(query.limit ?? 50, 1), 500);
   const offset = Math.max(query.offset ?? 0, 0);
   const conds = [sql`channel_id = ${channelId}`];
@@ -305,9 +305,9 @@ export async function listZaloThreads(
     : sql`last_message_at DESC NULLS LAST, name ASC`;
   return withWorkspace(db, ctx, async (tx) => {
     const rows = await tx.execute(
-      sql`SELECT * FROM zalo_threads WHERE ${where} ORDER BY ${order} LIMIT ${limit} OFFSET ${offset}`,
+      sql`SELECT * FROM inbox_threads WHERE ${where} ORDER BY ${order} LIMIT ${limit} OFFSET ${offset}`,
     );
-    const cnt = await tx.execute(sql`SELECT count(*)::int AS n FROM zalo_threads WHERE ${where}`);
+    const cnt = await tx.execute(sql`SELECT count(*)::int AS n FROM inbox_threads WHERE ${where}`);
     return {
       threads: (rows.rows as Raw[]).map(mapThread),
       total: Number((cnt.rows[0] as Raw | undefined)?.n ?? 0),
@@ -316,43 +316,43 @@ export async function listZaloThreads(
 }
 
 /** Toàn bộ danh bạ + hội thoại Zalo của 1 kênh (xuất Excel), tối đa 100.000 dòng. */
-export async function listAllZaloThreads(
+export async function listAllInboxThreads(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
-): Promise<ZaloThread[]> {
+): Promise<InboxThread[]> {
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`SELECT * FROM zalo_threads WHERE channel_id = ${channelId}
+    tx.execute(sql`SELECT * FROM inbox_threads WHERE channel_id = ${channelId}
       ORDER BY kind, last_message_at DESC NULLS LAST, name LIMIT 100000`),
   );
   return (res.rows as Raw[]).map(mapThread);
 }
 
-export async function getZaloThread(
+export async function getInboxThread(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
   threadId: string,
-): Promise<ZaloThread | null> {
+): Promise<InboxThread | null> {
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`SELECT * FROM zalo_threads WHERE channel_id = ${channelId} AND thread_id = ${threadId}`),
+    tx.execute(sql`SELECT * FROM inbox_threads WHERE channel_id = ${channelId} AND thread_id = ${threadId}`),
   );
   const r = res.rows[0] as Raw | undefined;
   return r ? mapThread(r) : null;
 }
 
-export async function listZaloMessages(
+export async function listInboxMessages(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
   threadId: string,
   opts: { beforeId?: string; limit?: number; maxLimit?: number } = {},
-): Promise<ZaloMessageRow[]> {
+): Promise<InboxMessageRow[]> {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), opts.maxLimit ?? 200);
   const before = opts.beforeId && /^\d+$/.test(opts.beforeId) ? sql`AND m.id < ${opts.beforeId}::bigint` : sql``;
   const res = await withWorkspace(db, ctx, (tx) =>
     tx.execute(sql`
-      SELECT m.*, u.name AS web_user_name, ${REACTIONS_SUBQUERY} AS reactions FROM zalo_messages m
+      SELECT m.*, u.name AS web_user_name, ${REACTIONS_SUBQUERY} AS reactions FROM inbox_messages m
       LEFT JOIN users u ON u.id = m.web_user_id
       WHERE m.channel_id = ${channelId} AND m.thread_id = ${threadId} ${before}
       ORDER BY m.id DESC LIMIT ${limit}`),
@@ -360,26 +360,26 @@ export async function listZaloMessages(
   return (res.rows as Raw[]).map(mapMessage).reverse();
 }
 
-export async function countZaloMessages(
+export async function countInboxMessages(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
   threadId: string,
 ): Promise<number> {
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`SELECT count(*)::int AS n FROM zalo_messages WHERE channel_id = ${channelId} AND thread_id = ${threadId}`),
+    tx.execute(sql`SELECT count(*)::int AS n FROM inbox_messages WHERE channel_id = ${channelId} AND thread_id = ${threadId}`),
   );
   return Number((res.rows[0] as Raw | undefined)?.n ?? 0);
 }
 
 /** Tìm tin nhắn theo nội dung (không phân biệt hoa thường), mới nhất trước. */
-export async function searchZaloMessages(
+export async function searchInboxMessages(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
   query: string,
   opts: { threadId?: string; limit?: number; since?: Date } = {},
-): Promise<Array<ZaloMessageRow & { threadName: string; threadKind: "direct" | "group" }>> {
+): Promise<Array<InboxMessageRow & { threadName: string; threadKind: "direct" | "group" }>> {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
   const like = `%${query.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
   const byThread = opts.threadId ? sql`AND m.thread_id = ${opts.threadId}` : sql``;
@@ -387,9 +387,9 @@ export async function searchZaloMessages(
   const res = await withWorkspace(db, ctx, (tx) =>
     tx.execute(sql`
       SELECT m.*, u.name AS web_user_name, t.name AS thread_name, t.kind AS thread_kind
-      FROM zalo_messages m
+      FROM inbox_messages m
       LEFT JOIN users u ON u.id = m.web_user_id
-      LEFT JOIN zalo_threads t ON t.channel_id = m.channel_id AND t.thread_id = m.thread_id
+      LEFT JOIN inbox_threads t ON t.channel_id = m.channel_id AND t.thread_id = m.thread_id
       WHERE m.channel_id = ${channelId} AND m.text ILIKE ${like} ${byThread} ${since}
       ORDER BY m.id DESC LIMIT ${limit}`),
   );
@@ -401,16 +401,16 @@ export async function searchZaloMessages(
 }
 
 /** 1 tin theo id nội bộ (kèm cảm xúc). */
-export async function getZaloMessageById(
+export async function getInboxMessageById(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
   threadId: string,
   id: string,
-): Promise<ZaloMessageRow | null> {
+): Promise<InboxMessageRow | null> {
   if (!/^\d{1,19}$/.test(id)) return null;
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`SELECT m.*, u.name AS web_user_name, ${REACTIONS_SUBQUERY} AS reactions FROM zalo_messages m
+    tx.execute(sql`SELECT m.*, u.name AS web_user_name, ${REACTIONS_SUBQUERY} AS reactions FROM inbox_messages m
       LEFT JOIN users u ON u.id = m.web_user_id
       WHERE m.channel_id = ${channelId} AND m.thread_id = ${threadId} AND m.id = ${id}::bigint`),
   );
@@ -419,15 +419,15 @@ export async function getZaloMessageById(
 }
 
 /** Bổ sung cliMsgId vào meta của tin đã lưu (bản dội lại của tin PenAI gửi). Trả tin sau cập nhật. */
-export async function setZaloMessageCliId(
+export async function setInboxMessageCliId(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
   msgId: string,
   cliMsgId: string,
-): Promise<ZaloMessageRow | null> {
+): Promise<InboxMessageRow | null> {
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`UPDATE zalo_messages SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('cliMsgId', ${cliMsgId}::text)
+    tx.execute(sql`UPDATE inbox_messages SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('cliMsgId', ${cliMsgId}::text)
       WHERE channel_id = ${channelId} AND msg_id = ${msgId} AND msg_id <> '' RETURNING *`),
   );
   const r = res.rows[0] as Raw | undefined;
@@ -435,15 +435,15 @@ export async function setZaloMessageCliId(
 }
 
 /** N tin mới nhất KHÁCH gửi (direction in) còn thả cảm xúc được, mới nhất trước. */
-export async function latestIncomingZaloMessages(
+export async function latestIncomingInboxMessages(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
   threadId: string,
   count: number,
-): Promise<ZaloMessageRow[]> {
+): Promise<InboxMessageRow[]> {
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`SELECT m.* FROM zalo_messages m
+    tx.execute(sql`SELECT m.* FROM inbox_messages m
       WHERE m.channel_id = ${channelId} AND m.thread_id = ${threadId} AND m.direction = 'in'
         AND m.msg_id <> '' AND COALESCE(m.meta->>'cliMsgId', '') <> ''
       ORDER BY m.id DESC LIMIT ${Math.min(Math.max(count, 1), 20)}`),
@@ -455,7 +455,7 @@ export async function latestIncomingZaloMessages(
  * Ghi cảm xúc: icon rỗng = gỡ. Nguồn PenAI (web/auto/mcp) giữ nguyên khi bản dội lại
  * từ listener (app) tới sau với cùng icon. Trả danh sách cảm xúc hiện tại của tin.
  */
-export async function upsertZaloReaction(
+export async function upsertInboxReaction(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
@@ -468,59 +468,59 @@ export async function upsertZaloReaction(
     source: string;
     webUserId?: string | null;
   },
-): Promise<ZaloReactionRow[]> {
+): Promise<InboxReactionRow[]> {
   return withWorkspace(db, ctx, async (tx) => {
     if (!input.icon) {
-      await tx.execute(sql`DELETE FROM zalo_reactions WHERE channel_id = ${channelId}
+      await tx.execute(sql`DELETE FROM inbox_reactions WHERE channel_id = ${channelId}
         AND msg_id = ${input.msgId} AND reactor_id = ${input.reactorId}`);
     } else {
-      await tx.execute(sql`INSERT INTO zalo_reactions (workspace_id, channel_id, thread_id, msg_id, reactor_id,
+      await tx.execute(sql`INSERT INTO inbox_reactions (workspace_id, channel_id, thread_id, msg_id, reactor_id,
           reactor_name, icon, source, web_user_id, updated_at)
         VALUES (${ctx.workspaceId}, ${channelId}, ${input.threadId}, ${input.msgId}, ${input.reactorId},
           ${input.reactorName}, ${input.icon}, ${input.source}, ${input.webUserId ?? null}, now())
         ON CONFLICT (channel_id, msg_id, reactor_id) DO UPDATE SET
-          reactor_name = CASE WHEN EXCLUDED.reactor_name <> '' THEN EXCLUDED.reactor_name ELSE zalo_reactions.reactor_name END,
-          source = CASE WHEN EXCLUDED.source = 'app' AND zalo_reactions.icon = EXCLUDED.icon
-                        THEN zalo_reactions.source ELSE EXCLUDED.source END,
-          web_user_id = CASE WHEN EXCLUDED.source = 'app' AND zalo_reactions.icon = EXCLUDED.icon
-                        THEN zalo_reactions.web_user_id ELSE EXCLUDED.web_user_id END,
+          reactor_name = CASE WHEN EXCLUDED.reactor_name <> '' THEN EXCLUDED.reactor_name ELSE inbox_reactions.reactor_name END,
+          source = CASE WHEN EXCLUDED.source = 'app' AND inbox_reactions.icon = EXCLUDED.icon
+                        THEN inbox_reactions.source ELSE EXCLUDED.source END,
+          web_user_id = CASE WHEN EXCLUDED.source = 'app' AND inbox_reactions.icon = EXCLUDED.icon
+                        THEN inbox_reactions.web_user_id ELSE EXCLUDED.web_user_id END,
           icon = EXCLUDED.icon,
           updated_at = now()`);
     }
     const res = await tx.execute(sql`SELECT zr.icon, zr.reactor_id, zr.reactor_name, zr.source, zu.name AS web_user_name
-      FROM zalo_reactions zr LEFT JOIN users zu ON zu.id = zr.web_user_id
+      FROM inbox_reactions zr LEFT JOIN users zu ON zu.id = zr.web_user_id
       WHERE zr.channel_id = ${channelId} AND zr.msg_id = ${input.msgId} ORDER BY zr.updated_at`);
     return mapReactions(res.rows);
   });
 }
 
-export async function markZaloThreadRead(
+export async function markInboxThreadRead(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
   threadId: string,
 ): Promise<void> {
   await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`UPDATE zalo_threads SET unread_count = 0
+    tx.execute(sql`UPDATE inbox_threads SET unread_count = 0
       WHERE channel_id = ${channelId} AND thread_id = ${threadId} AND unread_count <> 0`),
   );
 }
 
 /** Bật/tắt AI theo hội thoại; resume=true xóa tạm dừng do nhân viên vừa trả lời. */
-export async function setZaloThreadAi(
+export async function setInboxThreadAi(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
   threadId: string,
   input: { mode?: "auto" | "off"; resume?: boolean; kind?: "direct" | "group" },
-): Promise<ZaloThread | null> {
+): Promise<InboxThread | null> {
   const res = await withWorkspace(db, ctx, (tx) =>
     tx.execute(sql`
-      INSERT INTO zalo_threads (workspace_id, channel_id, thread_id, kind, ai_mode, updated_at)
+      INSERT INTO inbox_threads (workspace_id, channel_id, thread_id, kind, ai_mode, updated_at)
       VALUES (${ctx.workspaceId}, ${channelId}, ${threadId}, ${input.kind ?? "direct"}, ${input.mode ?? "auto"}, now())
       ON CONFLICT (channel_id, thread_id) DO UPDATE SET
-        ai_mode = COALESCE(${input.mode ?? null}, zalo_threads.ai_mode),
-        paused_until = CASE WHEN ${input.resume === true} THEN NULL ELSE zalo_threads.paused_until END,
+        ai_mode = COALESCE(${input.mode ?? null}, inbox_threads.ai_mode),
+        paused_until = CASE WHEN ${input.resume === true} THEN NULL ELSE inbox_threads.paused_until END,
         updated_at = now()
       RETURNING *`),
   );
@@ -529,14 +529,14 @@ export async function setZaloThreadAi(
 }
 
 /** AI có được trả lời trong hội thoại này lúc này không (tắt tay / đang tạm dừng). */
-export async function getZaloThreadAgentBlock(
+export async function getInboxThreadAgentBlock(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
   threadId: string,
 ): Promise<"off" | "paused" | null> {
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`SELECT ai_mode, paused_until FROM zalo_threads
+    tx.execute(sql`SELECT ai_mode, paused_until FROM inbox_threads
       WHERE channel_id = ${channelId} AND thread_id = ${threadId}`),
   );
   const r = res.rows[0] as Raw | undefined;
@@ -547,7 +547,7 @@ export async function getZaloThreadAgentBlock(
 }
 
 /** Dọn tin nhắn cũ hơn N ngày (0 = giữ mãi). */
-export async function pruneZaloMessages(
+export async function pruneInboxMessages(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
@@ -555,7 +555,7 @@ export async function pruneZaloMessages(
 ): Promise<number> {
   if (!(days > 0)) return 0;
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`DELETE FROM zalo_messages WHERE channel_id = ${channelId}
+    tx.execute(sql`DELETE FROM inbox_messages WHERE channel_id = ${channelId}
       AND sent_at < now() - make_interval(days => ${Math.floor(days)})`),
   );
   return res.rowCount ?? 0;
@@ -563,29 +563,29 @@ export async function pruneZaloMessages(
 
 // ===== Member được trực kênh Zalo nào =====
 
-export async function listZaloChannelMembers(
+export async function listInboxChannelMembers(
   db: Db,
   ctx: WorkspaceContext,
 ): Promise<Array<{ channelId: string; userId: string }>> {
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`SELECT channel_id, user_id FROM zalo_channel_members`),
+    tx.execute(sql`SELECT channel_id, user_id FROM inbox_channel_members`),
   );
   return (res.rows as Raw[]).map((r) => ({ channelId: String(r.channel_id), userId: String(r.user_id) }));
 }
 
-export async function listUserZaloChannelIds(
+export async function listUserInboxChannelIds(
   db: Db,
   ctx: WorkspaceContext,
   userId: string,
 ): Promise<string[]> {
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`SELECT channel_id FROM zalo_channel_members WHERE user_id = ${userId}`),
+    tx.execute(sql`SELECT channel_id FROM inbox_channel_members WHERE user_id = ${userId}`),
   );
   return (res.rows as Raw[]).map((r) => String(r.channel_id));
 }
 
 /** Đặt LẠI danh sách kênh Zalo member được trực. Kênh không phải zalo_personal bị bỏ qua. */
-export async function setUserZaloChannels(
+export async function setUserInboxChannels(
   db: Db,
   ctx: WorkspaceContext,
   userId: string,
@@ -601,9 +601,9 @@ export async function setUserZaloChannels(
           ).rows as Raw[]
         ).map((r) => String(r.id))
       : [];
-    await tx.execute(sql`DELETE FROM zalo_channel_members WHERE user_id = ${userId}`);
+    await tx.execute(sql`DELETE FROM inbox_channel_members WHERE user_id = ${userId}`);
     for (const channelId of valid) {
-      await tx.execute(sql`INSERT INTO zalo_channel_members (workspace_id, channel_id, user_id, granted_by)
+      await tx.execute(sql`INSERT INTO inbox_channel_members (workspace_id, channel_id, user_id, granted_by)
         VALUES (${ctx.workspaceId}, ${channelId}, ${userId}, ${ctx.userId}) ON CONFLICT DO NOTHING`);
     }
     return valid;

@@ -15,8 +15,8 @@ import {
   upsertConversation,
   listEnabledChannels,
   updateChannel,
-  upsertZaloObservedPeer,
-  getZaloThreadAgentBlock,
+  upsertInboxObservedPeer,
+  getInboxThreadAgentBlock,
   type EnabledChannel,
   recordTraceSafe,
 } from "@penai/db";
@@ -37,7 +37,7 @@ import {
   type OutboundButton,
   type RunHooks,
 } from "@penai/channels";
-import { forgetZaloInboxChannel, zaloInboxHooks } from "./zalo-inbox.js";
+import { forgetZaloInboxChannel, zaloInboxHooks } from "./inbox.js";
 
 /** Handler + channel theo channelId — cho webhook route (WhatsApp, Teams) dùng. */
 export const channelHandlers = new Map<
@@ -576,7 +576,7 @@ function makeInboundHandler(
     // (web/điện thoại) → AI im trong lúc tạm dừng.
     if (msg.channelKind === "zalo_personal") {
       const threadId = msg.chatKey.slice(msg.chatKey.indexOf(":") + 1);
-      const block = await getZaloThreadAgentBlock(db, ctx, channel.id, threadId).catch(() => null);
+      const block = await getInboxThreadAgentBlock(db, ctx, channel.id, threadId).catch(() => null);
       if (block) return { kind: "ignore" };
     }
 
@@ -1008,7 +1008,7 @@ function buildChannel(
       // Zalo Personal: persist danh sách quan sát vào DB — danh sách chờ duyệt
       // (tên + uid, nhóm/cá nhân) sống qua restart. Fire-and-forget, lỗi chỉ log.
       onObserved: (peer) => {
-        void upsertZaloObservedPeer(
+        void upsertInboxObservedPeer(
           rt.db.db,
           systemContext(ch.workspaceId),
           ch.id,

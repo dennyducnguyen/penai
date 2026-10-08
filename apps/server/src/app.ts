@@ -36,7 +36,7 @@ import {
   createChannel,
   listChannels,
   exportContacts,
-  listAllZaloThreads,
+  listAllInboxThreads,
   deleteChannel,
   getChannelById,
   getChannelSession,
@@ -45,7 +45,7 @@ import {
   approvePairing,
   listPendingPairings,
   listContacts,
-  listZaloObservedPeers,
+  listInboxObservedPeers,
   listContactsOverview,
   getContactOverview,
   findContactIdentity,
@@ -269,7 +269,7 @@ import {
   type ResolvedAuth,
 } from "./web-auth.js";
 import { registerLibraryRoutes } from "./library.js";
-import { registerZaloInboxRoutes } from "./zalo-inbox.js";
+import { registerZaloInboxRoutes } from "./inbox.js";
 import { buildXlsx, type XlsxCell } from "./xlsx.js";
 import { isMcpPublicPath, registerMcpServerRoutes } from "./mcp-server.js";
 import { registerBrowserRoutes } from "./browser-runtime.js";
@@ -1735,7 +1735,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   // Tên hiển thị cho danh sách pairing: contacts (mọi kênh) + fallback
-  // zalo_observed_peers (kênh zalo_personal — tên người gửi đã quan sát).
+  // inbox_observed_peers (kênh zalo_personal — tên người gửi đã quan sát).
   const pairingDisplayNames = async (
     ctx: FastifyRequest["authCtx"],
     channels: Array<{ id: string; kind: string }>,
@@ -1750,7 +1750,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       channels
         .filter((c) => c.kind === "zalo_personal")
         .map(async (c) => {
-          for (const row of await listZaloObservedPeers(db, ctx, c.id)) {
+          for (const row of await listInboxObservedPeers(db, ctx, c.id)) {
             zaloByChannelSender.set(`${c.id}:${row.lastSenderId}`, row.lastSenderName);
             if (row.kind === "direct") zaloByChannelSender.set(`${c.id}:${row.threadId}`, row.name);
           }
@@ -2005,7 +2005,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       string,
       ReturnType<typeof runtime.listObserved>[number]
     >();
-    for (const row of await listZaloObservedPeers(db, req.authCtx, id)) {
+    for (const row of await listInboxObservedPeers(db, req.authCtx, id)) {
       byKey.set(row.chatKey, {
         chatKey: row.chatKey,
         threadId: row.threadId,
@@ -2086,7 +2086,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     ];
     const zaloChannels = allChannels.filter((c) => c.kind === "zalo_personal" && (!channelId || c.id === channelId));
     for (const zc of zaloChannels) {
-      const threads = await listAllZaloThreads(db, req.authCtx, zc.id);
+      const threads = await listAllInboxThreads(db, req.authCtx, zc.id);
       sheets.push({
         name: `Danh bạ Zalo - ${zc.name}`,
         widths: [10, 22, 30, 16, 12, 12, 17, 10, 12],

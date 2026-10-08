@@ -40,7 +40,7 @@ import {
   getMcpOauthToken,
   getMcpServerSend,
   getWorkspaceById,
-  getZaloThread,
+  getInboxThread,
   insertMcpOauthClient,
   insertMcpOauthPending,
   insertMcpOauthTokens,
@@ -48,10 +48,10 @@ import {
   listChannels,
   listMcpOauthGrants,
   listRecentMcpServerSends,
-  listZaloThreads,
-  listZaloMessages,
-  countZaloMessages,
-  searchZaloMessages,
+  listInboxThreads,
+  listInboxMessages,
+  countInboxMessages,
+  searchInboxMessages,
   lookupMcpGrantPrincipal,
   lookupMemberships,
   markMcpRefreshUsed,
@@ -67,12 +67,12 @@ import {
   ImageInputError,
   readInboxConfig,
   reactZaloMessage,
-  latestIncomingZaloMessages,
+  latestIncomingInboxMessages,
   isZaloRejected,
   prepareOutboundImage,
   sendZalo,
   zaloRuntimeFor,
-} from "./zalo-inbox.js";
+} from "./inbox.js";
 
 export const MCP_SCOPES = ["zalo:read", "zalo:send", "zalo:messages"] as const;
 type Scope = (typeof MCP_SCOPES)[number];
@@ -340,7 +340,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
     if (isResult(ch)) return ch;
     const limit = args.limit ?? 50;
     const offset = Number(args.cursor ?? 0);
-    const res = await listZaloThreads(deps.db, p.ctx, ch.id, {
+    const res = await listInboxThreads(deps.db, p.ctx, ch.id, {
       kind,
       ...(args.query ? { q: args.query } : {}),
       limit,
@@ -456,7 +456,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
         name = user.name;
         peerKind = "direct";
       } else {
-        const known = await getZaloThread(deps.db, p.ctx, ch.id, threadId);
+        const known = await getInboxThread(deps.db, p.ctx, ch.id, threadId);
         if (known) {
           if (args.thread_type && (known.kind === "group") !== (args.thread_type === "group")) {
             result = fail("RECIPIENT_TYPE_MISMATCH", `ID này là ${known.kind === "group" ? "nhóm" : "cá nhân"} — sửa thread_type.`);
@@ -543,7 +543,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
         const ch = await needReadable(args.channel_id);
         if (isResult(ch)) return ch;
         const offset = Number(args.cursor ?? 0);
-        const res = await listZaloThreads(deps.db, p.ctx, ch.id, {
+        const res = await listInboxThreads(deps.db, p.ctx, ch.id, {
           ...(args.query ? { q: args.query } : {}),
           ...(args.type ? { kind: args.type === "group" ? "group" : "direct" } : {}),
           unreadOnly: args.unread_only === true,
@@ -588,13 +588,13 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
         if (isResult(ch)) return ch;
         const limit = args.limit ?? 500;
         const [thread, rows, total] = await Promise.all([
-          getZaloThread(deps.db, p.ctx, ch.id, args.thread_id),
-          listZaloMessages(deps.db, p.ctx, ch.id, args.thread_id, {
+          getInboxThread(deps.db, p.ctx, ch.id, args.thread_id),
+          listInboxMessages(deps.db, p.ctx, ch.id, args.thread_id, {
             ...(args.before ? { beforeId: args.before } : {}),
             limit,
             maxLimit: 2000,
           }),
-          countZaloMessages(deps.db, p.ctx, ch.id, args.thread_id),
+          countInboxMessages(deps.db, p.ctx, ch.id, args.thread_id),
         ]);
         if (!thread && !rows.length) return fail("THREAD_NOT_FOUND", "Không có hội thoại này (hoặc chưa có tin nhắn nào được lưu).");
         const hasMore = rows.length === limit && rows.length > 0;
@@ -648,7 +648,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
         if (isResult(ch)) return ch;
         const since = args.since ? new Date(args.since) : undefined;
         if (since && Number.isNaN(since.getTime())) return fail("INVALID_SINCE", "since phải là ngày giờ ISO 8601.");
-        const rows = await searchZaloMessages(deps.db, p.ctx, ch.id, args.query, {
+        const rows = await searchInboxMessages(deps.db, p.ctx, ch.id, args.query, {
           ...(args.thread_id ? { threadId: args.thread_id } : {}),
           ...(since ? { since } : {}),
           limit: args.limit ?? 50,
@@ -696,7 +696,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
     async (args) => {
       const ch = await resolveChannel(deps, p, args.channel_id);
       if (isResult(ch)) return ch;
-      const rows = await latestIncomingZaloMessages(deps.db, p.ctx, ch.id, args.thread_id, args.count ?? 1);
+      const rows = await latestIncomingInboxMessages(deps.db, p.ctx, ch.id, args.thread_id, args.count ?? 1);
       if (!rows.length) return fail("NO_MESSAGE", "Hội thoại chưa có tin nào của khách (từ bản 1.5.0) để thả cảm xúc.");
       const done: string[] = [];
       for (const m of rows) {

@@ -166,7 +166,7 @@ async function queryOverview(db: Db, ctx: WorkspaceContext, contactId: string | 
              c.first_seen, c.last_seen,
              ch.name AS channel_name,
              c.metadata->>'zalo_kind' AS zalo_kind,
-             (SELECT NULLIF(zt.phone, '') FROM zalo_threads zt
+             (SELECT NULLIF(zt.phone, '') FROM inbox_threads zt
                WHERE zt.channel_id = c.channel_id AND zt.thread_id = c.external_id) AS zalo_phone,
              pp.display_name AS profile_name,
              COALESCE(pp.ai_instructions, '') <> '' AS has_instructions,

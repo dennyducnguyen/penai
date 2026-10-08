@@ -39,8 +39,8 @@ import {
   updateUserProfile,
   getWorkspaceById,
   listChannels,
-  listZaloChannelMembers,
-  setUserZaloChannels,
+  listInboxChannelMembers,
+  setUserInboxChannels,
   type Db,
 } from "@penai/db";
 
@@ -369,7 +369,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       listWorkspaceUsers(db, req.authCtx),
       listAgents(db, req.authCtx),
       listChannels(db, req.authCtx),
-      listZaloChannelMembers(db, req.authCtx),
+      listInboxChannelMembers(db, req.authCtx),
     ]);
     return {
       users: users.map((u) => ({
@@ -418,7 +418,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     }
     const zaloIds = Array.isArray(b.zaloChannelIds) ? b.zaloChannelIds.filter((x): x is string => typeof x === "string") : [];
     if (role === "member" && zaloIds.length) {
-      await setUserZaloChannels(db, req.authCtx, created.id, zaloIds);
+      await setUserInboxChannels(db, req.authCtx, created.id, zaloIds);
     }
     await recordAudit(db, req.authCtx, "user.create", { userId: created.id, email: b.email, role });
     return reply.code(201).send({ id: created.id, reusedExisting: created.reusedExisting });
@@ -456,7 +456,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       );
     }
     if (Array.isArray(b.zaloChannelIds)) {
-      await setUserZaloChannels(
+      await setUserInboxChannels(
         db,
         req.authCtx,
         id,

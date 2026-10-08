@@ -351,7 +351,7 @@ export const conversations = pgTable(
 
 // Danh sách quan sát Zalo Personal (0017) — chỉ metadata, không lưu nội dung
 export const zaloObservedPeers = pgTable(
-  "zalo_observed_peers",
+  "inbox_observed_peers",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     workspaceId: uuid("workspace_id")

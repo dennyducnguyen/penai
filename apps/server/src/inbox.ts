@@ -1,8 +1,8 @@
 /**
  * Zalo cá nhân — Inbox trực chat (0031).
  *
- * - Adapter zalo_personal báo MỌI tin đến/đi (onMessageLog) → lưu zalo_messages
- *   + zalo_threads → đẩy realtime (SSE) cho người đang trực.
+ * - Adapter zalo_personal báo MỌI tin đến/đi (onMessageLog) → lưu inbox_messages
+ *   + inbox_threads → đẩy realtime (SSE) cho người đang trực.
  * - Người trực (operator trở lên: mọi kênh; member: kênh được gán) xem hội thoại,
  *   gửi text/ảnh, bật/tắt AI theo hội thoại. Nhân viên trả lời (web hoặc điện
  *   thoại) → AI tạm im trong hội thoại đó `inbox_pause_minutes` phút (mặc định 30).
@@ -21,26 +21,26 @@ import { z } from "zod";
 import { hasRole, logger, type WorkspaceContext } from "@penai/shared";
 import {
   getChannelById,
-  getZaloThread,
+  getInboxThread,
   listChannels,
-  listUserZaloChannelIds,
-  listZaloMessages,
-  listZaloThreads,
-  markZaloThreadRead,
-  recordZaloMessage,
-  setZaloThreadAi,
-  setZaloThreadName,
+  listUserInboxChannelIds,
+  listInboxMessages,
+  listInboxThreads,
+  markInboxThreadRead,
+  recordInboxMessage,
+  setInboxThreadAi,
+  setInboxThreadName,
   updateChannel,
-  upsertZaloReaction,
-  setZaloMessageCliId,
+  upsertInboxReaction,
+  setInboxMessageCliId,
   upsertContact,
-  getZaloMessageById,
-  latestIncomingZaloMessages,
-  upsertZaloContacts,
+  getInboxMessageById,
+  latestIncomingInboxMessages,
+  upsertInboxContacts,
   recordAudit,
   type Db,
-  type ZaloMessageRow,
-  type ZaloThread,
+  type InboxMessageRow,
+  type InboxThread,
 } from "@penai/db";
 import {
   ZaloPersonalChannel,
@@ -183,7 +183,7 @@ export function zaloInboxHooks(
       const st = inboxState.get(ch.id);
       if (!st?.enabled) return;
       void (async () => {
-        const saved = await recordZaloMessage(
+        const saved = await recordInboxMessage(
           db,
           ctx,
           ch.id,
@@ -217,7 +217,7 @@ export function zaloInboxHooks(
           groupNameLookups.add(key);
           const name = await zaloRuntime(ch.id)?.lookupGroupName(entry.threadId);
           if (name) {
-            await setZaloThreadName(db, ctx, ch.id, entry.threadId, name);
+            await setInboxThreadName(db, ctx, ch.id, entry.threadId, name);
             recordZaloContact(db, ctx, ch.id, entry.threadId, name, "group");
             broadcast(ch.workspaceId, ch.id, "thread", { channelId: ch.id, thread: { ...saved.thread, name } });
           }
@@ -225,7 +225,7 @@ export function zaloInboxHooks(
       })().catch((err) => logger.warn(`zalo.inbox_store lỗi: ${(err as Error).message}`));
     },
     onContactsSynced: (items: ChannelContact[]) => {
-      void upsertZaloContacts(
+      void upsertInboxContacts(
         db,
         ctx,
         ch.id,
@@ -242,13 +242,13 @@ export function zaloInboxHooks(
         .catch((err) => logger.warn(`zalo.contacts_store lỗi: ${(err as Error).message}`));
     },
     onThreadName: (threadId: string, name: string) => {
-      void setZaloThreadName(db, ctx, ch.id, threadId, name).catch(() => {});
+      void setInboxThreadName(db, ctx, ch.id, threadId, name).catch(() => {});
       recordZaloContact(db, ctx, ch.id, threadId, name, "group");
     },
     onMessageCliId: (msgId: string, cliMsgId: string) => {
       // Bản dội lại có thể tới trước khi tin kịp ghi DB → thử lại sau 3 giây nếu chưa thấy.
       const apply = (retry: boolean) =>
-        setZaloMessageCliId(db, ctx, ch.id, msgId, cliMsgId)
+        setInboxMessageCliId(db, ctx, ch.id, msgId, cliMsgId)
           .then((m) => {
             if (m) broadcast(ch.workspaceId, ch.id, "message_update", { channelId: ch.id, threadId: m.threadId, message: publicMessage(m, ch.workspaceId) });
             else if (retry) setTimeout(() => void apply(false), 3_000).unref?.();
@@ -257,7 +257,7 @@ export function zaloInboxHooks(
       void apply(true);
     },
     onReaction: (r: ChannelReaction) => {
-      void upsertZaloReaction(db, ctx, ch.id, {
+      void upsertInboxReaction(db, ctx, ch.id, {
         threadId: r.threadId,
         msgId: r.targetMsgId,
         reactorId: r.reactorId,
@@ -293,11 +293,11 @@ export async function reactZaloMessage(
   const err = (code: string, message: string) => Object.assign(new Error(message), { code });
   const rt = zaloRuntime(input.channelId);
   if (!rt?.isConnected()) throw err("NOT_CONNECTED", "Kênh Zalo chưa kết nối — vào Channels → Kết nối QR để quét lại.");
-  const msg = await getZaloMessageById(db, ctx, input.channelId, input.threadId, input.messageId);
+  const msg = await getInboxMessageById(db, ctx, input.channelId, input.threadId, input.messageId);
   if (!msg) throw err("MESSAGE_NOT_FOUND", "Không có tin nhắn này trong hội thoại.");
   const cli = typeof msg.meta?.cliMsgId === "string" ? msg.meta.cliMsgId : "";
   if (!msg.msgId || !cli) throw err("CANNOT_REACT", "Tin này không thả cảm xúc được (tin lưu trước bản 1.5.0 hoặc tin do hệ thống gửi).");
-  const thread = await getZaloThread(db, ctx, input.channelId, input.threadId);
+  const thread = await getInboxThread(db, ctx, input.channelId, input.threadId);
   await rt.react({
     threadId: input.threadId,
     peerKind: thread?.kind ?? "direct",
@@ -309,7 +309,7 @@ export async function reactZaloMessage(
   });
 }
 
-export { latestIncomingZaloMessages, ZALO_REACTIONS, isZaloReactionKey };
+export { latestIncomingInboxMessages, ZALO_REACTIONS, isZaloReactionKey };
 
 export function forgetZaloInboxChannel(channelId: string): void {
   inboxState.delete(channelId);
@@ -322,7 +322,7 @@ export async function allowedZaloChannelIds(db: Db, ctx: WorkspaceContext): Prom
   if (hasRole(ctx.role, "operator")) {
     return (await listChannels(db, ctx)).filter((c) => c.kind === "zalo_personal").map((c) => c.id);
   }
-  if (ctx.role === "member") return listUserZaloChannelIds(db, ctx, ctx.userId);
+  if (ctx.role === "member") return listUserInboxChannelIds(db, ctx, ctx.userId);
   return [];
 }
 
@@ -440,7 +440,7 @@ export async function saveOutboundImage(
 }
 
 /** Media cho trình duyệt: bỏ đường dẫn tuyệt đối, thay bằng đường dẫn tương đối trong workspace. */
-function publicMessage(m: ZaloMessageRow, workspaceId: string): ZaloMessageRow {
+function publicMessage(m: InboxMessageRow, workspaceId: string): InboxMessageRow {
   if (!m.media || typeof m.media.localPath !== "string") return m;
   const { localPath, ...rest } = m.media as { localPath: string } & Record<string, unknown>;
   const ws = resolve(join(inboxDataDir, workspaceId));
@@ -611,7 +611,7 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
     const { channelId } = req.params as { channelId: string };
     if (!(await guard(req, reply, channelId))) return;
     const q = req.query as { q?: string; kind?: string; unread?: string; limit?: string; offset?: string; all?: string };
-    const res = await listZaloThreads(db, req.authCtx, channelId, {
+    const res = await listInboxThreads(db, req.authCtx, channelId, {
       ...(q.q ? { q: q.q.slice(0, 100) } : {}),
       ...(q.kind === "direct" || q.kind === "group" ? { kind: q.kind } : {}),
       unreadOnly: q.unread === "1",
@@ -628,8 +628,8 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
     if (!(await guard(req, reply, channelId))) return;
     const q = req.query as { before?: string; limit?: string };
     const [thread, messages] = await Promise.all([
-      getZaloThread(db, req.authCtx, channelId, threadId),
-      listZaloMessages(db, req.authCtx, channelId, threadId, {
+      getInboxThread(db, req.authCtx, channelId, threadId),
+      listInboxMessages(db, req.authCtx, channelId, threadId, {
         ...(q.before ? { beforeId: q.before } : {}),
         limit: Number(q.limit) || 50,
       }),
@@ -640,7 +640,7 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
   app.post("/v1/zalo-inbox/:channelId/threads/:threadId/read", async (req, reply) => {
     const { channelId, threadId } = req.params as { channelId: string; threadId: string };
     if (!(await guard(req, reply, channelId))) return;
-    await markZaloThreadRead(db, req.authCtx, channelId, threadId);
+    await markInboxThreadRead(db, req.authCtx, channelId, threadId);
     return { ok: true };
   });
 
@@ -650,7 +650,7 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
     if (!/^\d{1,30}$/.test(threadId)) return reply.code(400).send({ error: "Mã hội thoại không hợp lệ" });
     const parsed = SendBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Dữ liệu không hợp lệ" });
-    const thread = await getZaloThread(db, req.authCtx, channelId, threadId);
+    const thread = await getInboxThread(db, req.authCtx, channelId, threadId);
     const peerKind = thread?.kind ?? parsed.data.peerKind ?? "direct";
     try {
       const out = await sendZalo(dataDir, {
@@ -687,7 +687,7 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
       threadName = user.name;
       peerKind = "direct";
     } else {
-      const known = await getZaloThread(db, req.authCtx, channelId, threadId);
+      const known = await getInboxThread(db, req.authCtx, channelId, threadId);
       if (known) peerKind = known.kind;
     }
     try {
@@ -724,8 +724,8 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
     if (!(await guard(req, reply, channelId))) return;
     const parsed = AiBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Dữ liệu không hợp lệ" });
-    const existing = await getZaloThread(db, req.authCtx, channelId, threadId);
-    const thread = await setZaloThreadAi(db, req.authCtx, channelId, threadId, {
+    const existing = await getInboxThread(db, req.authCtx, channelId, threadId);
+    const thread = await setInboxThreadAi(db, req.authCtx, channelId, threadId, {
       ...(parsed.data.mode ? { mode: parsed.data.mode } : {}),
       ...(parsed.data.resume ? { resume: true } : {}),
       kind: existing?.kind ?? "direct",
@@ -818,4 +818,4 @@ export function registerZaloInboxRoutes(app: FastifyInstance, deps: { db: Db; da
   });
 }
 
-export type { ZaloThread };
+export type { InboxThread };
