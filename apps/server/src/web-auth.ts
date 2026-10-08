@@ -8,6 +8,7 @@
  * Role `member`: chỉ chat với agent được gán; mọi route khác bị chặn ở đây
  * (allowlist fail-closed) — không phụ thuộc vào việc UI có ẩn menu hay không.
  */
+import { isPersonalChannelKind } from "@penai/channels";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   ROLE_LABELS,
@@ -173,13 +174,13 @@ const MEMBER_ALLOW: Array<{ methods: string[]; path: RegExp }> = [
   { methods: ["POST"], path: /^\/v1\/chat$/ },
   { methods: ["GET"], path: /^\/v1\/chat\/files$/ },
   // Inbox Zalo: quyền theo kênh được gán kiểm tra trong route (zalo-inbox.ts)
-  { methods: ["GET"], path: /^\/v1\/zalo-inbox\/(channels|events)$/ },
-  { methods: ["GET"], path: /^\/v1\/zalo-inbox\/[0-9a-f-]{36}\/(threads|find-phone|file)$/ },
-  { methods: ["GET"], path: /^\/v1\/zalo-inbox\/[0-9a-f-]{36}\/threads\/\d{1,30}\/messages$/ },
-  { methods: ["POST"], path: /^\/v1\/zalo-inbox\/[0-9a-f-]{36}\/threads\/\d{1,30}\/(read|send)$/ },
-  { methods: ["PUT"], path: /^\/v1\/zalo-inbox\/[0-9a-f-]{36}\/threads\/\d{1,30}\/ai$/ },
-  { methods: ["POST"], path: /^\/v1\/zalo-inbox\/[0-9a-f-]{36}\/new$/ },
-  { methods: ["POST"], path: /^\/v1\/zalo-inbox\/[0-9a-f-]{36}\/threads\/\d{1,30}\/messages\/\d{1,19}\/react$/ },
+  { methods: ["GET"], path: /^\/v1\/(?:zalo-)?inbox\/(channels|events)$/ },
+  { methods: ["GET"], path: /^\/v1\/(?:zalo-)?inbox\/[0-9a-f-]{36}\/(threads|find-phone|file)$/ },
+  { methods: ["GET"], path: /^\/v1\/(?:zalo-)?inbox\/[0-9a-f-]{36}\/threads\/[0-9A-Za-z@.%-]{1,80}\/messages$/ },
+  { methods: ["POST"], path: /^\/v1\/(?:zalo-)?inbox\/[0-9a-f-]{36}\/threads\/[0-9A-Za-z@.%-]{1,80}\/(read|send)$/ },
+  { methods: ["PUT"], path: /^\/v1\/(?:zalo-)?inbox\/[0-9a-f-]{36}\/threads\/[0-9A-Za-z@.%-]{1,80}\/ai$/ },
+  { methods: ["POST"], path: /^\/v1\/(?:zalo-)?inbox\/[0-9a-f-]{36}\/new$/ },
+  { methods: ["POST"], path: /^\/v1\/(?:zalo-)?inbox\/[0-9a-f-]{36}\/threads\/[0-9A-Za-z@.%-]{1,80}\/messages\/\d{1,19}\/react$/ },
   // Kết nối AI bên ngoài (MCP) của chính mình
   { methods: ["GET"], path: /^\/v1\/mcp-server$/ },
   { methods: ["DELETE"], path: /^\/v1\/mcp-server\/connections\/[0-9a-f-]{36}$/ },
@@ -377,7 +378,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
         zaloChannelIds: zaloMembers.filter((m) => m.userId === u.id).map((m) => m.channelId),
       })),
       agents: agents.map((a) => ({ id: a.id, key: a.key, name: a.name })),
-      zaloChannels: channels.filter((c) => c.kind === "zalo_personal").map((c) => ({ id: c.id, name: c.name })),
+      zaloChannels: channels.filter((c) => isPersonalChannelKind(c.kind)).map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
       roles: WORKSPACE_ROLES.map((r) => ({ id: r, label: ROLE_LABELS[r] })),
     };
   });

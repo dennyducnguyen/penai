@@ -148,6 +148,15 @@ export interface ChannelDeps {
   onReaction?: (r: ChannelReaction) => void;
   /** Zalo Personal — bản dội lại của tin PenAI vừa gửi mang cliMsgId → bổ sung vào tin đã lưu. */
   onMessageCliId?: (msgId: string, cliMsgId: string) => void;
+  /**
+   * Kênh cá nhân có Inbox — tin CŨ nền tảng gửi về ngay sau khi liên kết thiết bị (WhatsApp).
+   * Đã xếp theo thời gian tăng dần; server lưu tuần tự, không tăng "chưa đọc", không tạm dừng AI.
+   */
+  onHistory?: (entries: ChannelMessageLog[]) => void;
+  /** Thư mục riêng của kênh để adapter giữ trạng thái phiên (WhatsApp: khóa thiết bị liên kết). */
+  stateDir?: string;
+  /** Lưu file nhận được vào thư mục Inbox của kênh → trả đường dẫn tuyệt đối (để Inbox hiển thị lại). */
+  saveInboxFile?: (buf: Buffer, ext: string) => Promise<string>;
 }
 
 /** Một lượt thả/gỡ cảm xúc vào tin nhắn. icon rỗng = gỡ. */
@@ -160,8 +169,8 @@ export interface ChannelReaction {
   reactorName: string;
   /** mã icon Zalo ("/-heart", "/-strong"…) — "" = gỡ */
   icon: string;
-  /** zalo = khách/thành viên nhóm · app = chủ tài khoản trên điện thoại · web/auto/mcp = PenAI thả */
-  source: "zalo" | "app" | "web" | "auto" | "mcp";
+  /** peer (dữ liệu cũ: zalo) = khách/thành viên nhóm · app = chủ tài khoản trên điện thoại · web/auto/mcp = PenAI thả */
+  source: "zalo" | "peer" | "app" | "web" | "auto" | "mcp";
   webUserId?: string;
   at: Date;
 }
@@ -172,8 +181,8 @@ export interface ChannelMessageLog {
   peerKind: "direct" | "group";
   msgId: string;
   direction: "in" | "out";
-  /** zalo = người ngoài gửi tới · app = chủ tài khoản gửi từ điện thoại · agent/web/mcp/api = gửi từ PenAI */
-  source: "zalo" | "app" | "agent" | "web" | "mcp" | "api";
+  /** peer (Zalo cá nhân ghi: zalo) = người ngoài gửi tới · app = chủ tài khoản gửi từ điện thoại · agent/web/mcp/api = gửi từ PenAI */
+  source: "zalo" | "peer" | "app" | "agent" | "web" | "mcp" | "api";
   senderId: string;
   senderName: string;
   webUserId?: string;

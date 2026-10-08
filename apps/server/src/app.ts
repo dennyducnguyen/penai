@@ -189,7 +189,10 @@ import {
   parseWhatsappWebhook,
   parseZaloWebhook,
   parseFeishuWebhook,
-  ZaloPersonalChannel,
+  isPersonalChannel,
+  isPersonalChannelKind,
+  personalPlatformLabel,
+  type PersonalChannel,
   TeamsChannel,
   parseTeamsActivity,
   parseTeamsCardAction,
@@ -269,7 +272,7 @@ import {
   type ResolvedAuth,
 } from "./web-auth.js";
 import { registerLibraryRoutes } from "./library.js";
-import { registerZaloInboxRoutes } from "./inbox.js";
+import { registerInboxRoutes } from "./inbox.js";
 import { buildXlsx, type XlsxCell } from "./xlsx.js";
 import { isMcpPublicPath, registerMcpServerRoutes } from "./mcp-server.js";
 import { registerBrowserRoutes } from "./browser-runtime.js";
@@ -723,7 +726,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerLibraryRoutes(app, { db, dataDir: deps.config.dataDir });
 
   // Inbox Zalo cá nhân (trực chat nhiều người) + PenAI MCP server (Claude/ChatGPT gọi vào)
-  registerZaloInboxRoutes(app, { db, dataDir: deps.config.dataDir });
+  registerInboxRoutes(app, { db, dataDir: deps.config.dataDir });
   registerMcpServerRoutes(app, { db, dataDir: deps.config.dataDir, config: deps.config });
 
   // Trình duyệt của agent: hồ sơ cookie, thử truy cập, phiên đang mở (ws_admin)
@@ -1658,7 +1661,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         .code(400)
         .send({ error: `Kind chưa hỗ trợ. Có: ${supportedChannelKinds().join(", ")}` });
     }
-    if (body.kind !== "zalo_personal" && !body.token.trim()) {
+    if (!isPersonalChannelKind(body.kind) && !body.token.trim()) {
       return reply.code(400).send({ error: "Channel này cần token / credential" });
     }
     if (body.kind === "msteams" && !String(body.config?.["appId"] ?? "").trim()) {
@@ -1748,7 +1751,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const zaloByChannelSender = new Map<string, string>();
     await Promise.all(
       channels
-        .filter((c) => c.kind === "zalo_personal")
+        .filter((c) => isPersonalChannelKind(c.kind))
         .map(async (c) => {
           for (const row of await listInboxObservedPeers(db, ctx, c.id)) {
             zaloByChannelSender.set(`${c.id}:${row.lastSenderId}`, row.lastSenderName);
@@ -1897,27 +1900,43 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     req: FastifyRequest,
     reply: FastifyReply,
     id: string,
-  ): Promise<ZaloPersonalChannel | null> => {
+  ): Promise<PersonalChannel | null> => {
     const row = await getChannelById(db, req.authCtx, id);
     if (!row) {
       void reply.code(404).send({ error: "Channel không tồn tại" });
       return null;
     }
-    if (row.kind !== "zalo_personal") {
-      void reply.code(400).send({ error: "Channel này không phải Zalo Personal" });
+    if (!isPersonalChannelKind(row.kind)) {
+      void reply.code(400).send({ error: "Channel này không phải kênh cá nhân (Zalo cá nhân, WhatsApp cá nhân)" });
       return null;
     }
     const runtime = channelHandlers.get(id)?.channel;
-    if (!(runtime instanceof ZaloPersonalChannel)) {
+    if (!isPersonalChannel(runtime)) {
       void reply.code(409).send({
-        error: "Zalo Personal đang tạm dừng hoặc chưa khởi tạo. Hãy bật channel trước.",
+        error: "Kênh đang tạm dừng hoặc chưa khởi tạo. Hãy bật channel trước.",
       });
       return null;
     }
     return runtime;
   };
 
-  app.get("/v1/channels/:id/zalo-personal/status", async (req, reply) => {
+  // /personal/… là địa chỉ chung cho mọi kênh cá nhân; /zalo-personal/… giữ cho tích hợp đã có
+  for (const seg of ["personal", "zalo-personal"]) {
+  app.post(`/v1/channels/:id/${seg}/pairing-code`, async (req, reply) => {
+    if (!requireRole(req, reply, "ws_admin")) return;
+    const { id } = req.params as { id: string };
+    const b = (req.body ?? {}) as { loginId?: unknown; phone?: unknown };
+    const runtime = await getZaloPersonalRuntime(req, reply, id);
+    if (!runtime) return;
+    if (!runtime.requestPairingCode) return reply.code(400).send({ error: "Kênh này chỉ đăng nhập bằng mã QR" });
+    try {
+      return { code: await runtime.requestPairingCode(String(b.loginId ?? ""), String(b.phone ?? "")) };
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+  });
+
+  app.get(`/v1/channels/:id/${seg}/status`, async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { id } = req.params as { id: string };
     const runtime = await getZaloPersonalRuntime(req, reply, id);
@@ -1925,7 +1944,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { status: runtime.status() };
   });
 
-  app.post("/v1/channels/:id/zalo-personal/login", async (req, reply) => {
+  app.post(`/v1/channels/:id/${seg}/login`, async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { id } = req.params as { id: string };
     const runtime = await getZaloPersonalRuntime(req, reply, id);
@@ -1934,7 +1953,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { loginId: login.id };
   });
 
-  app.get("/v1/channels/:id/zalo-personal/login/:loginId", async (req, reply) => {
+  app.get(`/v1/channels/:id/${seg}/login/:loginId`, async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { id, loginId } = req.params as { id: string; loginId: string };
     const runtime = await getZaloPersonalRuntime(req, reply, id);
@@ -1944,7 +1963,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { login: status };
   });
 
-  app.post("/v1/channels/:id/zalo-personal/logout", async (req, reply) => {
+  app.post(`/v1/channels/:id/${seg}/logout`, async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { id } = req.params as { id: string };
     const runtime = await getZaloPersonalRuntime(req, reply, id);
@@ -1953,7 +1972,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { disconnected: true };
   });
 
-  app.get("/v1/channels/:id/zalo-personal/targets", async (req, reply) => {
+  app.get(`/v1/channels/:id/${seg}/targets`, async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { id } = req.params as { id: string };
     const runtime = await getZaloPersonalRuntime(req, reply, id);
@@ -1961,7 +1980,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { targets: await runtime.listTargets() };
   });
 
-  app.get("/v1/channels/:id/zalo-personal/resolve-phone", async (req, reply) => {
+  app.get(`/v1/channels/:id/${seg}/resolve-phone`, async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { id } = req.params as { id: string };
     const phone = String((req.query as { phone?: string }).phone ?? "").trim();
@@ -1975,7 +1994,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     }
   });
 
-  app.post("/v1/channels/:id/zalo-personal/test-message", async (req, reply) => {
+  app.post(`/v1/channels/:id/${seg}/test-message`, async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { id } = req.params as { id: string };
     const parsed = ZaloPersonalTestBody.safeParse(req.body);
@@ -1992,7 +2011,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   // Chế độ an toàn Zalo: danh sách người/nhóm đã nhắn tới (metadata) và
   // allowlist thread demo. Ngoài allowlist: chỉ quan sát, không gửi/không chạy agent.
-  app.get("/v1/channels/:id/zalo-personal/observed", async (req, reply) => {
+  app.get(`/v1/channels/:id/${seg}/observed`, async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { id } = req.params as { id: string };
     const runtime = await getZaloPersonalRuntime(req, reply, id);
@@ -2033,7 +2052,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { peers, demoThreads, openDirect };
   });
 
-  app.put("/v1/channels/:id/zalo-personal/demo-threads", async (req, reply) => {
+  app.put(`/v1/channels/:id/${seg}/demo-threads`, async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { id } = req.params as { id: string };
     const parsed = ZaloDemoThreadsBody.safeParse(req.body);
@@ -2051,6 +2070,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     runtime.setDemoThreads(parsed.data.threads);
     return { demoThreads: runtime.demoThreads() };
   });
+  }
 
   // ===== Contacts: hồ sơ, nhãn, chỉ dẫn cho AI theo từng người (0029) =====
   // Xem danh sách: mọi role (trừ member). Xem chi tiết + sửa hồ sơ/chỉ dẫn của
@@ -2084,11 +2104,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         ],
       },
     ];
-    const zaloChannels = allChannels.filter((c) => c.kind === "zalo_personal" && (!channelId || c.id === channelId));
+    const zaloChannels = allChannels.filter((c) => isPersonalChannelKind(c.kind) && (!channelId || c.id === channelId));
     for (const zc of zaloChannels) {
       const threads = await listAllInboxThreads(db, req.authCtx, zc.id);
       sheets.push({
-        name: `Danh bạ Zalo - ${zc.name}`,
+        name: `Danh bạ ${personalPlatformLabel(zc.kind)} - ${zc.name}`.slice(0, 31),
         widths: [10, 22, 30, 16, 12, 12, 17, 10, 12],
         rows: [
           ["Loại", "UID / ID", "Tên", "SĐT", "Bạn bè / đang trong nhóm", "Số thành viên", "Tin gần nhất", "Chưa đọc", "AI"],

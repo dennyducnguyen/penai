@@ -6,6 +6,7 @@ import { SlackChannel } from "./slack.js";
 import { WhatsappChannel } from "./whatsapp.js";
 import { ZaloOaChannel } from "./zalo.js";
 import { ZaloPersonalChannel } from "./zalo-personal.js";
+import { WhatsappPersonalChannel } from "./whatsapp-personal.js";
 import { FeishuChannel } from "./feishu.js";
 import { TeamsChannel } from "./teams.js";
 
@@ -19,6 +20,7 @@ const FACTORIES: Record<string, ChannelFactory> = {
   whatsapp: (d) => new WhatsappChannel(d),
   zalo: (d) => new ZaloOaChannel(d),
   zalo_personal: (d) => new ZaloPersonalChannel(d),
+  whatsapp_personal: (d) => new WhatsappPersonalChannel(d),
   feishu: (d) => new FeishuChannel(d),
   msteams: (d) => new TeamsChannel(d),
 };

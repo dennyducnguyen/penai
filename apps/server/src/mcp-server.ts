@@ -63,15 +63,15 @@ import {
 import { McpServer, WebStandardStreamableHTTPServerTransport } from "@penai/mcp";
 import { parseCookies, SESSION_COOKIE, clientIp } from "./web-auth.js";
 import {
-  allowedZaloChannelIds,
+  allowedInboxChannelIds,
   ImageInputError,
   readInboxConfig,
-  reactZaloMessage,
+  reactInboxMessage,
   latestIncomingInboxMessages,
-  isZaloRejected,
+  isPlatformRejected,
   prepareOutboundImage,
-  sendZalo,
-  zaloRuntimeFor,
+  sendInbox,
+  inboxRuntimeFor,
 } from "./inbox.js";
 
 export const MCP_SCOPES = ["zalo:read", "zalo:send", "zalo:messages"] as const;
@@ -200,7 +200,7 @@ async function resolveChannel(
   p: McpPrincipal,
   channelId: string | undefined,
 ): Promise<{ id: string; name: string } | ToolResult> {
-  const allowed = await allowedZaloChannelIds(deps.db, p.ctx);
+  const allowed = await allowedInboxChannelIds(deps.db, p.ctx);
   if (!allowed.length) {
     return fail("NO_CHANNEL", "Tài khoản này chưa được trực kênh Zalo nào (cần quyền Vận hành trở lên hoặc được quản trị gán kênh).");
   }
@@ -210,7 +210,7 @@ async function resolveChannel(
     return c ? { id: c.id, name: c.name } : fail("CHANNEL_NOT_ALLOWED", "Không có quyền với channel_id này. Gọi zalo_list_channels để xem kênh được dùng.");
   }
   if (channels.length === 1) return { id: channels[0]!.id, name: channels[0]!.name };
-  const connected = channels.filter((c) => zaloRuntimeFor(c.id)?.isConnected());
+  const connected = channels.filter((c) => inboxRuntimeFor(c.id)?.isConnected());
   if (connected.length === 1) return { id: connected[0]!.id, name: connected[0]!.name };
   return fail("CHANNEL_REQUIRED", "Có nhiều kênh Zalo — truyền channel_id (lấy từ zalo_list_channels).", {
     channels: channels.map((c) => ({ channel_id: c.id, name: c.name })),
@@ -221,7 +221,7 @@ const isResult = (v: unknown): v is ToolResult => !!v && typeof v === "object" &
 
 /** Kênh người này dùng được VÀ quản trị đã bật "cho ứng dụng AI đọc tin nhắn". */
 async function messageReadableChannels(deps: ToolDeps, ctx: WorkspaceContext): Promise<string[]> {
-  const allowed = await allowedZaloChannelIds(deps.db, ctx);
+  const allowed = await allowedInboxChannelIds(deps.db, ctx);
   if (!allowed.length) return [];
   return (await listChannels(deps.db, ctx))
     .filter((c) => allowed.includes(c.id) && readInboxConfig((c.config as Record<string, unknown>) ?? {}).mcpReadMessages)
@@ -324,12 +324,12 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
   }
 
   reg("zalo_list_channels", "Danh sách kênh Zalo", "Các kênh Zalo cá nhân bạn được dùng và trạng thái kết nối.", "zalo:read", {}, true, async () => {
-    const allowed = await allowedZaloChannelIds(deps.db, p.ctx);
+    const allowed = await allowedInboxChannelIds(deps.db, p.ctx);
     const channels = (await listChannels(deps.db, p.ctx)).filter((c) => allowed.includes(c.id));
     return ok({
       success: true,
       channels: channels.map((c) => {
-        const rt = zaloRuntimeFor(c.id);
+        const rt = inboxRuntimeFor(c.id);
         return { channel_id: c.id, name: c.name, connected: rt?.isConnected() ?? false, zalo_account: rt?.accountInfo()?.name ?? null };
       }),
     });
@@ -375,7 +375,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
     async (args) => {
       const ch = await resolveChannel(deps, p, args.channel_id);
       if (isResult(ch)) return ch;
-      const rt = zaloRuntimeFor(ch.id);
+      const rt = inboxRuntimeFor(ch.id);
       if (!rt?.isConnected()) return fail("NOT_CONNECTED", "Kênh Zalo chưa kết nối — vào PenAI quét QR lại.", { connection_lost: true });
       const user = await rt.findUserByPhone(args.phone);
       return ok({ success: true, found: !!user, user: user ? { uid: user.uid, name: user.name } : null });
@@ -402,7 +402,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
           : fail("SEND_IN_PROGRESS", "Đang gửi — thử lại sau vài giây với cùng request_id.", { retry_after_seconds: 5 });
       }
     }
-    const rt = zaloRuntimeFor(ch.id);
+    const rt = inboxRuntimeFor(ch.id);
     if (!rt?.isConnected()) return fail("NOT_CONNECTED", "Kênh Zalo chưa kết nối — vào PenAI quét QR lại.", { connection_lost: true });
     const lock = sendLocks.get(ch.id) ?? { busy: false, nextAt: 0 };
     sendLocks.set(ch.id, lock);
@@ -469,7 +469,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
       recipient = threadId;
       attempted = true;
       lock.nextAt = Date.now() + SEND_INTERVAL_MS;
-      const out = await sendZalo(deps.dataDir, {
+      const out = await sendInbox(deps.dataDir, {
         channelId: ch.id,
         workspaceId: p.ctx.workspaceId,
         threadId,
@@ -494,7 +494,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
       const e = err as Error & { code?: string };
       if (e instanceof ImageInputError) result = fail("IMAGE_INVALID", e.message);
       else if (e.code === "NOT_CONNECTED") result = fail("NOT_CONNECTED", e.message, { connection_lost: true });
-      else if (isZaloRejected(e))
+      else if (isPlatformRejected(e))
         result = fail("ZALO_REJECTED", `Zalo từ chối, tin chưa được gửi: ${e.message}. Kiểm tra lại người nhận (uid/nhóm) — không gửi được cho chính tài khoản đang kết nối.`);
       else if (attempted)
         result = fail("SEND_OUTCOME_UNKNOWN", `Chưa xác định tin đã tới Zalo hay chưa (${e.message}). Kiểm tra Inbox; không tự gửi lại bằng mã mới.`, {
@@ -701,7 +701,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
       const done: string[] = [];
       for (const m of rows) {
         try {
-          await reactZaloMessage(deps.db, p.ctx, {
+          await reactInboxMessage(deps.db, p.ctx, {
             channelId: ch.id,
             threadId: args.thread_id,
             messageId: m.id,
@@ -735,7 +735,7 @@ function buildMcpServer(deps: ToolDeps, p: McpPrincipal, brandName: string, read
       const ch = await resolveChannel(deps, p, args.channel_id);
       if (isResult(ch)) return ch;
       try {
-        await reactZaloMessage(deps.db, p.ctx, {
+        await reactInboxMessage(deps.db, p.ctx, {
           channelId: ch.id,
           threadId: args.thread_id,
           messageId: args.message_id,
@@ -1310,7 +1310,7 @@ export function registerMcpServerRoutes(app: FastifyInstance, deps: { db: Db; da
       ...(isAdmin ? {} : { userId: req.authCtx.userId }),
     });
     const activity = await listRecentMcpServerSends(db, req.authCtx, isAdmin ? { limit: 50 } : { userId: req.authCtx.userId, limit: 50 });
-    const allowedIds = await allowedZaloChannelIds(db, req.authCtx);
+    const allowedIds = await allowedInboxChannelIds(db, req.authCtx);
     const zaloChannels = (await listChannels(db, req.authCtx))
       .filter((c) => allowedIds.includes(c.id))
       .map((c) => ({ id: c.id, name: c.name, mcpReadMessages: readInboxConfig((c.config as Record<string, unknown>) ?? {}).mcpReadMessages }));

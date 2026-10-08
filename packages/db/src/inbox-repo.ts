@@ -3,9 +3,10 @@ import type { WorkspaceContext } from "@penai/shared";
 import type { Db } from "./client.js";
 import { withWorkspace } from "./context.js";
 
-// ===== Zalo Inbox (0031): hội thoại + tin nhắn kênh zalo_personal =====
+// ===== Inbox (0031, 0034): hội thoại + tin nhắn của các kênh cá nhân (Zalo, WhatsApp) =====
 
-export type InboxMessageSource = "zalo" | "app" | "agent" | "web" | "mcp" | "api";
+/** peer = người ngoài gửi tới (dữ liệu Zalo trước 1.9.0 ghi "zalo") */
+export type InboxMessageSource = "zalo" | "peer" | "app" | "agent" | "web" | "mcp" | "api";
 
 export interface InboxMessageInput {
   threadId: string;
@@ -158,8 +159,11 @@ export async function recordInboxMessage(
   ctx: WorkspaceContext,
   channelId: string,
   input: InboxMessageInput,
-  opts: { pauseMinutes?: number } = {},
+  opts: { pauseMinutes?: number; history?: boolean } = {},
 ): Promise<{ message: InboxMessageRow; thread: InboxThread } | null> {
+  // history = tin CŨ nhập về sau khi liên kết: không tăng "chưa đọc", không tạm dừng AI,
+  // không đè "tin gần nhất" của hội thoại nếu đã có tin mới hơn.
+  const history = opts.history === true;
   return withWorkspace(db, ctx, async (tx) => {
     const ins = await tx.execute(sql`
       INSERT INTO inbox_messages (workspace_id, channel_id, thread_id, msg_id, direction, source,
@@ -174,12 +178,12 @@ export async function recordInboxMessage(
     const row = ins.rows[0] as Raw | undefined;
     if (!row) return null;
     const preview = inboxPreview(input.contentType, input.text);
-    const human = input.direction === "out" && (input.source === "web" || input.source === "app");
+    const human = !history && input.direction === "out" && (input.source === "web" || input.source === "app");
     const pause =
       human && (opts.pauseMinutes ?? 0) > 0
         ? new Date(Date.now() + (opts.pauseMinutes ?? 0) * 60_000).toISOString()
         : null;
-    const unreadInc = input.direction === "in" ? 1 : 0;
+    const unreadInc = input.direction === "in" && !history ? 1 : 0;
     const th = await tx.execute(sql`
       INSERT INTO inbox_threads (workspace_id, channel_id, thread_id, kind, name, last_message,
         last_message_at, last_direction, unread_count, paused_until, updated_at)
@@ -189,9 +193,11 @@ export async function recordInboxMessage(
       ON CONFLICT (channel_id, thread_id) DO UPDATE SET
         name = CASE WHEN EXCLUDED.name <> '' AND (inbox_threads.name = '' OR inbox_threads.kind = 'direct')
                     THEN EXCLUDED.name ELSE inbox_threads.name END,
-        last_message = EXCLUDED.last_message,
+        last_message = CASE WHEN inbox_threads.last_message_at IS NOT NULL AND inbox_threads.last_message_at > EXCLUDED.last_message_at
+                            THEN inbox_threads.last_message ELSE EXCLUDED.last_message END,
         last_message_at = GREATEST(COALESCE(inbox_threads.last_message_at, EXCLUDED.last_message_at), EXCLUDED.last_message_at),
-        last_direction = EXCLUDED.last_direction,
+        last_direction = CASE WHEN inbox_threads.last_message_at IS NOT NULL AND inbox_threads.last_message_at > EXCLUDED.last_message_at
+                              THEN inbox_threads.last_direction ELSE EXCLUDED.last_direction END,
         -- Người trả lời (web/app) = đã đọc hết tin trước đó
         unread_count = CASE WHEN ${human} THEN 0 ELSE inbox_threads.unread_count + ${unreadInc} END,
         paused_until = COALESCE(EXCLUDED.paused_until, inbox_threads.paused_until),
@@ -584,7 +590,7 @@ export async function listUserInboxChannelIds(
   return (res.rows as Raw[]).map((r) => String(r.channel_id));
 }
 
-/** Đặt LẠI danh sách kênh Zalo member được trực. Kênh không phải zalo_personal bị bỏ qua. */
+/** Đặt LẠI danh sách kênh member được trực. Chỉ nhận kênh cá nhân có Inbox (Zalo, WhatsApp). */
 export async function setUserInboxChannels(
   db: Db,
   ctx: WorkspaceContext,
@@ -596,7 +602,7 @@ export async function setUserInboxChannels(
     const valid = ids.length
       ? (
           (
-            await tx.execute(sql`SELECT id FROM channels WHERE kind = 'zalo_personal'
+            await tx.execute(sql`SELECT id FROM channels WHERE kind IN ('zalo_personal', 'whatsapp_personal')
               AND id IN (${sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `)})`)
           ).rows as Raw[]
         ).map((r) => String(r.id))
