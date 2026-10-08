@@ -28,10 +28,12 @@ describe("MCP server — OAuth helpers", () => {
   });
 
   it("scope: mặc định đủ bộ, bỏ scope lạ", () => {
-    expect(parseScopes(undefined)).toEqual(["zalo:read", "zalo:send", "zalo:messages"]);
+    const all = ["zalo:read", "zalo:send", "zalo:messages", "whatsapp:read", "whatsapp:send", "whatsapp:messages"];
+    expect(parseScopes(undefined)).toEqual(all);
     expect(parseScopes("zalo:read offline_access")).toEqual(["zalo:read"]);
-    expect(parseScopes("openid")).toEqual(["zalo:read", "zalo:send", "zalo:messages"]);
+    expect(parseScopes("openid")).toEqual(all);
     expect(parseScopes("zalo:messages")).toEqual(["zalo:messages"]);
+    expect(parseScopes("whatsapp:send zalo:read")).toEqual(["whatsapp:send", "zalo:read"]);
   });
 
   it("đường dẫn công khai (tự xác thực)", () => {
