@@ -61,6 +61,7 @@ import {
   type McpOauthGrant,
 } from "@penai/db";
 import { McpServer, WebStandardStreamableHTTPServerTransport } from "@penai/mcp";
+import { isValidThreadId, normalizeWhatsappPhone } from "@penai/channels";
 import { parseCookies, SESSION_COOKIE, clientIp } from "./web-auth.js";
 import {
   allowedInboxChannelIds,
@@ -451,6 +452,12 @@ function buildMcpServer(
     args: { to?: string; thread_type?: "user" | "group"; phone?: string; message?: string; image_url?: string; request_id?: string; channel_id?: string },
   ): Promise<ToolResult> {
     if (!args.message?.trim() && !args.image_url) return fail("EMPTY", "Cần message hoặc image_url.");
+    if (pf.kind === "whatsapp_personal" && args.to) {
+      // Người nhận WhatsApp: số điện thoại (0901… → 84901…) hoặc mã nhóm "<id>@g.us"
+      if (/^\+?[\d .-]+$/.test(args.to)) args = { ...args, to: normalizeWhatsappPhone(args.to) };
+      else if (args.to.endsWith("@g.us") && !args.thread_type) args = { ...args, thread_type: "group" };
+      if (!isValidThreadId(pf.kind, args.to!)) return fail("INVALID_RECIPIENT", "Người nhận không hợp lệ: dùng số điện thoại kèm mã quốc gia hoặc thread_id từ whatsapp_list_contacts / whatsapp_list_groups.");
+    }
     const ch = await resolveChannel(deps, p, args.channel_id, pf);
     if (isResult(ch)) return ch;
     const principal = `${p.ctx.userId}:${p.grant.clientId}`;
