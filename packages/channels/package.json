@@ -8,10 +8,15 @@
   },
   "dependencies": {
     "@penai/shared": "workspace:*",
-    "grammy": "^1.30.0",
-    "discord.js": "^14.16.0",
     "@slack/bolt": "^4.2.0",
+    "baileys": "7.0.0-rc14",
+    "discord.js": "^14.16.0",
+    "grammy": "^1.30.0",
     "image-dimensions": "^2.6.0",
+    "qrcode": "1.5.4",
     "zca-js": "^2.1.2"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.6"
   }
 }

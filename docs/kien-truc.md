@@ -47,7 +47,7 @@ Monorepo pnpm (nhiều gói trong một kho mã), TypeScript strict, ESM.
 | `apps/server/src/library*.ts`, `vault-*.ts` | Thư viện file theo agent; kho tri thức (chia đoạn, tạo vector, tìm kiếm) |
 | `apps/server/src/cron-runner.ts`, `cron-tools.ts` | Chạy agent theo lịch và gửi kết quả về cuộc trò chuyện đã đặt lịch; phần runtime của tool `cron_*` (agent tự đặt lịch khi chat — [lich-hen.md](lich-hen.md)) |
 | `apps/server/src/memory-worker.ts`, `mcp-manager.ts` | Tóm tắt hội thoại cũ thành trí nhớ; kết nối và tự nối lại MCP |
-| `apps/server/src/zalo-inbox.ts`, `mcp-server.ts` | Inbox Zalo cá nhân (lưu tin, realtime SSE, gửi text/ảnh); PenAI MCP server + OAuth cho Claude/ChatGPT gọi vào ([zalo-personal.md](zalo-personal.md)) |
+| `apps/server/src/inbox.ts`, `mcp-server.ts` | Inbox Zalo cá nhân (lưu tin, realtime SSE, gửi text/ảnh); PenAI MCP server + OAuth cho Claude/ChatGPT gọi vào ([zalo-personal.md](zalo-personal.md)) |
 | `apps/server/src/browser-runtime.ts` | Trình duyệt của agent: một Chromium dùng chung, phiên theo agent + người dùng; API Dashboard → Trình duyệt (hồ sơ cookie mã hóa, thử truy cập) — [trinh-duyet.md](trinh-duyet.md) |
 | `apps/server/src/version.ts` | Phiên bản đang chạy (đọc `release.json` do lệnh cài/cập nhật ghi) |
 | `packages/shared` | Đọc/kiểm tra cấu hình (`config.ts`), mã hóa AES-256-GCM (`crypto.ts`), logger, kiểu dùng chung |
@@ -55,7 +55,7 @@ Monorepo pnpm (nhiều gói trong một kho mã), TypeScript strict, ESM.
 | `packages/core` | `agent-loop.ts` (vòng lặp agent), `scheduler.ts` (làn xử lý song song), `provider-gate.ts` (trần số lời gọi cùng lúc theo provider), `cron.ts` (tính lịch theo múi giờ) |
 | `packages/providers` | `codex/` (ChatGPT, nhiều tài khoản xoay vòng), `claude-code/`, `antigravity/`, `acp/`, `openai-compat.ts`, `gemini.ts`, `dashscope.ts` (Qwen), `anthropic.ts`, `images/` (tạo ảnh), `mock-llm.ts` |
 | `packages/tools` | `builtin/` (42 tool: file, exec, web, trình duyệt, trí nhớ, skill, landing page, tài liệu, vault, KG, tạo ảnh, thẻ duyệt, lịch hẹn `cron_*`…), `browser/` (điều khiển Chromium, đọc cookie, chặn mạng nội bộ), `exec-sandbox.ts` (cách ly lệnh bằng bubblewrap), `custom-tool.ts` |
-| `packages/channels` | `telegram.ts`, `zalo.ts` (Zalo OA), `zalo-personal.ts`, `teams.ts`, `discord.ts`, `slack.ts`, `whatsapp.ts`, `feishu.ts`; `format.ts` (Markdown → HTML Telegram) |
+| `packages/channels` | `telegram.ts`, `zalo.ts` (Zalo OA), `zalo-personal.ts`, `whatsapp-personal.ts` (WhatsApp cá nhân), `personal.ts` (bề mặt chung của kênh cá nhân), `teams.ts`, `discord.ts`, `slack.ts`, `whatsapp.ts`, `feishu.ts`; `format.ts` (Markdown → HTML Telegram) |
 | `packages/mcp` | Kết nối MCP server qua stdio/SSE/HTTP, đăng nhập OAuth |
 | `deploy/` | `install.sh` (cài), `penai` (lệnh quản trị), `templates/` (cấu hình, systemd, nginx, tự cập nhật) |
 | `scripts/` | Công cụ phát triển: `mock-dashboard.ts` (xem Dashboard không cần DB), `print-logo.ts`, script kiểm tra nhanh |

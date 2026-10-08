@@ -154,7 +154,7 @@ function mapOverview(r: Record<string, unknown>): ContactOverview {
     pairing: r.pairing as PairingState,
     hasInstructions: Boolean(r.has_instructions),
     tags: tags.map((t) => ({ id: t.id, name: t.name, color: t.color ?? "" })),
-    peerKind: r.zalo_kind === "group" ? "group" : r.zalo_kind === "user" || r.channel_kind === "zalo_personal" ? "direct" : null,
+    peerKind: r.zalo_kind === "group" ? "group" : r.zalo_kind === "user" || r.channel_kind === "zalo_personal" || r.channel_kind === "whatsapp_personal" ? "direct" : null,
     zaloPhone: str(r.zalo_phone),
   };
 }
@@ -165,8 +165,8 @@ async function queryOverview(db: Db, ctx: WorkspaceContext, contactId: string | 
       SELECT c.id, c.channel_id, c.channel_kind, c.external_id, c.display_name, c.principal_id,
              c.first_seen, c.last_seen,
              ch.name AS channel_name,
-             c.metadata->>'zalo_kind' AS zalo_kind,
-             (SELECT NULLIF(zt.phone, '') FROM zalo_threads zt
+             COALESCE(c.metadata->>'peer_kind', c.metadata->>'zalo_kind') AS zalo_kind,
+             (SELECT NULLIF(zt.phone, '') FROM inbox_threads zt
                WHERE zt.channel_id = c.channel_id AND zt.thread_id = c.external_id) AS zalo_phone,
              pp.display_name AS profile_name,
              COALESCE(pp.ai_instructions, '') <> '' AS has_instructions,

@@ -15,8 +15,8 @@ import {
   upsertConversation,
   listEnabledChannels,
   updateChannel,
-  upsertZaloObservedPeer,
-  getZaloThreadAgentBlock,
+  upsertInboxObservedPeer,
+  getInboxThreadAgentBlock,
   type EnabledChannel,
   recordTraceSafe,
 } from "@penai/db";
@@ -37,7 +37,8 @@ import {
   type OutboundButton,
   type RunHooks,
 } from "@penai/channels";
-import { forgetZaloInboxChannel, zaloInboxHooks } from "./zalo-inbox.js";
+import { forgetInboxChannel, inboxHooks } from "./inbox.js";
+import { isPersonalChannelKind } from "@penai/channels";
 
 /** Handler + channel theo channelId — cho webhook route (WhatsApp, Teams) dùng. */
 export const channelHandlers = new Map<
@@ -551,7 +552,7 @@ function makeInboundHandler(
     // Nhóm Zalo: đệm tin chưa tag làm ngữ cảnh (kể cả tin orchestrator sẽ
     // tiêu thụ) — người dùng hay nhắn vài tin liên tiếp rồi mới tag bot.
     const isZaloGroup =
-      msg.peerKind === "group" && msg.channelKind === "zalo_personal";
+      msg.peerKind === "group" && isPersonalChannelKind(msg.channelKind);
     const chatterKey = `${channel.id}:${msg.chatKey}`;
     if (isZaloGroup && msg.mentioned === false) {
       bufferGroupChatter(chatterKey, msg.senderId, msg.text);
@@ -574,9 +575,9 @@ function makeInboundHandler(
 
     // Inbox Zalo: nhân viên đã tắt AI cho hội thoại này, hoặc vừa trả lời tay
     // (web/điện thoại) → AI im trong lúc tạm dừng.
-    if (msg.channelKind === "zalo_personal") {
+    if (isPersonalChannelKind(msg.channelKind)) {
       const threadId = msg.chatKey.slice(msg.chatKey.indexOf(":") + 1);
-      const block = await getZaloThreadAgentBlock(db, ctx, channel.id, threadId).catch(() => null);
+      const block = await getInboxThreadAgentBlock(db, ctx, channel.id, threadId).catch(() => null);
       if (block) return { kind: "ignore" };
     }
 
@@ -586,7 +587,7 @@ function makeInboundHandler(
     // (kiểu hội thoại nhóm tự nhiên) thì đặt rõ config require_mention: false.
     if (
       msg.peerKind === "group" &&
-      msg.channelKind === "zalo_personal" &&
+      isPersonalChannelKind(msg.channelKind) &&
       channel.config["require_mention"] !== false &&
       msg.mentioned === false
     ) {
@@ -968,7 +969,7 @@ function buildChannel(
     logger.warn(`Bỏ qua channel "${ch.name}" — kind chưa hỗ trợ: ${ch.kind}`);
     return null;
   }
-  if (!ch.tokenEncrypted && ch.kind !== "zalo_personal") {
+  if (!ch.tokenEncrypted && !isPersonalChannelKind(ch.kind)) {
     logger.warn(`Bỏ qua channel "${ch.name}" — thiếu token`);
     return null;
   }
@@ -1008,7 +1009,7 @@ function buildChannel(
       // Zalo Personal: persist danh sách quan sát vào DB — danh sách chờ duyệt
       // (tên + uid, nhóm/cá nhân) sống qua restart. Fire-and-forget, lỗi chỉ log.
       onObserved: (peer) => {
-        void upsertZaloObservedPeer(
+        void upsertInboxObservedPeer(
           rt.db.db,
           systemContext(ch.workspaceId),
           ch.id,
@@ -1018,7 +1019,7 @@ function buildChannel(
         );
       },
       // Inbox trực chat: lưu mọi tin đến/đi + danh bạ (zalo-inbox.ts)
-      ...(ch.kind === "zalo_personal" ? zaloInboxHooks(rt.db.db, ch) : {}),
+      ...(isPersonalChannelKind(ch.kind) ? inboxHooks(rt.db.db, ch, rt.config.dataDir) : {}),
     });
     channelHandlers.set(ch.id, { handler, channel, workspaceId: ch.workspaceId });
     return channel;
@@ -1054,7 +1055,7 @@ export async function applyChannelChange(
   if (!live) return "Đã lưu — restart server (pnpm start) để áp dụng.";
   await live.manager.remove(channelId);
   channelHandlers.delete(channelId);
-  forgetZaloInboxChannel(channelId);
+  forgetInboxChannel(channelId);
   if (!row) return "Đã dừng channel.";
   const channel = buildChannel(live.rt, live.queue, live.manager, row);
   if (!channel) {

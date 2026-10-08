@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { isMcpPublicPath, parseScopes, pkceMatches, validRedirectUri } from "../src/mcp-server.js";
-import { isZaloRejected, loadImageInput, readInboxConfig, sniffImage } from "../src/zalo-inbox.js";
+import { isPlatformRejected, loadImageInput, readInboxConfig, sniffImage } from "../src/inbox.js";
 
 const PNG_1x1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
@@ -28,10 +28,12 @@ describe("MCP server — OAuth helpers", () => {
   });
 
   it("scope: mặc định đủ bộ, bỏ scope lạ", () => {
-    expect(parseScopes(undefined)).toEqual(["zalo:read", "zalo:send", "zalo:messages"]);
+    const all = ["zalo:read", "zalo:send", "zalo:messages", "whatsapp:read", "whatsapp:send", "whatsapp:messages"];
+    expect(parseScopes(undefined)).toEqual(all);
     expect(parseScopes("zalo:read offline_access")).toEqual(["zalo:read"]);
-    expect(parseScopes("openid")).toEqual(["zalo:read", "zalo:send", "zalo:messages"]);
+    expect(parseScopes("openid")).toEqual(all);
     expect(parseScopes("zalo:messages")).toEqual(["zalo:messages"]);
+    expect(parseScopes("whatsapp:send zalo:read")).toEqual(["whatsapp:send", "zalo:read"]);
   });
 
   it("đường dẫn công khai (tự xác thực)", () => {
@@ -69,9 +71,9 @@ describe("Inbox — cấu hình + ảnh gửi đi", () => {
 
   it("phân biệt lỗi Zalo từ chối (chắc chắn chưa gửi) với lỗi mạng", () => {
     const zalo = Object.assign(new Error("Tham số không hợp lệ"), { name: "ZcaApiError" });
-    expect(isZaloRejected(zalo)).toBe(true);
-    expect(isZaloRejected(Object.assign(new Error("x"), { zaloRejected: true }))).toBe(true);
-    expect(isZaloRejected(new Error("ETIMEDOUT"))).toBe(false);
+    expect(isPlatformRejected(zalo)).toBe(true);
+    expect(isPlatformRejected(Object.assign(new Error("x"), { zaloRejected: true }))).toBe(true);
+    expect(isPlatformRejected(new Error("ETIMEDOUT"))).toBe(false);
   });
 
   it("chặn URL trỏ vào mạng nội bộ (SSRF)", async () => {

@@ -9,33 +9,33 @@ import {
   getMcpOauthGrant,
   getMcpOauthToken,
   getMcpServerSend,
-  getZaloThreadAgentBlock,
+  getInboxThreadAgentBlock,
   insertMcpOauthClient,
   insertMcpOauthPending,
   insertMcpOauthTokens,
   insertMcpServerSend,
   listMcpOauthGrants,
-  listUserZaloChannelIds,
-  listZaloMessages,
-  listZaloThreads,
-  countZaloMessages,
-  searchZaloMessages,
-  upsertZaloReaction,
-  getZaloMessageById,
-  latestIncomingZaloMessages,
-  setZaloMessageCliId,
+  listUserInboxChannelIds,
+  listInboxMessages,
+  listInboxThreads,
+  countInboxMessages,
+  searchInboxMessages,
+  upsertInboxReaction,
+  getInboxMessageById,
+  latestIncomingInboxMessages,
+  setInboxMessageCliId,
   upsertContact,
   listContactsOverview,
   exportContacts,
-  listAllZaloThreads,
+  listAllInboxThreads,
   lookupMcpGrantPrincipal,
   markMcpRefreshUsed,
-  markZaloThreadRead,
-  recordZaloMessage,
+  markInboxThreadRead,
+  recordInboxMessage,
   revokeMcpOauthGrant,
-  setUserZaloChannels,
-  setZaloThreadAi,
-  upsertZaloContacts,
+  setUserInboxChannels,
+  setInboxThreadAi,
+  upsertInboxContacts,
   type DbHandle,
 } from "../src/index.js";
 import { adminQuery, createTestFixtures, setupTestDatabase, TEST_APP_URL, type TestFixtures } from "../src/testing.js";
@@ -75,18 +75,18 @@ const msg = (over: Record<string, unknown> = {}) => ({
 
 describe("Zalo Inbox (0031)", () => {
   it("ghi tin + tạo hội thoại, trùng msg_id thì bỏ qua", async () => {
-    const r = await recordZaloMessage(dbh.db, ctxA(), chA, msg());
+    const r = await recordInboxMessage(dbh.db, ctxA(), chA, msg());
     expect(r?.thread).toMatchObject({ threadId: "1001", name: "Chị Lan", unreadCount: 1, kind: "direct" });
-    expect(await recordZaloMessage(dbh.db, ctxA(), chA, msg())).toBeNull();
-    const list = await listZaloThreads(dbh.db, ctxA(), chA, { withMessagesOnly: true });
+    expect(await recordInboxMessage(dbh.db, ctxA(), chA, msg())).toBeNull();
+    const list = await listInboxThreads(dbh.db, ctxA(), chA, { withMessagesOnly: true });
     expect(list.total).toBe(1);
     expect(list.threads[0]?.lastMessage).toBe("Còn hàng không em?");
   });
 
   it("nhân viên trả lời (web) → hết chưa đọc + AI tạm dừng; agent trả lời không tạm dừng", async () => {
-    await recordZaloMessage(dbh.db, ctxA(), chA, msg({ msgId: "m-2", direction: "out", source: "agent", text: "Dạ còn ạ" }), { pauseMinutes: 30 });
-    expect(await getZaloThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBeNull();
-    const r = await recordZaloMessage(
+    await recordInboxMessage(dbh.db, ctxA(), chA, msg({ msgId: "m-2", direction: "out", source: "agent", text: "Dạ còn ạ" }), { pauseMinutes: 30 });
+    expect(await getInboxThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBeNull();
+    const r = await recordInboxMessage(
       dbh.db,
       ctxA(),
       chA,
@@ -95,74 +95,74 @@ describe("Zalo Inbox (0031)", () => {
     );
     expect(r?.thread.unreadCount).toBe(0);
     expect(r?.message.webUserName).toBeTruthy();
-    expect(await getZaloThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBe("paused");
-    await setZaloThreadAi(dbh.db, ctxA(), chA, "1001", { resume: true });
-    expect(await getZaloThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBeNull();
-    await setZaloThreadAi(dbh.db, ctxA(), chA, "1001", { mode: "off" });
-    expect(await getZaloThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBe("off");
+    expect(await getInboxThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBe("paused");
+    await setInboxThreadAi(dbh.db, ctxA(), chA, "1001", { resume: true });
+    expect(await getInboxThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBeNull();
+    await setInboxThreadAi(dbh.db, ctxA(), chA, "1001", { mode: "off" });
+    expect(await getInboxThreadAgentBlock(dbh.db, ctxA(), chA, "1001")).toBe("off");
   });
 
   it("danh sách tin theo thứ tự cũ → mới, phân trang lùi", async () => {
-    const all = await listZaloMessages(dbh.db, ctxA(), chA, "1001");
+    const all = await listInboxMessages(dbh.db, ctxA(), chA, "1001");
     expect(all.map((m) => m.msgId)).toEqual(["m-1", "m-2", "m-3"]);
-    const older = await listZaloMessages(dbh.db, ctxA(), chA, "1001", { beforeId: all[2]!.id, limit: 1 });
+    const older = await listInboxMessages(dbh.db, ctxA(), chA, "1001", { beforeId: all[2]!.id, limit: 1 });
     expect(older.map((m) => m.msgId)).toEqual(["m-2"]);
   });
 
   it("đồng bộ danh bạ: bạn bè + nhóm, tìm theo tên/SĐT, không đè hội thoại đang có", async () => {
-    await upsertZaloContacts(dbh.db, ctxA(), chA, [
+    await upsertInboxContacts(dbh.db, ctxA(), chA, [
       { threadId: "1001", kind: "direct", name: "Lan Nguyễn", phone: "0901234567" },
       { threadId: "2002", kind: "direct", name: "Anh Minh" },
       { threadId: "g-9", kind: "group", name: "Nhóm đại lý", memberCount: 25 },
     ]);
-    const direct = await listZaloThreads(dbh.db, ctxA(), chA, { kind: "direct", stableOrder: true });
+    const direct = await listInboxThreads(dbh.db, ctxA(), chA, { kind: "direct", stableOrder: true });
     expect(direct.threads.map((t) => t.threadId)).toEqual(["1001", "2002"]);
     expect(direct.threads[0]).toMatchObject({ isContact: true, phone: "0901234567", lastMessage: "Em gửi báo giá nhé" });
-    const found = await listZaloThreads(dbh.db, ctxA(), chA, { q: "0901" });
+    const found = await listInboxThreads(dbh.db, ctxA(), chA, { q: "0901" });
     expect(found.threads.map((t) => t.threadId)).toEqual(["1001"]);
-    const groups = await listZaloThreads(dbh.db, ctxA(), chA, { kind: "group" });
+    const groups = await listInboxThreads(dbh.db, ctxA(), chA, { kind: "group" });
     expect(groups.threads[0]).toMatchObject({ name: "Nhóm đại lý", memberCount: 25 });
-    await markZaloThreadRead(dbh.db, ctxA(), chA, "1001");
+    await markInboxThreadRead(dbh.db, ctxA(), chA, "1001");
   });
 
   it("đếm + tìm trong nội dung tin (không phân biệt hoa thường, ký tự % an toàn)", async () => {
-    expect(await countZaloMessages(dbh.db, ctxA(), chA, "1001")).toBe(3);
-    const hits = await searchZaloMessages(dbh.db, ctxA(), chA, "BÁO GIÁ");
+    expect(await countInboxMessages(dbh.db, ctxA(), chA, "1001")).toBe(3);
+    const hits = await searchInboxMessages(dbh.db, ctxA(), chA, "BÁO GIÁ");
     expect(hits.map((h) => h.msgId)).toEqual(["m-3"]);
     expect(hits[0]).toMatchObject({ threadId: "1001", threadKind: "direct" });
-    expect(await searchZaloMessages(dbh.db, ctxA(), chA, "%")).toEqual([]);
-    expect(await searchZaloMessages(dbh.db, ctxA(), chA, "còn", { threadId: "khac" })).toEqual([]);
-    expect(await searchZaloMessages(dbh.db, ctxB(), chA, "báo giá")).toEqual([]);
-    const big = await listZaloMessages(dbh.db, ctxA(), chA, "1001", { limit: 1500, maxLimit: 2000 });
+    expect(await searchInboxMessages(dbh.db, ctxA(), chA, "%")).toEqual([]);
+    expect(await searchInboxMessages(dbh.db, ctxA(), chA, "còn", { threadId: "khac" })).toEqual([]);
+    expect(await searchInboxMessages(dbh.db, ctxB(), chA, "báo giá")).toEqual([]);
+    const big = await listInboxMessages(dbh.db, ctxA(), chA, "1001", { limit: 1500, maxLimit: 2000 });
     expect(big).toHaveLength(3);
   });
 
   it("cảm xúc: thả, đổi, dội lại giữ nguồn, gỡ; tin có cliMsgId mới thả được", async () => {
-    await recordZaloMessage(dbh.db, ctxA(), chA, msg({ msgId: "m-rx", text: "cho em hỏi giá", meta: { cliMsgId: "c-rx" } }));
-    let rx = await upsertZaloReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "me", reactorName: "Shop", icon: "/-heart", source: "web", webUserId: fx.userId });
+    await recordInboxMessage(dbh.db, ctxA(), chA, msg({ msgId: "m-rx", text: "cho em hỏi giá", meta: { cliMsgId: "c-rx" } }));
+    let rx = await upsertInboxReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "me", reactorName: "Shop", icon: "/-heart", source: "web", webUserId: fx.userId });
     expect(rx).toHaveLength(1);
     expect(rx[0]).toMatchObject({ icon: "/-heart", source: "web" });
     expect(rx[0]?.webUserName).toBeTruthy();
     // bản dội lại từ điện thoại (app) cùng icon → giữ nguồn web
-    rx = await upsertZaloReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "me", reactorName: "", icon: "/-heart", source: "app" });
+    rx = await upsertInboxReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "me", reactorName: "", icon: "/-heart", source: "app" });
     expect(rx[0]).toMatchObject({ source: "web", reactorName: "Shop" });
-    rx = await upsertZaloReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "1001", reactorName: "Chị Lan", icon: "/-strong", source: "zalo" });
+    rx = await upsertInboxReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "1001", reactorName: "Chị Lan", icon: "/-strong", source: "zalo" });
     expect(rx.map((r) => r.icon)).toEqual(["/-heart", "/-strong"]);
-    const all = await listZaloMessages(dbh.db, ctxA(), chA, "1001");
+    const all = await listInboxMessages(dbh.db, ctxA(), chA, "1001");
     const target = all.find((m) => m.msgId === "m-rx")!;
     expect(target.canReact).toBe(true);
     expect(target.reactions?.length).toBe(2);
     expect(all.find((m) => m.msgId === "m-1")?.canReact).toBe(false);
-    const one = await getZaloMessageById(dbh.db, ctxA(), chA, "1001", target.id);
+    const one = await getInboxMessageById(dbh.db, ctxA(), chA, "1001", target.id);
     expect(one?.reactions?.length).toBe(2);
-    const latest = await latestIncomingZaloMessages(dbh.db, ctxA(), chA, "1001", 3);
+    const latest = await latestIncomingInboxMessages(dbh.db, ctxA(), chA, "1001", 3);
     expect(latest.map((m) => m.msgId)).toEqual(["m-rx"]);
     // tin PenAI gửi: bổ sung cliMsgId từ bản dội lại → thả được
-    expect((await setZaloMessageCliId(dbh.db, ctxA(), chA, "m-3", "c-3"))?.canReact).toBe(true);
-    expect(await setZaloMessageCliId(dbh.db, ctxA(), chA, "khong-co", "c")).toBeNull();
-    rx = await upsertZaloReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "me", reactorName: "", icon: "", source: "web" });
+    expect((await setInboxMessageCliId(dbh.db, ctxA(), chA, "m-3", "c-3"))?.canReact).toBe(true);
+    expect(await setInboxMessageCliId(dbh.db, ctxA(), chA, "khong-co", "c")).toBeNull();
+    rx = await upsertInboxReaction(dbh.db, ctxA(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "me", reactorName: "", icon: "", source: "web" });
     expect(rx.map((r) => r.reactorId)).toEqual(["1001"]);
-    expect(await upsertZaloReaction(dbh.db, ctxB(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "x", reactorName: "", icon: "", source: "web" })).toEqual([]);
+    expect(await upsertInboxReaction(dbh.db, ctxB(), chA, { threadId: "1001", msgId: "m-rx", reactorId: "x", reactorName: "", icon: "", source: "web" })).toEqual([]);
   });
 
   it("Contacts Zalo: người + nhóm có loại, SĐT từ danh bạ Zalo, xuất Excel theo kênh", async () => {
@@ -179,22 +179,22 @@ describe("Zalo Inbox (0031)", () => {
     expect(rows.map((r) => r.externalId).sort()).toEqual(["1001", "g-9"]);
     expect(rows.find((r) => r.externalId === "1001")).toMatchObject({ zaloPhone: "0901234567", userKey: "zalo_personal-1001" });
     expect(await exportContacts(dbh.db, ctxA(), chB)).toEqual([]);
-    const threads = await listAllZaloThreads(dbh.db, ctxA(), chA);
+    const threads = await listAllInboxThreads(dbh.db, ctxA(), chA);
     expect(threads.length).toBeGreaterThanOrEqual(3);
   });
 
   it("cách ly workspace: workspace B không thấy hội thoại của A", async () => {
-    const res = await listZaloThreads(dbh.db, ctxB(), chA, {});
+    const res = await listInboxThreads(dbh.db, ctxB(), chA, {});
     expect(res.total).toBe(0);
-    expect(await listZaloMessages(dbh.db, ctxB(), chA, "1001")).toEqual([]);
+    expect(await listInboxMessages(dbh.db, ctxB(), chA, "1001")).toEqual([]);
   });
 
   it("gán kênh Zalo cho member — bỏ qua kênh không phải zalo_personal / khác workspace", async () => {
-    const ids = await setUserZaloChannels(dbh.db, ctxA(), fx.userId, [chA, chB, "not-a-uuid"]);
+    const ids = await setUserInboxChannels(dbh.db, ctxA(), fx.userId, [chA, chB, "not-a-uuid"]);
     expect(ids).toEqual([chA]);
-    expect(await listUserZaloChannelIds(dbh.db, ctxA(), fx.userId)).toEqual([chA]);
-    await setUserZaloChannels(dbh.db, ctxA(), fx.userId, []);
-    expect(await listUserZaloChannelIds(dbh.db, ctxA(), fx.userId)).toEqual([]);
+    expect(await listUserInboxChannelIds(dbh.db, ctxA(), fx.userId)).toEqual([chA]);
+    await setUserInboxChannels(dbh.db, ctxA(), fx.userId, []);
+    expect(await listUserInboxChannelIds(dbh.db, ctxA(), fx.userId)).toEqual([]);
   });
 
   it("chống gửi trùng MCP theo request_id", async () => {

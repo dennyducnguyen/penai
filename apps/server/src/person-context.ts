@@ -37,6 +37,7 @@ export const PERSON_LIMITS = {
 const CHANNEL_LABELS: Record<string, string> = {
   telegram: "Telegram",
   zalo_personal: "Zalo cá nhân",
+  whatsapp_personal: "WhatsApp cá nhân",
   zalo_oa: "Zalo OA",
   msteams: "Microsoft Teams",
   discord: "Discord",

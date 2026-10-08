@@ -434,7 +434,7 @@ export async function listConversations(db: Db, ctx: WorkspaceContext) {
 
 // ===== Zalo Personal: danh sách quan sát bền vững (0017) =====
 
-export interface ZaloObservedUpsert {
+export interface InboxObservedUpsert {
   chatKey: string;
   threadId: string;
   kind: "direct" | "group";
@@ -445,11 +445,11 @@ export interface ZaloObservedUpsert {
   countMessage: boolean;
 }
 
-export async function upsertZaloObservedPeer(
+export async function upsertInboxObservedPeer(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,
-  input: ZaloObservedUpsert,
+  input: InboxObservedUpsert,
 ): Promise<void> {
   await withWorkspace(db, ctx, (tx) =>
     tx
@@ -482,7 +482,7 @@ export async function upsertZaloObservedPeer(
   );
 }
 
-export async function listZaloObservedPeers(
+export async function listInboxObservedPeers(
   db: Db,
   ctx: WorkspaceContext,
   channelId: string,

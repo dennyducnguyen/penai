@@ -6,5 +6,6 @@ allowBuilds:
   cpu-features: false
   protobufjs: false
   ssh2: false
+  baileys: false
 minimumReleaseAgeExclude:
   - image-dimensions@2.6.0
