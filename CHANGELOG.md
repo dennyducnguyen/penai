@@ -4,6 +4,15 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.11.0 — 2026-10-09
+
+- **Tên danh bạ ở danh sách chờ duyệt Zalo**: ưu tiên tên bạn lưu, sau đó tên đã đồng bộ và tên người gửi. Đổi hoặc xóa tên rồi đồng bộ sẽ cập nhật cả Inbox và danh sách chờ duyệt; dữ liệu tách riêng theo kênh và workspace.
+- **Khách chỉ gửi ảnh**: mặc định xác nhận “Đã nhận hình ạ.” ở ảnh đầu; các ảnh cùng người gửi trong cùng hội thoại cách nhau dưới 30 giây được lưu mà không nhắn lặp. Có yêu cầu kèm ảnh thì AI xử lý bình thường. Inbox → Cài đặt → Khi khách chỉ gửi ảnh cho phép chọn xác nhận ngắn hoặc im lặng.
+- **Kết thúc cuộc gọi Zalo**: bỏ qua tín hiệu hệ thống `chat.recommended` / `sendBubbleMessage`, không chạy AI, không coi là file và không tự thả cảm xúc.
+- **Gửi bộ ảnh**: các ảnh JPG/PNG/WebP liền nhau trong một lượt gửi được gom thành bộ, tối đa 20 ảnh mỗi bộ và không vượt giới hạn tài khoản. GIF/video/tài liệu gửi riêng. Yêu cầu gửi được điều tiết theo tài khoản, cách nhau ít nhất 0,5 giây; bộ lỗi giữa chừng không tự gửi lại, từng ảnh đã xác nhận được ghi riêng vào Inbox.
+
+Cập nhật: `sudo penai update`. Không cần nâng cấp database hoặc quét lại QR. Bộ ảnh vẫn gồm nhiều yêu cầu gửi bên dưới; điều tiết tốc độ không bảo đảm tài khoản sẽ không bị Zalo giới hạn. Ảnh đã nhận được lưu trên đĩa; AI tự đọc lại tối đa 5 ảnh gần đây trong phiên đang chạy.
+
 ## 1.10.0 — 2026-10-09
 
 - **Tên danh bạ Zalo trong Inbox**: ưu tiên tên bạn tự lưu, hiện thêm tên Zalo gốc bên dưới khi khác nhau; tìm kiếm theo cả hai tên.

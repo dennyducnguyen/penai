@@ -59,6 +59,7 @@ import {
   type ZaloSendSource,
 } from "@penai/channels";
 import { channelHandlers } from "./channels-runtime.js";
+import { readPhotoAcknowledgement } from "./photo-burst.js";
 
 // ===== Cấu hình sống theo kênh =====
 
@@ -77,6 +78,7 @@ export function readInboxConfig(config: Record<string, unknown>): {
   mcpReadMessages: boolean;
   autoReaction: "heart" | "like" | null;
   agentReply: boolean;
+  photoAck: "short" | "off";
 } {
   const raw = Number(config["inbox_pause_minutes"]);
   return {
@@ -88,6 +90,7 @@ export function readInboxConfig(config: Record<string, unknown>): {
     autoReaction: parseAutoReaction(config),
     // Công tắc "Agent tự trả lời" (Channels → Sửa): mặc định bật.
     agentReply: config["agent_reply"] !== false,
+    photoAck: readPhotoAcknowledgement(config),
   };
 }
 
@@ -565,6 +568,7 @@ const InboxSettingsBody = z.object({
   pauseMinutes: z.number().int().min(0).max(1440).optional(),
   mcpReadMessages: z.boolean().optional(),
   autoReaction: z.enum(["off", "heart", "like"]).optional(),
+  photoAck: z.enum(["short", "off"]).optional(),
 });
 
 const ReactBody = z.object({ reaction: z.enum(["heart", "like", "haha", "wow", "cry", "angry", "none"]) });
@@ -616,6 +620,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
           mcpReadMessages: cfg.mcpReadMessages,
           autoReaction: cfg.autoReaction,
           agentReply: cfg.agentReply,
+          photoAck: cfg.photoAck,
         };
       }),
       canManage: hasRole(req.authCtx.role, "operator"),
@@ -825,6 +830,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     if (parsed.data.pauseMinutes !== undefined) config["inbox_pause_minutes"] = parsed.data.pauseMinutes;
     if (parsed.data.mcpReadMessages !== undefined) config["mcp_read_messages"] = parsed.data.mcpReadMessages;
     if (parsed.data.autoReaction !== undefined) config["auto_reaction"] = parsed.data.autoReaction;
+    if (parsed.data.photoAck !== undefined) config["photo_ack"] = parsed.data.photoAck;
     await updateChannel(db, req.authCtx, channelId, { config });
     const cfg = readInboxConfig(config);
     // Đặt "số phút AI tạm im" về 0 = không tạm dừng nữa → gỡ luôn các lượt tạm dừng đang treo,

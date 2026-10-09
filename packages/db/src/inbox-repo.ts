@@ -74,6 +74,18 @@ export interface InboxMessageRow {
 
 type Raw = Record<string, unknown>;
 
+/** Resolve display names after merging observed metadata and live listener data. */
+export async function inboxPeerNames(db: Db, ctx: WorkspaceContext, channelId: string, ids: string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  return withWorkspace(db, ctx, async (tx) => {
+    const result = await tx.execute(sql`SELECT thread_id,
+      COALESCE(NULLIF(contact_alias, ''), NULLIF(name, '')) AS display_name
+      FROM inbox_threads WHERE channel_id = ${channelId} AND kind = 'direct'
+      AND thread_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`);
+    return new Map((result.rows as Raw[]).filter((r) => r.display_name).map((r) => [String(r.thread_id), String(r.display_name)]));
+  });
+}
+
 function iso(v: unknown): string | null {
   if (v == null) return null;
   return v instanceof Date ? v.toISOString() : new Date(String(v)).toISOString();
