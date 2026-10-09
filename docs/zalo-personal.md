@@ -146,8 +146,8 @@ Quyền tính theo tài khoản đã cấp, ở thời điểm **hiện tại**:
 | `zalo_list_contacts` | read | `query?`, `limit?` (≤100), `cursor?`, `channel_id?` → `uid`, tên, SĐT, `is_friend` |
 | `zalo_list_groups` | read | như trên → `group_id`, tên, số thành viên |
 | `zalo_find_user_by_phone` | read | `phone` → `uid`, tên |
-| `zalo_send_message` | send | `to` (uid / group_id), `thread_type?`, `message?`, `image_url?`, `request_id?`, `channel_id?` — cũng dùng để **trả lời vào hội thoại** (`to` = `thread_id`) |
-| `zalo_send_message_by_phone` | send | `phone`, `message?`, `image_url?`, `request_id?`, `channel_id?` |
+| `zalo_send_message` | send | `to` (uid / group_id), `thread_type?`, `message?`, `image_url?` / `image_urls?`, `request_id?`, `channel_id?` — cũng dùng để **trả lời vào hội thoại** (`to` = `thread_id`) |
+| `zalo_send_message_by_phone` | send | `phone`, `message?`, `image_url?` / `image_urls?`, `request_id?`, `channel_id?` |
 | `zalo_react_latest` | send | `thread_id`, `reaction?` (heart mặc định / like / haha / wow / cry / angry / none), `count?` (≤5) → thả vào tin mới nhất của khách, không cần quyền đọc tin |
 | `zalo_react_message` | send | `thread_id`, `message_id` (từ `zalo_get_messages` / `zalo_search_messages`), `reaction` |
 | `zalo_list_conversations` | messages | `query?`, `type?`, `unread_only?`, `limit?` (≤200), `cursor?` → `thread_id`, tên, tin cuối, chưa đọc |
@@ -155,6 +155,7 @@ Quyền tính theo tài khoản đã cấp, ở thời điểm **hiện tại**:
 | `zalo_search_messages` | messages | `query`, `thread_id?`, `since?` (ISO), `limit?` (≤200) → tin khớp từ khóa kèm hội thoại |
 
 - `channel_id` chỉ cần khi workspace có nhiều kênh Zalo.
+- Bộ ảnh Zalo qua MCP: truyền `image_urls: [url1, url2, ...]` (1–20 ảnh, theo thứ tự) trong **một lần gọi** `zalo_send_message` hoặc `zalo_send_message_by_phone`. Không dùng đồng thời `image_url` và `image_urls`. JPG/PNG/WEBP liền nhau được gom thành bộ theo giới hạn tài khoản; GIF gửi riêng. Mọi ảnh được kiểm tra trước khi gửi. Ưu tiên URL công khai cho bộ lớn; đường dẫn file trên máy của ứng dụng AI không phải URL mà PenAI đọc được. Khi nối MCP đã có trước bản cập nhật, tải lại danh sách công cụ hoặc kết nối lại để nhận tham số mới.
 - Ảnh: `image_url` là URL http(s) công khai hoặc `data:image/...;base64,...`; PNG/JPEG/GIF/WEBP ≤ 10 MB. URL trỏ vào mạng nội bộ bị từ chối.
 - **Gửi tuần tự** mỗi kênh 1 tin / 2 giây (dồn → `RATE_LIMITED` kèm `retry_after_seconds`).
 - **Chống gửi trùng**: truyền `request_id` (UUID) mỗi tin; thử lại cùng tin thì giữ nguyên `request_id` + tham số.
