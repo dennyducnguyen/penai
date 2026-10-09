@@ -4,6 +4,13 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.10.0 — 2026-10-09
+
+- **Tên danh bạ Zalo trong Inbox**: ưu tiên tên bạn tự lưu, hiện thêm tên Zalo gốc bên dưới khi khác nhau; tìm kiếm theo cả hai tên.
+- Tên danh bạ được lưu riêng, không bị tin nhắn mới ghi đè. Đồng bộ lại để nhận tên mới hoặc xóa tên đã bỏ trên Zalo; lỗi tải danh bạ vẫn giữ tên cũ.
+
+Cập nhật bằng lệnh penai update. Database tự thêm một cột; không cần quét QR lại. Inbox → Đồng bộ danh bạ để tải lại tên nếu cần.
+
 ## 1.9.1 — 2026-10-08
 
 Sửa lỗi của kênh WhatsApp cá nhân vừa ra ở 1.9.0. Ai đã tạo kênh WhatsApp nên cập nhật ngay.

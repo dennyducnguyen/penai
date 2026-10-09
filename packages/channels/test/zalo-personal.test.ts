@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Message } from "zca-js";
 import {
   chunkZaloText,
+  loadZaloContactAliases,
   normalizeZaloChatKey,
   parseZaloDemoThreads,
   parseZaloAttachmentParams,
@@ -12,6 +13,28 @@ import {
   ZaloPersonalChannel,
 } from "../src/zalo-personal.js";
 import { supportedChannelKinds } from "../src/manager.js";
+
+describe("Zalo contact aliases", () => {
+  it("reads every page, including aliases missing from displayName", async () => {
+    const pages: number[] = [];
+    const result = await loadZaloContactAliases({ getAliasList: async (_count, page) => {
+      pages.push(page!);
+      return { updateTime: "0", items: page === 1
+        ? Array.from({ length: 100 }, (_, i) => ({ userId: String(i), alias: `Contact ${i}` }))
+        : [{ userId: "100", alias: "Quỳnh Thuỷ - IM GROUP" }] };
+    } });
+    expect(pages).toEqual([1, 2]);
+    expect(result.size).toBe(101);
+    expect(result.get("100")).toBe("Quỳnh Thuỷ - IM GROUP");
+  });
+
+  it("rejects partial results rather than clearing aliases from unread pages", async () => {
+    await expect(loadZaloContactAliases({ getAliasList: async (_count, page) => {
+      if (page === 2) throw new Error("Zalo unavailable");
+      return { updateTime: "0", items: Array.from({ length: 100 }, (_, i) => ({ userId: String(i), alias: "Saved" })) };
+    } })).rejects.toThrow("Zalo unavailable");
+  });
+});
 
 function groupData(patch: Record<string, unknown> = {}): Message["data"] {
   return {

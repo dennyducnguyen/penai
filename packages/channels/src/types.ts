@@ -200,6 +200,7 @@ export interface ChannelContact {
   id: string;
   type: "direct" | "group";
   name: string;
+  contactAlias?: string;
   avatar?: string;
   phone?: string;
   memberCount?: number;

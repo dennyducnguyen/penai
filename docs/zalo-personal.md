@@ -59,6 +59,8 @@ Tắt AI **cho một người/nhóm** thay vì cả kênh: Inbox → mở hội 
 
 ## 3. Inbox Zalo
 
+Từ 1.10.0, Inbox ưu tiên **tên bạn tự lưu trong danh bạ Zalo** và hiện tên Zalo gốc bên dưới khi khác nhau. Có thể tìm kiếm bằng cả hai tên. Tên danh bạ lưu riêng nên tin nhắn mới không ghi đè; bấm **Đồng bộ danh bạ** để nhận tên vừa đổi hoặc xóa trên Zalo. Nếu tải tên bị lỗi, PenAI giữ tên đã lưu cho tới lượt đồng bộ thành công.
+
 Dashboard → **📥 Inbox Zalo**.
 
 - **Danh sách hội thoại** (trái): cá nhân 👤 / nhóm 👥, số tin chưa đọc, tìm theo tên / uid / SĐT (tìm cả danh bạ chưa từng chat), lọc Cá nhân / Nhóm / Chưa đọc. Biểu tượng ⏸️ = AI đang tạm dừng, 🚫 = AI đã tắt cho hội thoại.
