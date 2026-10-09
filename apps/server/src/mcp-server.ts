@@ -832,7 +832,8 @@ function buildMcpServer(
   reg(
     "zalo_send_message",
     "Gửi tin Zalo theo uid",
-    "Gửi ngay text và/hoặc ảnh tới người (uid) hoặc nhóm (group_id). Bộ ảnh Zalo: truyền image_urls trong MỘT lần gọi, không gửi từng ảnh. Trả lời hội thoại: to = thread_id. Không có hẹn giờ.",
+    "Gửi ngay text và/hoặc ảnh tới người (uid) hoặc nhóm (group_id). Trả lời hội thoại: to = thread_id. Không có hẹn giờ." +
+      (pf.px === "zalo" ? " Bộ ảnh Zalo: truyền image_urls trong MỘT lần gọi, không gửi từng ảnh." : ""),
     "zalo:send",
     {
       to: z.string().regex(threadIdRe).describe("uid người nhận hoặc group_id (chuỗi số)."),
@@ -850,7 +851,8 @@ function buildMcpServer(
   reg(
     "zalo_send_message_by_phone",
     "Gửi tin Zalo theo SĐT",
-    "Tra số điện thoại trên Zalo, tìm thấy thì gửi ngay text và/hoặc ảnh. Bộ ảnh Zalo: truyền image_urls trong MỘT lần gọi, không gọi từng ảnh.",
+    "Tra số điện thoại trên Zalo, tìm thấy thì gửi ngay text và/hoặc ảnh." +
+      (pf.px === "zalo" ? " Bộ ảnh Zalo: truyền image_urls trong MỘT lần gọi, không gọi từng ảnh." : ""),
     "zalo:send",
     {
       phone: z.string().regex(/^\+?\d{8,15}$/).describe("Số điện thoại người nhận."),
