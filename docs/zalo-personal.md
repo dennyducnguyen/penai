@@ -59,6 +59,10 @@ Tắt AI **cho một người/nhóm** thay vì cả kênh: Inbox → mở hội 
 
 ## 3. Inbox Zalo
 
+Từ 1.11.0, danh sách chờ duyệt cũng ưu tiên tên danh bạ giống Inbox. Khi khách gửi ảnh không có yêu cầu, Zalo mặc định chỉ xác nhận **“Đã nhận hình ạ.”** ở ảnh đầu; ảnh tiếp theo của cùng người trong cùng hội thoại cách ảnh trước dưới 30 giây không được xác nhận lặp. Yêu cầu bằng chữ bắt đầu lượt mới. Trong **Inbox → Cài đặt → Khi khách chỉ gửi ảnh**, có thể chọn **Im lặng, chỉ lưu ảnh**. Cài đặt áp dụng ngay và không vượt qua chế độ an toàn, pairing hoặc công tắc AI của kênh. File tài liệu vẫn có xác nhận riêng. Tín hiệu kết thúc cuộc gọi không chạy AI hoặc tự thả cảm xúc.
+
+Ảnh JPG/PNG/WebP được AI chọn trong cùng lượt trả lời sẽ gửi thành bộ (tối đa 20 ảnh mỗi bộ, tùy giới hạn tài khoản); GIF/video/tài liệu tách riêng. AI vẫn có thể gọi `send_file` cho từng ảnh: PenAI gom danh sách trước khi giao cho Zalo. Các ảnh được điều tiết gửi theo tài khoản với khoảng cách tối thiểu 0,5 giây. Nếu bộ ảnh gửi lỗi giữa chừng, PenAI ghi nhận từng ảnh đã xác nhận và dừng lượt giao, không tự gửi lại cả bộ. Đây là gửi bộ ảnh, không phải một yêu cầu mạng duy nhất và không bảo đảm tránh được giới hạn tài khoản của Zalo.
+
 Từ 1.10.0, Inbox ưu tiên **tên bạn tự lưu trong danh bạ Zalo** và hiện tên Zalo gốc bên dưới khi khác nhau. Có thể tìm kiếm bằng cả hai tên. Tên danh bạ lưu riêng nên tin nhắn mới không ghi đè; bấm **Đồng bộ danh bạ** để nhận tên vừa đổi hoặc xóa trên Zalo. Nếu tải tên bị lỗi, PenAI giữ tên đã lưu cho tới lượt đồng bộ thành công.
 
 Dashboard → **📥 Inbox Zalo**.

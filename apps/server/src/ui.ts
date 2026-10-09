@@ -4045,6 +4045,7 @@ export const INDEX_HTML = `<!doctype html>
         '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem"><input type="checkbox" id="isOn" style="width:auto"> Lưu nội dung tin nhắn (bật Inbox)</label>' +
         '<div class="muted" style="margin:4px 0 10px">Tắt thì tin mới không được lưu/hiện trong Inbox (tin cũ giữ nguyên). Lưu ý: bật là lưu cả tin riêng tư của tài khoản Zalo này.</div>' +
         '<label>AI tạm im bao nhiêu phút sau khi nhân viên trả lời (0 = không tạm dừng)</label><input id="isPause" type="number" min="0" max="1440" style="width:120px">' +
+        (c.kind === "zalo_personal" ? '<label style="margin-top:14px">Khi khách chỉ gửi ảnh</label><select id="isPhotoAck"><option value="short">Xác nhận ngắn ở ảnh đầu</option><option value="off">Im lặng, chỉ lưu ảnh</option></select><div class="muted">Ảnh gửi tiếp trong vòng 30 giây không được xác nhận lặp. Có yêu cầu kèm ảnh thì AI xử lý bình thường.</div>' : '') +
         '<label style="margin-top:14px">Tự thả cảm xúc khi khách nhắn (cá nhân + nhóm)</label><select id="isAutoRx" style="width:200px"><option value="off">Tắt</option><option value="heart">❤️ Thả tim</option><option value="like">👍 Thích</option></select>' +
         '<div class="muted" style="margin:4px 0 0">Thả vào tin cuối mỗi đợt khách nhắn, sau 1–4 giây. Nhóm đông người nhắn nhiều thì tài khoản thả rất nhiều — nền tảng có thể giới hạn tài khoản.</div>' +
         '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem;margin-top:14px"><input type="checkbox" id="isMcpRead" style="width:auto"> Cho ứng dụng AI bên ngoài (MCP) đọc hội thoại và nội dung tin nhắn</label>' +
@@ -4052,10 +4053,13 @@ export const INDEX_HTML = `<!doctype html>
         '<div class="dialog-actions"><button class="ghost" id="isX">Hủy</button><button id="isOk">Lưu</button></div>';
       document.body.appendChild(dlg);
       $("#isOn", dlg).checked = !!c.inbox; $("#isPause", dlg).value = c.pauseMinutes; $("#isMcpRead", dlg).checked = !!c.mcpReadMessages; $("#isAutoRx", dlg).value = c.autoReaction || "off";
+      if ($("#isPhotoAck", dlg)) $("#isPhotoAck", dlg).value = c.photoAck || "short";
       $("#isX", dlg).onclick = function () { dlg.close(); dlg.remove(); };
       $("#isOk", dlg).onclick = function () {
-        api("/v1/inbox/" + c.id + "/settings", { method: "PUT", body: { enabled: $("#isOn", dlg).checked, pauseMinutes: Number($("#isPause", dlg).value) || 0, mcpReadMessages: $("#isMcpRead", dlg).checked, autoReaction: $("#isAutoRx", dlg).value } })
-          .then(function (j) { c.inbox = j.enabled; c.pauseMinutes = j.pauseMinutes; c.mcpReadMessages = j.mcpReadMessages; c.autoReaction = j.autoReaction; renderStatus(); dlg.close(); dlg.remove(); toast("Đã lưu"); })
+        var settings = { enabled: $("#isOn", dlg).checked, pauseMinutes: Number($("#isPause", dlg).value) || 0, mcpReadMessages: $("#isMcpRead", dlg).checked, autoReaction: $("#isAutoRx", dlg).value };
+        if ($("#isPhotoAck", dlg)) settings.photoAck = $("#isPhotoAck", dlg).value;
+        api("/v1/inbox/" + c.id + "/settings", { method: "PUT", body: settings })
+          .then(function (j) { c.inbox = j.enabled; c.pauseMinutes = j.pauseMinutes; c.mcpReadMessages = j.mcpReadMessages; c.autoReaction = j.autoReaction; c.photoAck = j.photoAck; renderStatus(); dlg.close(); dlg.remove(); toast("Đã lưu"); })
           .catch(function (e) { toast(e.message, true); });
       };
       dlg.showModal();

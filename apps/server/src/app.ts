@@ -37,6 +37,7 @@ import {
   listChannels,
   exportContacts,
   listAllInboxThreads,
+  inboxPeerNames,
   deleteChannel,
   getChannelById,
   getChannelSession,
@@ -2045,6 +2046,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const peers = [...byKey.values()].sort((a, b) =>
       b.lastSeenAt.localeCompare(a.lastSeenAt),
     );
+    const names = await inboxPeerNames(db, req.authCtx, id, peers.filter((p) => p.type === "direct").map((p) => p.threadId));
+    for (const peer of peers) {
+      if (peer.type === "direct") peer.name = names.get(peer.threadId) || peer.name || peer.threadId;
+    }
     const openDirect = runtime.status().openDirect;
     if (openDirect) {
       for (const p of peers) if (p.chatKey.startsWith("direct:")) p.allowed = true;

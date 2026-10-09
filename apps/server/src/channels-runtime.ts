@@ -7,6 +7,7 @@ import {
   appendMessage,
   createSession,
   getAgentById,
+  getChannelById,
   getChannelSession,
   isPaired,
   createPairing,
@@ -39,6 +40,7 @@ import {
 } from "@penai/channels";
 import { forgetInboxChannel, inboxHooks } from "./inbox.js";
 import { isPersonalChannelKind } from "@penai/channels";
+import { PhotoBurst, readPhotoAcknowledgement } from "./photo-burst.js";
 
 /** Handler + channel theo channelId — cho webhook route (WhatsApp, Teams) dùng. */
 export const channelHandlers = new Map<
@@ -223,6 +225,7 @@ const RECENT_IMAGES_MAX = 5;
 const recentImages = new Map<string, Array<{ name: string; path: string }>>();
 /** Số lần liên tiếp chỉ-gửi-ảnh trong 1 session — để ack lần 2+ ngắn gọn. */
 const imageOnlyStreak = new Map<string, number>();
+const photoBursts = new PhotoBurst();
 
 export function extOfDataUrl(dataUrl: string): string {
   const m = /^data:image\/(\w+)/.exec(dataUrl);
@@ -540,7 +543,7 @@ export function mergeMediaText(
 }
 
 /** Xây handler xử lý inbound cho 1 channel cụ thể. */
-function makeInboundHandler(
+export function makeInboundHandler(
   rt: RuntimeDeps,
   queue: Scheduler,
   channel: EnabledChannel,
@@ -548,6 +551,8 @@ function makeInboundHandler(
   const { db } = rt.db;
   return async (msg, hooks?: RunHooks): Promise<InboundResult> => {
     const ctx = systemContext(channel.workspaceId);
+    const photoBurstKey = `${channel.id}:${msg.chatKey}:${msg.senderId}`;
+    if (msg.text.trim()) photoBursts.reset(photoBurstKey);
 
     // Nhóm Zalo: đệm tin chưa tag làm ngữ cảnh (kể cả tin orchestrator sẽ
     // tiêu thụ) — người dùng hay nhắn vài tin liên tiếp rồi mới tag bot.
@@ -711,6 +716,14 @@ function makeInboundHandler(
           text: `[Đã gửi ${savedAll.length} file: ${savedAll.map((s) => s.name).join(", ")}]`,
         },
       }).catch(() => {});
+      if (channel.kind === "zalo_personal" && savedImages.length && !savedDocs.length) {
+        const first = photoBursts.acknowledge(photoBurstKey);
+        const settings = await getChannelById(db, ctx, channel.id);
+        if (first && readPhotoAcknowledgement((settings?.config as Record<string, unknown>) ?? channel.config) === "short") {
+          return { kind: "reply", text: "Đã nhận hình ạ." };
+        }
+        return { kind: "ignore" };
+      }
       const streak = (imageOnlyStreak.get(sessionId) ?? 0) + 1;
       imageOnlyStreak.set(sessionId, streak);
       // Báo rõ TÊN FILE đã lưu để người dùng (và agent ở các lượt sau) tham chiếu

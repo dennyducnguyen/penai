@@ -12,6 +12,7 @@ import {
   type Message,
 } from "zca-js";
 import { BoundedRunner } from "./bounded-runner.js";
+import { ZaloSendGate, isZaloSendRequest } from "./zalo-send-gate.js";
 import { stripToPlain } from "./format.js";
 import type {
   Channel,
@@ -86,6 +87,12 @@ export interface ZaloObservedPeer {
 }
 
 const OBSERVED_MAX = 1_000;
+
+/** This control bubble is not an attachment or a customer request. */
+export function isZaloCallSignal(content: unknown, msgType: string): boolean {
+  return msgType === "chat.recommended" && !!content && typeof content === "object" &&
+    (content as Record<string, unknown>).title === "sendBubbleMessage";
+}
 
 /** Return only a complete list, so a failed page cannot erase saved aliases. */
 export async function loadZaloContactAliases(api: Pick<API, "getAliasList">): Promise<Map<string, string>> {
@@ -416,6 +423,13 @@ export class ZaloPersonalChannel implements Channel {
   private reactChain: Promise<unknown> = Promise.resolve();
   private lastReactAt = 0;
   private pendingThreadName = "";
+  private sendGate = new ZaloSendGate();
+  private fileChain: Promise<unknown> = Promise.resolve();
+  private decodeSendResponse?: (response: Response) => Promise<{ msgId?: string | number }>;
+  private albumSend?: {
+    paths: string[]; index: number; ids: string[]; threadId: string; type: ThreadType;
+    source: ZaloSendSource; webUserId?: string;
+  };
 
   constructor(private deps: ChannelDeps) {
     this.id = deps.id;
@@ -444,6 +458,28 @@ export class ZaloPersonalChannel implements Channel {
       logging: false,
       selfListen: true,
       imageMetadataGetter,
+      polyfill: (input, init) => this.fetchZalo(input, init),
+    });
+  }
+
+  private fetchZalo(input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
+    if (!isZaloSendRequest(input, init)) return fetch(input, init);
+    return this.sendGate.run(async () => {
+      const album = this.albumSend;
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      const index = album && url.pathname.endsWith("/photo_original/send") ? album.index++ : -1;
+      const response = await fetch(input, init);
+      if (album && index >= 0 && this.decodeSendResponse) {
+        try {
+          const result = await this.decodeSendResponse(response.clone());
+          if (result.msgId != null && album.paths[index]) {
+            const id = String(result.msgId);
+            album.ids.push(id);
+            this.logPhotoSent(id, album.paths[index]!, album, index);
+          }
+        } catch { /* Native sendMessage reports the original failure. */ }
+      }
+      return response;
     });
   }
 
@@ -901,6 +937,8 @@ export class ZaloPersonalChannel implements Channel {
   }
 
   private async activate(api: API): Promise<void> {
+    api.custom("penaiDecodeSendResponse", async ({ utils, props }: { utils: { resolve: (response: Response) => Promise<unknown> }; props: Response }) => utils.resolve(props));
+    this.decodeSendResponse = (response) => (api as unknown as { penaiDecodeSendResponse: (r: Response) => Promise<{ msgId?: string | number }> }).penaiDecodeSendResponse(response);
     const info = await api.fetchAccountInfo();
     const profile = info.profile;
     this.stopListener();
@@ -976,6 +1014,7 @@ export class ZaloPersonalChannel implements Channel {
 
   private async handleMessage(message: Message): Promise<void> {
     if (!this.api) return;
+    if (isZaloCallSignal(message.data.content, String(message.data.msgType ?? ""))) return;
     const msgId = String(message.data.msgId ?? "");
     if (msgId && this.seenMessageIds.has(msgId)) return;
     if (msgId) {
@@ -1016,7 +1055,13 @@ export class ZaloPersonalChannel implements Channel {
       peerKind !== "group" ||
       shouldHandleZaloGroup(message.data, this.account?.id ?? "", true);
 
-    const text = typeof message.data.content === "string" ? message.data.content : "";
+    let text = typeof message.data.content === "string" ? message.data.content : "";
+    if (!text && message.data.content && typeof message.data.content === "object" &&
+        zaloMediaKind(String(message.data.msgType ?? ""), "") === "photo") {
+      const content = message.data.content as unknown as Record<string, unknown>;
+      const caption = content.description || content.title;
+      if (typeof caption === "string" && !/\.(png|jpe?g|webp|gif)$/i.test(caption)) text = caption;
+    }
     const media = await this.collectMedia(
       message.data.content,
       String(message.data.msgType ?? ""),
@@ -1415,30 +1460,64 @@ export class ZaloPersonalChannel implements Channel {
     webUserId?: string,
     throwOnError = false,
   ): Promise<string[]> {
+    const next = this.fileChain.then(() => this.sendFilesBatch(threadId, type, paths, source, webUserId, throwOnError));
+    this.fileChain = next.catch(() => {});
+    return next;
+  }
+
+  private logPhotoSent(id: string, path: string, album: { paths: string[]; threadId: string; type: ThreadType; source: ZaloSendSource; webUserId?: string }, index: number): void {
+    this.logSent([id], album.threadId, album.type, album.source, album.webUserId, {
+      contentType: "photo", text: "",
+      media: { name: path.replaceAll("\\", "/").split("/").pop(), localPath: path,
+        albumSize: album.paths.length, albumIndex: index },
+    });
+  }
+
+  private async sendFilesBatch(threadId: string, type: ThreadType, paths: string[], source: ZaloSendSource, webUserId: string | undefined, throwOnError: boolean): Promise<string[]> {
     if (!this.api) throw new ZaloNotConnectedError();
     const all: string[] = [];
-    for (const path of paths) {
-      const normalized = path.replaceAll("\\", "/");
-      const name = normalized.split("/").pop() ?? "file";
-      const isImage = /\.(png|jpe?g|webp|gif)$/i.test(name);
+    const api = this.api;
+    const configuredMax = api.getContext?.().settings?.features?.sharefile?.max_file;
+    const max = Number.isFinite(configuredMax) && configuredMax > 0 ? Math.min(20, Math.floor(configuredMax)) : 20;
+    const photo = (p: string) => /\.(png|jpe?g|webp)$/i.test(p);
+    for (let i = 0; i < paths.length;) {
+      const batch = [paths[i++]!];
+      if (photo(batch[0]!)) {
+        while (i < paths.length && photo(paths[i]!) && batch.length < max) batch.push(paths[i++]!);
+      }
+      const isImage = photo(batch[0]!);
+      const album = { paths: batch, index: 0, ids: [] as string[], threadId, type, source, webUserId };
+      this.albumSend = isImage ? album : undefined;
       try {
-        const ids = sentMessageIds(
-          await this.api.sendMessage({ msg: "", attachments: [normalized] }, threadId, type),
-        );
-        this.logSent(ids, threadId, type, source, webUserId, {
-          contentType: isImage ? "photo" : "file",
-          text: "",
-          media: { name, localPath: path },
-        });
+        const result = await api.sendMessage({ msg: "", attachments: batch.map((p) => p.replaceAll("\\", "/")) }, threadId, type);
+        const ids = sentMessageIds(result);
+        // The request observer logs each success immediately, including partial albums.
+        // Injected/test APIs without the observer are mapped from the native response.
+        if (isImage) {
+          for (let j = 0; j < ids.length; j++) {
+            if (!album.ids.includes(ids[j]!)) this.logPhotoSent(ids[j]!, batch[j] ?? batch[0]!, album, j);
+          }
+        } else {
+          const path = batch[0]!;
+          this.logSent(ids, threadId, type, source, webUserId, {
+            contentType: /\.gif$/i.test(path) ? "photo" : "file", text: "",
+            media: { name: path.replaceAll("\\", "/").split("/").pop(), localPath: path },
+          });
+        }
         all.push(...ids);
       } catch (error) {
-        const err = new Error(`Không gửi được file "${name}" qua Zalo: ${errorMessage(error)}`) as Error & {
-          zaloRejected?: boolean;
+        // Promise.all can reject before the other native photo requests finish.
+        await this.sendGate.drain();
+        const err = new Error(`Gửi Zalo bị gián đoạn (${album.ids.length}/${batch.length} ảnh đã xác nhận). Không tự gửi lại: ${errorMessage(error)}`) as Error & {
+          zaloRejected?: boolean; sentMsgIds?: string[];
         };
-        // ZaloApiError (name "ZcaApiError") = Zalo đã trả lỗi → chắc chắn chưa gửi.
-        if ((error as Error)?.name === "ZcaApiError") err.zaloRejected = true;
+        err.sentMsgIds = [...all, ...album.ids];
+        if (batch.length === 1 && !album.ids.length && (error as Error)?.name === "ZcaApiError") err.zaloRejected = true;
         if (throwOnError) throw err;
         this.deps.onError?.(err);
+        break; // Stop this delivery; never retry an uncertain/partial album.
+      } finally {
+        this.albumSend = undefined;
       }
     }
     return all;
