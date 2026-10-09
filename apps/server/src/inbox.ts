@@ -13,7 +13,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { join, relative, resolve, sep } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -506,6 +506,19 @@ export async function prepareOutboundImage(
 ): Promise<string> {
   const img = await loadImageInput(src);
   return saveOutboundImage(dataDir, workspaceId, channelId, img);
+}
+
+/** Kiểm tra đủ bộ trước khi gửi; ảnh lỗi thì dọn các file vừa chuẩn bị. */
+export async function prepareOutboundImages(dataDir: string, workspaceId: string, channelId: string, sources: string[]): Promise<string[]> {
+  const paths: string[] = [];
+  try {
+    for (const src of sources) paths.push(await prepareOutboundImage(dataDir, workspaceId, channelId, src));
+    return paths;
+  } catch (error) {
+    await Promise.allSettled(paths.map((path) => rm(path, { force: true })));
+    if (error instanceof ImageInputError) throw new ImageInputError(`Ảnh ${paths.length + 1}/${sources.length}: ${error.message}`);
+    throw error;
+  }
 }
 
 /** Lỗi do Zalo trả về (tham số sai, bị chặn…) → chắc chắn tin CHƯA gửi. */

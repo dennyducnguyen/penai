@@ -4,6 +4,13 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.12.0 — 2026-10-09
+
+- **Gửi bộ ảnh Zalo qua MCP**: công cụ gửi theo UID và số điện thoại nhận thêm `image_urls` (1–20 ảnh theo thứ tự). Ứng dụng AI gửi cả bộ trong một lần gọi; JPG/PNG/WEBP được gom thành bộ, GIF gửi riêng. Cách gửi một ảnh bằng `image_url` vẫn dùng được.
+- Kiểm tra đủ ảnh trước khi gửi; một ảnh lỗi thì không gửi bộ, báo vị trí ảnh lỗi. Lượt gửi bị gián đoạn trả các ID đã xác nhận, giữ kết quả với `request_id` để không gửi trùng khi gọi lại.
+
+Cập nhật: `sudo penai update`. Không cần nâng cấp database hoặc quét lại QR. Ứng dụng AI cần tải lại danh sách công cụ MCP hoặc kết nối lại để thấy tham số `image_urls`. Ưu tiên URL công khai cho bộ ảnh lớn.
+
 ## 1.11.0 — 2026-10-09
 
 - **Tên danh bạ ở danh sách chờ duyệt Zalo**: ưu tiên tên bạn lưu, sau đó tên đã đồng bộ và tên người gửi. Đổi hoặc xóa tên rồi đồng bộ sẽ cập nhật cả Inbox và danh sách chờ duyệt; dữ liệu tách riêng theo kênh và workspace.
