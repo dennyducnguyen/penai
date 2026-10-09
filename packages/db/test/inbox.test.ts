@@ -267,7 +267,7 @@ describe("Inbox contact aliases", () => {
     const ch = (await createChannel(dbh.db, ctxA(), { kind: "zalo_personal", name: "Aliases", agentId: fx.agentA })).id;
     const contact = { threadId: "99001", kind: "direct" as const, name: "Q Th", contactAlias: "Quỳnh Thuỷ - IM GROUP" };
     await upsertInboxContacts(dbh.db, ctxA(), ch, [contact]);
-    const r = await recordInboxMessage(dbh.db, ctxA(), ch, msg({ threadId: "99001", msgId: "alias-incoming", threadName: "Q Th" }));
+    const r = await recordInboxMessage(dbh.db, ctxA(), ch, msg({ threadId: "99001", msgId: "alias-incoming", threadName: contact.contactAlias }));
     expect(r?.thread).toMatchObject({ name: "Q Th", contactAlias: "Quỳnh Thuỷ - IM GROUP" });
     expect((await listInboxThreads(dbh.db, ctxA(), ch, { q: "Quỳnh Thuỷ" })).total).toBe(1);
     expect((await listInboxThreads(dbh.db, ctxA(), ch, { q: "Q Th" })).total).toBe(1);

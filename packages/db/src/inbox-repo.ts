@@ -193,7 +193,8 @@ export async function recordInboxMessage(
         ${input.threadName ?? ""}, ${preview}, ${input.sentAt.toISOString()}, ${input.direction},
         ${unreadInc}, ${pause}, now())
       ON CONFLICT (channel_id, thread_id) DO UPDATE SET
-        name = CASE WHEN EXCLUDED.name <> '' AND (inbox_threads.name = '' OR inbox_threads.kind = 'direct')
+        name = CASE WHEN EXCLUDED.name <> '' AND (inbox_threads.name = '' OR
+                    (inbox_threads.kind = 'direct' AND (NOT inbox_threads.is_contact OR COALESCE(inbox_threads.contact_alias, '') = '')))
                     THEN EXCLUDED.name ELSE inbox_threads.name END,
         last_message = CASE WHEN inbox_threads.last_message_at IS NOT NULL AND inbox_threads.last_message_at > EXCLUDED.last_message_at
                             THEN inbox_threads.last_message ELSE EXCLUDED.last_message END,
