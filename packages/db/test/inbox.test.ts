@@ -261,3 +261,22 @@ describe("OAuth PenAI MCP server (0031)", () => {
     expect((await getMcpOauthGrant(dbh.db, grant!.id))?.revokedAt).toBeTruthy();
   });
 });
+
+describe("Inbox contact aliases", () => {
+  it("keeps aliases across new messages and failed syncs, searches both names, and clears removed aliases", async () => {
+    const ch = (await createChannel(dbh.db, ctxA(), { kind: "zalo_personal", name: "Aliases", agentId: fx.agentA })).id;
+    const contact = { threadId: "99001", kind: "direct" as const, name: "Q Th", contactAlias: "Quỳnh Thuỷ - IM GROUP" };
+    await upsertInboxContacts(dbh.db, ctxA(), ch, [contact]);
+    const r = await recordInboxMessage(dbh.db, ctxA(), ch, msg({ threadId: "99001", msgId: "alias-incoming", threadName: "Q Th" }));
+    expect(r?.thread).toMatchObject({ name: "Q Th", contactAlias: "Quỳnh Thuỷ - IM GROUP" });
+    expect((await listInboxThreads(dbh.db, ctxA(), ch, { q: "Quỳnh Thuỷ" })).total).toBe(1);
+    expect((await listInboxThreads(dbh.db, ctxA(), ch, { q: "Q Th" })).total).toBe(1);
+    expect((await listInboxThreads(dbh.db, ctxB(), ch, { q: "Quỳnh Thuỷ" })).total).toBe(0);
+    await upsertInboxContacts(dbh.db, ctxA(), ch, [{ threadId: "99001", kind: "direct", name: "Q Th" }]);
+    expect((await listInboxThreads(dbh.db, ctxA(), ch)).threads[0]?.contactAlias).toBe(contact.contactAlias);
+    await upsertInboxContacts(dbh.db, ctxA(), ch, [{ ...contact, contactAlias: "Chị Thuỷ" }]);
+    expect((await listInboxThreads(dbh.db, ctxA(), ch)).threads[0]?.contactAlias).toBe("Chị Thuỷ");
+    await upsertInboxContacts(dbh.db, ctxA(), ch, [{ ...contact, contactAlias: "" }]);
+    expect((await listInboxThreads(dbh.db, ctxA(), ch)).threads[0]?.contactAlias).toBe("");
+  });
+});

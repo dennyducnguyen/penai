@@ -65,6 +65,7 @@ export interface ZaloPersonalTarget {
   id: string;
   type: "direct" | "group";
   name: string;
+  contactAlias?: string;
   avatar?: string;
   phone?: string;
   memberCount?: number;
@@ -85,6 +86,17 @@ export interface ZaloObservedPeer {
 }
 
 const OBSERVED_MAX = 1_000;
+
+/** Return only a complete list, so a failed page cannot erase saved aliases. */
+export async function loadZaloContactAliases(api: Pick<API, "getAliasList">): Promise<Map<string, string>> {
+  const aliases = new Map<string, string>();
+  for (let page = 1; page <= 1000; page++) {
+    const result = await api.getAliasList(100, page);
+    for (const item of result.items) aliases.set(String(item.userId), item.alias);
+    if (result.items.length < 100) return aliases;
+  }
+  throw new Error("Danh sách tên danh bạ vượt giới hạn phân trang");
+}
 
 /** Chuẩn hóa chatKey allowlist: "group:<id>" | "direct:<id>"; id trần coi là direct. */
 export function normalizeZaloChatKey(raw: string): string {
@@ -562,12 +574,19 @@ export class ZaloPersonalChannel implements Channel {
     if (!this.api) throw new Error("Zalo Personal chưa đăng nhập");
     const targets: ZaloPersonalTarget[] = [];
     const friends = await this.api.getAllFriends();
+    let aliases: Map<string, string> | undefined;
+    try {
+      aliases = await loadZaloContactAliases(this.api);
+    } catch {
+      logger.warn("zalo.alias_sync_failed: giữ tên danh bạ đã lưu");
+    }
     for (const friend of friends) {
       if (!friend.userId) continue;
       targets.push({
         id: String(friend.userId),
         type: "direct",
-        name: friend.displayName || friend.zaloName || String(friend.userId),
+        name: friend.zaloName || friend.displayName || String(friend.userId),
+        ...(aliases ? { contactAlias: aliases.get(String(friend.userId)) ?? "" } : {}),
         ...(friend.avatar ? { avatar: friend.avatar } : {}),
         ...(friend.phoneNumber ? { phone: friend.phoneNumber } : {}),
       });
@@ -616,6 +635,7 @@ export class ZaloPersonalChannel implements Channel {
           id: t.id,
           type: t.type,
           name: t.name,
+          ...(t.contactAlias !== undefined ? { contactAlias: t.contactAlias } : {}),
           ...(t.avatar ? { avatar: t.avatar } : {}),
           ...(t.phone ? { phone: t.phone } : {}),
           ...(t.memberCount !== undefined ? { memberCount: t.memberCount } : {}),

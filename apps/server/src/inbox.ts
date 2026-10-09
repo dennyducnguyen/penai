@@ -259,6 +259,7 @@ export function inboxHooks(
           threadId: i.id,
           kind: i.type,
           name: i.name,
+          ...(i.contactAlias !== undefined ? { contactAlias: i.contactAlias } : {}),
           ...(i.avatar ? { avatar: i.avatar } : {}),
           ...(i.phone ? { phone: i.phone } : {}),
           ...(i.memberCount !== undefined ? { memberCount: i.memberCount } : {}),

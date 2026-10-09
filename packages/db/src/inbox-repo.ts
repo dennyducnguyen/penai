@@ -30,6 +30,7 @@ export interface InboxThread {
   threadId: string;
   kind: "direct" | "group";
   name: string;
+  contactAlias: string;
   avatar: string;
   phone: string;
   isContact: boolean;
@@ -83,6 +84,7 @@ function mapThread(r: Raw): InboxThread {
     threadId: String(r.thread_id),
     kind: r.kind === "group" ? "group" : "direct",
     name: String(r.name ?? ""),
+    contactAlias: String(r.contact_alias ?? ""),
     avatar: String(r.avatar ?? ""),
     phone: String(r.phone ?? ""),
     isContact: r.is_contact === true,
@@ -216,6 +218,8 @@ export interface InboxContactInput {
   threadId: string;
   kind: "direct" | "group";
   name: string;
+  /** undefined preserves the saved alias; empty string clears it. */
+  contactAlias?: string;
   avatar?: string;
   phone?: string;
   memberCount?: number;
@@ -236,16 +240,17 @@ export async function upsertInboxContacts(
       const values = sql.join(
         batch.map(
           (c) =>
-            sql`(${ctx.workspaceId}::uuid, ${channelId}::uuid, ${c.threadId}, ${c.kind}, ${c.name}, ${c.avatar ?? ""}, ${c.phone ?? ""}, true, ${c.memberCount ?? null}::int, now(), now())`,
+            sql`(${ctx.workspaceId}::uuid, ${channelId}::uuid, ${c.threadId}, ${c.kind}, ${c.name}, ${c.contactAlias ?? null}, ${c.avatar ?? ""}, ${c.phone ?? ""}, true, ${c.memberCount ?? null}::int, now(), now())`,
         ),
         sql`, `,
       );
       await tx.execute(sql`
-        INSERT INTO inbox_threads (workspace_id, channel_id, thread_id, kind, name, avatar, phone,
+        INSERT INTO inbox_threads (workspace_id, channel_id, thread_id, kind, name, contact_alias, avatar, phone,
           is_contact, member_count, synced_at, updated_at)
         VALUES ${values}
         ON CONFLICT (channel_id, thread_id) DO UPDATE SET
           kind = EXCLUDED.kind,
+          contact_alias = COALESCE(EXCLUDED.contact_alias, inbox_threads.contact_alias),
           name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE inbox_threads.name END,
           avatar = CASE WHEN EXCLUDED.avatar <> '' THEN EXCLUDED.avatar ELSE inbox_threads.avatar END,
           phone = CASE WHEN EXCLUDED.phone <> '' THEN EXCLUDED.phone ELSE inbox_threads.phone END,
@@ -303,7 +308,7 @@ export async function listInboxThreads(
   const q = query.q?.trim();
   if (q) {
     const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    conds.push(sql`(name ILIKE ${like} OR thread_id LIKE ${like} OR phone LIKE ${like})`);
+    conds.push(sql`(name ILIKE ${like} OR contact_alias ILIKE ${like} OR thread_id LIKE ${like} OR phone LIKE ${like})`);
   }
   const where = sql.join(conds, sql` AND `);
   const order = query.stableOrder
