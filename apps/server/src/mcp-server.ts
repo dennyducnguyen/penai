@@ -63,6 +63,8 @@ import {
 import { McpServer, WebStandardStreamableHTTPServerTransport } from "@penai/mcp";
 import { isValidThreadId, normalizeWhatsappPhone } from "@penai/channels";
 import { parseCookies, SESSION_COOKIE, clientIp } from "./web-auth.js";
+import { addWorkflowMcpTools, WORKFLOW_SCOPE_LABEL, WORKFLOW_SCOPES } from "./mcp-workflow-tools.js";
+import type { WorkflowService } from "./workflow-service.js";
 import {
   allowedInboxChannelIds,
   ImageInputError,
@@ -76,7 +78,15 @@ import {
   inboxRuntimeFor,
 } from "./inbox.js";
 
-export const MCP_SCOPES = ["zalo:read", "zalo:send", "zalo:messages", "whatsapp:read", "whatsapp:send", "whatsapp:messages"] as const;
+export const MCP_SCOPES = [
+  "zalo:read",
+  "zalo:send",
+  "zalo:messages",
+  "whatsapp:read",
+  "whatsapp:send",
+  "whatsapp:messages",
+  ...WORKFLOW_SCOPES,
+] as const;
 type Scope = (typeof MCP_SCOPES)[number];
 
 const ACCESS_TTL_S = 3600;
@@ -94,6 +104,7 @@ const SCOPE_LABEL: Record<Scope, string> = {
   "whatsapp:send": "WhatsApp: gửi tin nhắn và hình ảnh từ tài khoản WhatsApp cá nhân đang kết nối",
   "whatsapp:messages":
     "WhatsApp: đọc danh sách hội thoại và TOÀN BỘ nội dung tin nhắn (cá nhân + nhóm) — chỉ có tác dụng ở kênh quản trị đã bật cho phép",
+  ...WORKFLOW_SCOPE_LABEL,
 };
 
 /** Mỗi nền tảng một bộ công cụ cùng khuôn: zalo_* cho Zalo cá nhân, whatsapp_* cho WhatsApp cá nhân. */
@@ -213,6 +224,7 @@ const sendLocks = new Map<string, { busy: boolean; nextAt: number }>();
 interface ToolDeps {
   db: Db;
   dataDir: string;
+  workflows?: WorkflowService;
 }
 
 async function resolveChannel(
@@ -327,6 +339,7 @@ function buildMcpServer(
     },
   );
   for (const pf of platforms) addTools(pf);
+  if (deps.workflows) addWorkflowMcpTools(server, p, deps.workflows, deps.db);
   return server;
 
   function addTools(pf: Platform): void {
@@ -999,7 +1012,7 @@ export function isMcpPublicPath(path: string): boolean {
   );
 }
 
-export function registerMcpServerRoutes(app: FastifyInstance, deps: { db: Db; dataDir: string; config: PenaiConfig }): void {
+export function registerMcpServerRoutes(app: FastifyInstance, deps: { db: Db; dataDir: string; config: PenaiConfig; workflows?: WorkflowService }): void {
   const { db } = deps;
   const brand = () => deps.config.branding?.name || "PenAI";
 
@@ -1354,7 +1367,7 @@ export function registerMcpServerRoutes(app: FastifyInstance, deps: { db: Db; da
       return reply.code(429).header("retry-after", "30").send({ jsonrpc: "2.0", id: null, error: { code: -32000, message: "Rate limited" } });
     }
     const { readable, kinds } = await messageReadableChannels({ db, dataDir: deps.dataDir }, principal.ctx);
-    const server = buildMcpServer({ db, dataDir: deps.dataDir }, principal, brand(), readable, kinds);
+    const server = buildMcpServer({ db, dataDir: deps.dataDir, ...(deps.workflows ? { workflows: deps.workflows } : {}) }, principal, brand(), readable, kinds);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     try {
       await server.connect(transport);

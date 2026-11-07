@@ -157,6 +157,22 @@ export interface ToolContext {
     }): Promise<string>;
     remove(id: string): Promise<string>;
   };
+  /**
+   * Quy trình tự động (tool workflow_*). Runtime kiểm quyền người đang chat,
+   * validate định nghĩa; trả chuỗi kết quả, ném lỗi dễ hiểu khi không làm được.
+   * Không có → ngữ cảnh không hỗ trợ (lượt chạy theo lịch, trong quy trình, subagent).
+   */
+  workflows?: {
+    list(query?: string): Promise<string>;
+    get(id: string): Promise<string>;
+    catalog(kind?: string): Promise<string>;
+    create(input: { definition: unknown; enabled: boolean; note?: string }): Promise<string>;
+    update(input: { id: string; definition?: unknown; ops?: Array<Record<string, unknown>>; enabled?: boolean; note?: string }): Promise<string>;
+    test(input: { id: string; inputs?: Record<string, unknown>; dryRun: boolean }): Promise<string>;
+    run(input: { id: string; inputs?: Record<string, unknown>; wait: boolean }): Promise<string>;
+    runs(input: { id: string; runId?: string; status?: string; limit: number }): Promise<string>;
+    remove(id: string): Promise<string>;
+  };
   /** Landing page HTML cong khai do agent tao/sua. */
   landingPages?: {
     save(input: { slug: string; title: string; html: string }): Promise<string>;

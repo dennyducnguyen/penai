@@ -11,6 +11,7 @@ import { MemoryWorker } from "./memory-worker.js";
 import { McpManager } from "./mcp-manager.js";
 import { syncAllSkillsToDisk } from "./skills-fs.js";
 import { shutdownBrowser } from "./browser-runtime.js";
+import { getWorkflowService } from "./workflow-service.js";
 
 try {
   process.loadEnvFile(".env");
@@ -98,6 +99,10 @@ const cronRunner = new CronRunner({ db, providers, tools, config, mcp, gate: pro
 cronRunner.start();
 logger.info("Cron runner đã khởi động");
 
+// Quy trình tự động: bộ chạy theo lịch + dọn lần chạy cũ
+const workflows = getWorkflowService({ db, providers, tools, config, mcp, gate: providerGate });
+await workflows.startScheduler();
+
 // Memory worker: tự tóm tắt session đã nguội thành memory episodic
 const memoryWorker = new MemoryWorker({ db, providers, tools, config, mcp, gate: providerGate });
 memoryWorker.start();
@@ -109,6 +114,8 @@ const stopWatch = await watchConfig((next) => {
   config.branding = next.branding;
   // Múi giờ đọc mỗi lượt chat (lịch hẹn mới, "hôm nay"); lịch đã tạo giữ múi giờ riêng.
   config.timezone = next.timezone;
+  // Giới hạn quy trình (số lần chạy song song, trần thời gian…) đọc mỗi lần chạy
+  config.workflows = next.workflows;
   providerGate.reconfigure({
     concurrency: next.api.queue.concurrency,
     cliTotal: next.api.queue.cliTotal,
@@ -123,6 +130,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     logger.info("Đang tắt server...");
     await stopWatch();
     await cronRunner.stop();
+    await workflows.stop();
     await memoryWorker.stop();
     if (channelManager) await channelManager.stopAll();
     await mcp.stopAll();

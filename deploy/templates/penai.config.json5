@@ -80,4 +80,12 @@
   // Múi giờ của doanh nghiệp: giờ trong lịch hẹn ("nhắc tôi 8h sáng mai", cron "0 8 * * *")
   // và ngày "hôm nay" của agent. Không phụ thuộc giờ của VPS. Tên theo chuẩn IANA.
   timezone: "Asia/Ho_Chi_Minh",
+
+  // Quy trình tự động (Dashboard → Quy trình). Bỏ trống = dùng mặc định.
+  // allowShell: true cho phép bước "shell" chạy lệnh trong sandbox (mặc định tắt).
+  workflows: {
+    maxConcurrentRuns: 5,
+    maxRunSeconds: 600,
+    allowShell: false,
+  },
 }

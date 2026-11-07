@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { extname, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceContext, WorkspaceRole, PenaiConfig } from "@penai/shared";
-import { decryptSecret, checkInput } from "@penai/shared";
+import { decryptSecret, checkInput, hasRole } from "@penai/shared";
 import {
   recordAudit,
   loadMessages,
@@ -87,6 +87,8 @@ import {
 import { readFile, writeFile, readdir, stat } from "node:fs/promises";
 import type { McpAccess, McpManager } from "./mcp-manager.js";
 import { makeCronToolApi } from "./cron-tools.js";
+import { makeWorkflowToolApi } from "./workflow-tools.js";
+import { getWorkflowService } from "./workflow-service.js";
 import { browserForRun } from "./browser-runtime.js";
 import { makeHookDispatcher } from "./hooks.js";
 import { agentLibraryDir, execSandboxFor } from "./library-paths.js";
@@ -175,7 +177,7 @@ export function mergeMcpAccessLayers(
  * Dựng registry tool cho 1 workspace = builtin + custom tools (DB) + MCP tools.
  * MCP lọc theo quyền agent ∩ quyền user (visibility/user_policy + tool_allow/deny).
  */
-async function buildWorkspaceRegistry(
+export async function buildWorkspaceRegistry(
   rt: RuntimeDeps,
   ctx: WorkspaceContext,
   agentId?: string,
@@ -602,6 +604,29 @@ export async function buildLoopDeps(
         })
       : undefined;
 
+  // Quy trình tự động (tool workflow_*): chỉ ở lượt gốc đang chat với người thật.
+  // Lượt chạy theo lịch / bước "agent" trong quy trình (sourceKind cron) không tự
+  // tạo/chạy quy trình — tránh vòng lặp quy trình gọi agent gọi quy trình.
+  const workflows =
+    agentId && opts.cronOrigin && depth === 0 && opts.sourceKind !== "cron" && rt.config.workflows.enabled
+      ? makeWorkflowToolApi(getWorkflowService(rt), db, ctx, {
+          agentId,
+          role: opts.cronOrigin.kind === "web" ? (effectiveRole ?? null) : null,
+          who:
+            (opts.cronOrigin.kind === "channel" ? opts.cronOrigin.senderName : opts.cronOrigin.userName) ??
+            opts.userKey ??
+            "người dùng",
+        })
+      : undefined;
+  {
+    // Không dùng được thì gỡ tool khỏi danh sách gửi mô hình (đỡ tốn token)
+    const manage = opts.cronOrigin?.kind === "web" && !!effectiveRole && hasRole(effectiveRole, "operator");
+    const keep = !workflows ? [] : manage ? null : ["workflow_list", "workflow_run", "workflow_runs"];
+    for (const t of tools.list()) {
+      if (t.name.startsWith("workflow_") && keep !== null && !keep.includes(t.name)) tools.remove(t.name);
+    }
+  }
+
   // Recheck quyền MCP tại thời điểm gọi tool (fail-closed) — chặn trường hợp
   // admin thu hồi quyền giữa một phiên chat đang mở.
   const mcpGuard: AgentLoopDeps["mcpGuard"] = async (serverId, toolName) => {
@@ -765,6 +790,7 @@ return res.text || "(agent không trả về nội dung)";
     ...(landingPages ? { landingPages } : {}),
     timezone: rt.config.timezone,
     ...(cron ? { cron } : {}),
+    ...(workflows ? { workflows } : {}),
     ...(browser ? { browser } : {}),
     mcpGuard,
     requestApproval: async () => opts.autoApproveExec === true,

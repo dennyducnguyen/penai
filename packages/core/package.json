@@ -10,7 +10,8 @@
     "@penai/providers": "workspace:*",
     "@penai/shared": "workspace:*",
     "@penai/tools": "workspace:*",
-    "croner": "^9.0.0"
+    "croner": "^9.0.0",
+    "quickjs-emscripten": "0.32.0"
   },
   "devDependencies": {
     "@penai/db": "workspace:*",

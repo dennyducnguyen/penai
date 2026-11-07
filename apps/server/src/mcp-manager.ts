@@ -408,6 +408,32 @@ export class McpManager {
       .map((t) => t.handler);
   }
 
+  /**
+   * Tool MCP theo tên (hoặc id) server — bước "mcp" của quy trình gọi thẳng,
+   * không qua AI. Người sở hữu quy trình là operator trở lên → mọi server của workspace.
+   */
+  findTool(workspaceId: string, serverRef: string, toolName: string): RawToolHandler | null {
+    const ref = serverRef.trim().toLowerCase();
+    const list = this.byWorkspace.get(workspaceId) ?? [];
+    const hit = list.find(
+      (t) =>
+        (t.serverId === serverRef || t.serverName.toLowerCase() === ref || sanitizeMcpName(t.serverName).toLowerCase() === ref) &&
+        t.toolName === toolName,
+    );
+    return hit?.handler ?? null;
+  }
+
+  /** Danh mục MCP của workspace (server → tool + JSON Schema tham số) cho trang dựng quy trình. */
+  catalogFor(workspaceId: string): Array<{ serverId: string; serverName: string; tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }> }> {
+    const out = new Map<string, { serverId: string; serverName: string; tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }> }>();
+    for (const t of this.byWorkspace.get(workspaceId) ?? []) {
+      const e = out.get(t.serverId) ?? { serverId: t.serverId, serverName: t.serverName, tools: [] };
+      e.tools.push({ name: t.toolName, description: t.handler.description.replace(/^\[MCP:[^\]]*\]\s*/, ""), parameters: t.handler.parameters });
+      out.set(t.serverId, e);
+    }
+    return [...out.values()];
+  }
+
   /** Trạng thái mọi server (cho dashboard). */
   statuses(): McpStatus[] {
     return [...this.status.values()];

@@ -111,6 +111,8 @@ export interface AgentLoopDeps {
   timezone?: string;
   /** Lịch hẹn agent tự đặt khi chat (tool cron_*) — chỉ có khi đang chat với người dùng. */
   cron?: ToolContext["cron"];
+  /** Quy trình tự động (tool workflow_*) — chỉ khi đang chat trực tiếp với người dùng. */
+  workflows?: ToolContext["workflows"];
   /** Trình duyệt của lượt chạy (tool browser) — forward vào ToolContext. */
   browser?: ToolContext["browser"];
   delegate?: (toAgentKey: string, task: string) => Promise<string>;
@@ -369,6 +371,7 @@ export async function* runAgent(
         ...(deps.landingPages ? { landingPages: deps.landingPages } : {}),
         ...(deps.timezone ? { timezone: deps.timezone } : {}),
         ...(deps.cron ? { cron: deps.cron } : {}),
+        ...(deps.workflows ? { workflows: deps.workflows } : {}),
         ...(deps.browser ? { browser: deps.browser } : {}),
         showImage: (dataUrl: string) => {
           if (toolImages.length < 4) toolImages.push(dataUrl);

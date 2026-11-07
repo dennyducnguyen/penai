@@ -1,3 +1,5 @@
+import { WORKFLOWS_UI } from "./ui-workflows.js";
+
 /**
  * Web UI PenAI — Dashboard SPA (vanilla, inline, không cần build step).
  * Sidebar nhiều mục bao phủ mọi subsystem. Hash router (#/section).
@@ -325,6 +327,7 @@ export const INDEX_HTML = `<!doctype html>
     { id: "providers", icon: "🔌", label: "Providers" },
     { id: "channels", icon: "📡", label: "Channels" },
     { id: "cron", icon: "⏰", label: "Cron & lịch hẹn" },
+    { id: "workflows", icon: "⚙️", label: "Quy trình" },
     { id: "users", icon: "👤", label: "Người dùng", admin: true },
     { id: "apikeys", icon: "🔑", label: "Khóa API (tích hợp)", admin: true },
     { grp: "Năng lực" },
@@ -348,7 +351,7 @@ export const INDEX_HTML = `<!doctype html>
   ];
   function renderNav() {
     var nav = $("#nav"); nav.innerHTML = "";
-    var cur = (location.hash.replace("#/", "") || (isMember() ? "chat" : "overview")).split("?")[0];
+    var cur = (location.hash.replace("#/", "") || (isMember() ? "chat" : "overview")).split("?")[0].split("/")[0];
     if (isMember()) {
       // Thành viên: chỉ có trang Chat
       nav.appendChild(el("div", { "class": "grp" }, "Trợ lý AI"));
@@ -4148,6 +4151,7 @@ export const INDEX_HTML = `<!doctype html>
     load();
   };
 
+${WORKFLOWS_UI}
   // ===== Router =====
   function refreshAgents() { return api("/v1/agents").then(function (j) { state.agents = j.agents; }).catch(function () {}); }
   function route() {
@@ -4156,6 +4160,7 @@ export const INDEX_HTML = `<!doctype html>
     renderNav();
     var id = location.hash.replace("#/", "") || (isMember() ? "chat" : "overview");
     var qi = id.indexOf("?"); state.routeQuery = qi >= 0 ? id.slice(qi + 1) : ""; if (qi >= 0) id = id.slice(0, qi);
+    var si = id.indexOf("/"); if (si >= 0) id = id.slice(0, si);
     if (isMember() && !(id === "inbox" && (state.inboxChannels || []).length)) id = "chat";
     var n = null; for (var i = 0; i < NAV.length; i++) if (NAV[i].id === id) n = NAV[i];
     if (n && n.admin && !isAdmin()) id = "overview";

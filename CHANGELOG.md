@@ -4,6 +4,19 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.13.0 — 2026-11-08
+
+- **⚙️ Quy trình tự động (Workflow)** — mục mới trên Dashboard để tự động hóa việc **không cần AI** (hoặc AI chỉ là một bước):
+  - **Kích hoạt** theo lịch (cron), bằng link webhook gọi từ hệ thống khác (truyền tham số, trả kết quả về, tùy chọn ký HMAC), hoặc bấm tay.
+  - **19 loại bước**: gọi API, chạy mã JavaScript (máy ảo cách ly), nếu/thì, chọn theo giá trị, lặp, lặp khi còn đúng, chạy song song, chờ, đặt biến, dừng, gửi tin vào Zalo/Telegram/…, gọi tool hoặc custom tool, gọi MCP trực tiếp (không qua AI), **nhờ agent làm việc** (có thể gửi câu trả lời thẳng vào một cuộc trò chuyện), trả kết quả webhook, gọi quy trình khác, đọc/ghi file, lệnh shell (mặc định tắt).
+  - **Trang dựng xếp dọc** có kéo thả, form theo loại bước (tự sinh ô nhập theo tham số của tool/MCP), nút chèn biến, **chạy thử** bản đang sửa (mặc định không gửi thật) với kết quả từng bước, lịch sử chạy, **phiên bản + hoàn về**, nhập/xuất JSON, 5 mẫu có sẵn.
+  - **Khóa bí mật** (API key của hệ thống ngoài) mã hóa, dùng bằng `{{ secrets.TEN }}`, tự che trong nhật ký.
+- **Agent tạo quy trình khi chat**: bộ tool `workflow_*` (tạo, sửa, chạy thử, chạy, xem lịch sử). Quản lý chỉ dành cho operator trở lên chat trên trang Chat; người dùng kênh chỉ được nhờ chạy các quy trình được đánh dấu cho phép.
+- **Tạo từ xa**: API `/v1/workflows` bằng khóa `psk_` (hợp với Claude Code), và PenAI MCP server có thêm bộ công cụ quy trình (quyền `workflow:read`, `workflow:run`, `workflow:manage` — kết nối lại ứng dụng AI và tick quyền mới để dùng).
+- Hướng dẫn: [docs/quy-trinh.md](docs/quy-trinh.md).
+
+Cập nhật: `sudo penai update`. Database tự thêm bảng mới; không phải làm gì thêm. Cấu hình `workflows` trong `penai.config.json5` có mặc định (không cần sửa).
+
 ## 1.12.0 — 2026-10-09
 
 - **Gửi bộ ảnh Zalo qua MCP**: công cụ gửi theo UID và số điện thoại nhận thêm `image_urls` (1–20 ảnh theo thứ tự). Ứng dụng AI gửi cả bộ trong một lần gọi; JPG/PNG/WEBP được gom thành bộ, GIF gửi riêng. Cách gửi một ảnh bằng `image_url` vẫn dùng được.
