@@ -23,3 +23,4 @@ export * from "./api-repo.js";
 export * from "./inbox-repo.js";
 export * from "./mcp-oauth-repo.js";
 export * from "./browser-repo.js";
+export * from "./workflow-repo.js";

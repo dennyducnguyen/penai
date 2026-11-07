@@ -176,6 +176,30 @@ export function isValidTimeZone(tz: string): boolean {
   }
 }
 
+/** Quy trình tự động (Dashboard → Quy trình) — mọi khóa có mặc định. */
+export const WorkflowsConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  /** Số lần chạy song song tối đa toàn hệ thống (phần còn lại xếp hàng). */
+  maxConcurrentRuns: z.number().int().min(1).max(50).default(5),
+  /** Trần thời gian một lần chạy (giây). */
+  maxRunSeconds: z.number().int().min(10).max(3600).default(600),
+  /** Timeout mặc định của bước http/code (giây); tool/mcp/agent tối thiểu 120s. */
+  stepTimeoutSeconds: z.number().int().min(1).max(600).default(30),
+  /** Giữ bao nhiêu lần chạy gần nhất mỗi quy trình. */
+  keepRuns: z.number().int().min(10).max(10000).default(200),
+  /** Giới hạn gọi webhook mỗi phút (mỗi quy trình, ghi đè được bằng rateLimit của trigger). */
+  webhookRatePerMinute: z.number().int().min(1).max(6000).default(60),
+  /** Số quy trình đang bật tối đa mỗi workspace. */
+  maxEnabledPerWorkspace: z.number().int().min(1).max(10000).default(100),
+  maxSteps: z.number().int().min(1).max(1000).default(100),
+  maxLoop: z.number().int().min(1).max(100000).default(1000),
+  /** Cho phép bước shell (lệnh trong sandbox bubblewrap). Mặc định tắt. */
+  allowShell: z.boolean().default(false),
+  /** Bước http được gọi địa chỉ nội bộ (127.0.0.1, 10.x, 192.168.x…). Mặc định chặn. */
+  allowPrivateNetwork: z.boolean().default(false),
+});
+export type WorkflowsConfig = z.infer<typeof WorkflowsConfigSchema>;
+
 export const PenaiConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).default(18800),
   host: z.string().default("127.0.0.1"),
@@ -197,6 +221,7 @@ export const PenaiConfigSchema = z.object({
     .trim()
     .default(DEFAULT_TIMEZONE)
     .refine(isValidTimeZone, { message: 'múi giờ không hợp lệ — dùng tên IANA, vd "Asia/Ho_Chi_Minh"' }),
+  workflows: WorkflowsConfigSchema.prefault({}),
 })
   // Alias model chỉ được trỏ vào provider trong danh sách trắng — sai cấu hình
   // phải chết ngay lúc khởi động, đừng để tới lúc app gọi mới lỗi.

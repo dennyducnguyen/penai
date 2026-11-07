@@ -277,6 +277,8 @@ import { registerInboxRoutes } from "./inbox.js";
 import { buildXlsx, type XlsxCell } from "./xlsx.js";
 import { isMcpPublicPath, registerMcpServerRoutes } from "./mcp-server.js";
 import { registerBrowserRoutes } from "./browser-runtime.js";
+import { registerWorkflowRoutes } from "./workflow-routes.js";
+import { getWorkflowService } from "./workflow-service.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -728,10 +730,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   // Inbox Zalo cá nhân (trực chat nhiều người) + PenAI MCP server (Claude/ChatGPT gọi vào)
   registerInboxRoutes(app, { db, dataDir: deps.config.dataDir });
-  registerMcpServerRoutes(app, { db, dataDir: deps.config.dataDir, config: deps.config });
+  registerMcpServerRoutes(app, { db, dataDir: deps.config.dataDir, config: deps.config, workflows: getWorkflowService(deps) });
 
   // Trình duyệt của agent: hồ sơ cookie, thử truy cập, phiên đang mở (ws_admin)
   registerBrowserRoutes(app, { db });
+
+  // Quy trình tự động: /v1/workflows/*, /v1/secrets, webhook /webhooks/workflow/:id/:token
+  registerWorkflowRoutes(app, { svc: getWorkflowService(deps), db });
 
   // Phiên bản kèm theo để lệnh cập nhật kiểm tra đúng bản mới đã chạy.
   app.get("/healthz", async () => ({ ok: true, version: RELEASE.version, ...(RELEASE.commit ? { commit: RELEASE.commit } : {}) }));

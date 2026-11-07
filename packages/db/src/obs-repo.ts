@@ -13,7 +13,8 @@ export type TraceSource =
   | "api"
   | "cron"
   | "webhook"
-  | "subagent";
+  | "subagent"
+  | "workflow";
 
 export async function recordTrace(
   db: Db,

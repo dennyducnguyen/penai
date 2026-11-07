@@ -46,13 +46,14 @@ Monorepo pnpm (nhiều gói trong một kho mã), TypeScript strict, ESM.
 | `apps/server/src/api/` | API tương thích OpenAI: `/v1/chat/completions`, `/v1/models`, `/v1/images/generations` |
 | `apps/server/src/library*.ts`, `vault-*.ts` | Thư viện file theo agent; kho tri thức (chia đoạn, tạo vector, tìm kiếm) |
 | `apps/server/src/cron-runner.ts`, `cron-tools.ts` | Chạy agent theo lịch và gửi kết quả về cuộc trò chuyện đã đặt lịch; phần runtime của tool `cron_*` (agent tự đặt lịch khi chat — [lich-hen.md](lich-hen.md)) |
+| `apps/server/src/workflow-service.ts`, `workflow-routes.ts`, `workflow-tools.ts`, `mcp-workflow-tools.ts`, `ui-workflows.ts` | Quy trình tự động: tạo/sửa/phiên bản, bộ chạy theo lịch, chạy thay mặt người sở hữu (nối engine với kênh chat, tool, MCP, agent), API `/v1/workflows` + webhook `/webhooks/workflow/:id/:token`, tool `workflow_*` cho agent và MCP server, trang Dashboard ⚙️ Quy trình — [quy-trinh.md](quy-trinh.md) |
 | `apps/server/src/memory-worker.ts`, `mcp-manager.ts` | Tóm tắt hội thoại cũ thành trí nhớ; kết nối và tự nối lại MCP |
 | `apps/server/src/inbox.ts`, `mcp-server.ts` | Inbox Zalo cá nhân (lưu tin, realtime SSE, gửi text/ảnh); PenAI MCP server + OAuth cho Claude/ChatGPT gọi vào ([zalo-personal.md](zalo-personal.md)) |
 | `apps/server/src/browser-runtime.ts` | Trình duyệt của agent: một Chromium dùng chung, phiên theo agent + người dùng; API Dashboard → Trình duyệt (hồ sơ cookie mã hóa, thử truy cập) — [trinh-duyet.md](trinh-duyet.md) |
 | `apps/server/src/version.ts` | Phiên bản đang chạy (đọc `release.json` do lệnh cài/cập nhật ghi) |
 | `packages/shared` | Đọc/kiểm tra cấu hình (`config.ts`), mã hóa AES-256-GCM (`crypto.ts`), logger, kiểu dùng chung |
 | `packages/db` | Schema, migration SQL viết tay, hàm truy vấn theo từng nhóm (`*-repo.ts`), lệnh `cli-*` (migrate, tạo quản trị, đặt lại mật khẩu) — **nơi duy nhất có SQL** |
-| `packages/core` | `agent-loop.ts` (vòng lặp agent), `scheduler.ts` (làn xử lý song song), `provider-gate.ts` (trần số lời gọi cùng lúc theo provider), `cron.ts` (tính lịch theo múi giờ) |
+| `packages/core` | `agent-loop.ts` (vòng lặp agent), `scheduler.ts` (làn xử lý song song), `provider-gate.ts` (trần số lời gọi cùng lúc theo provider), `cron.ts` (tính lịch theo múi giờ), `workflow/` (engine quy trình: định dạng + kiểm tra, biểu thức JavaScript chạy cách ly bằng QuickJS, chạy cây bước — không phụ thuộc database) |
 | `packages/providers` | `codex/` (ChatGPT, nhiều tài khoản xoay vòng), `claude-code/`, `antigravity/`, `acp/`, `openai-compat.ts`, `gemini.ts`, `dashscope.ts` (Qwen), `anthropic.ts`, `images/` (tạo ảnh), `mock-llm.ts` |
 | `packages/tools` | `builtin/` (42 tool: file, exec, web, trình duyệt, trí nhớ, skill, landing page, tài liệu, vault, KG, tạo ảnh, thẻ duyệt, lịch hẹn `cron_*`…), `browser/` (điều khiển Chromium, đọc cookie, chặn mạng nội bộ), `exec-sandbox.ts` (cách ly lệnh bằng bubblewrap), `custom-tool.ts` |
 | `packages/channels` | `telegram.ts`, `zalo.ts` (Zalo OA), `zalo-personal.ts`, `whatsapp-personal.ts` (WhatsApp cá nhân), `personal.ts` (bề mặt chung của kênh cá nhân), `teams.ts`, `discord.ts`, `slack.ts`, `whatsapp.ts`, `feishu.ts`; `format.ts` (Markdown → HTML Telegram) |
@@ -70,6 +71,8 @@ Ví dụ khách nhắn bot Telegram:
 3. **agent-runtime** dựng ngữ cảnh theo thứ tự: prompt của agent → hướng dẫn cố định (`AGENT.md`, skill, MCP) → phần theo người/câu hỏi (`USER.md`, trí nhớ ghim + trí nhớ liên quan) → tài liệu kho tri thức tìm trúng → hồ sơ người đang chat + chỉ dẫn của quản trị viên cho người đó ([ho-so-contact.md](ho-so-contact.md)); kèm tool được phép (kể cả tool MCP theo quyền của agent ∩ người dùng).
 4. **agent-loop** gọi mô hình AI qua **ProviderGate** (giới hạn số lời gọi cùng lúc cho mỗi provider — Claude Code/Antigravity mỗi tiến trình tốn ~220 MB RAM). Mô hình muốn dùng tool → chạy tool → đưa kết quả lại → lặp tới khi có câu trả lời.
 5. **Trả lời** về kênh (có stream chữ nếu kênh và provider hỗ trợ), gửi file bằng tool `send_file`; lượt chạy được ghi vào `traces` (theo dõi) và thống kê token.
+
+**Quy trình**: `WorkflowService` kiểm mỗi 20 giây các quy trình tới lịch (`workflows.next_run_at`), nhận webhook công khai hoặc lệnh chạy từ Dashboard/API/agent/MCP → engine `packages/core/src/workflow` duyệt cây bước, mỗi bước có tác dụng ra ngoài đi qua "host" của máy chủ (gửi tin qua kênh, gọi tool/MCP, chạy agent bằng quyền người sở hữu) → ghi `workflow_runs` + `workflow_run_steps` (đã che khóa bí mật). Chi tiết: [quy-trinh.md](quy-trinh.md).
 
 **Lịch hẹn**: người dùng nhờ "nhắc tôi 8h sáng mai…" → agent gọi tool `cron_create` → dòng mới trong `cron_jobs` kèm nơi tạo (kênh, cuộc trò chuyện, người nhờ) và múi giờ. **CronRunner** kiểm tra mỗi 20 giây, chạy lại agent bằng thư mục + quyền hiện tại của người nhờ, rồi gửi câu trả lời về đúng cuộc trò chuyện đó (và ghi vào hội thoại để người dùng trả lời tiếp). Chi tiết: [lich-hen.md](lich-hen.md).
 

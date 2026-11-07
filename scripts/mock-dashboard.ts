@@ -4,6 +4,7 @@
 //   Trang Contacts (hồ sơ, nhãn, chỉ dẫn cho AI): http://127.0.0.1:18899/#/contacts
 //   Trang Cron (lịch agent tự tạo khi chat):     http://127.0.0.1:18899/#/cron
 //   Trang Trình duyệt (hồ sơ cookie):            http://127.0.0.1:18899/#/browser
+//   Trang Quy trình (engine thật, host giả):      http://127.0.0.1:18899/#/workflows
 import { createServer, type IncomingMessage } from "node:http";
 import { BrandingSchema } from "../packages/shared/src/index.js";
 import { composeSystemPrompt } from "../packages/core/src/agent-loop.js";
@@ -11,6 +12,7 @@ import { describeSchedule, formatInZone } from "../packages/core/src/cron.js";
 import { INDEX_HTML } from "../apps/server/src/ui.js";
 import { defaultLogoSvg, renderIndexHtml } from "../apps/server/src/branding.js";
 import { PERSON_LIMITS, renderPersonContext } from "../apps/server/src/person-context.js";
+import { runWorkflow, validateDefinition, WORKFLOW_TEMPLATES, type StepLog, type WorkflowDefinition } from "../packages/core/src/workflow/index.js";
 
 const port = Number(process.env.PORT ?? 18899);
 const branding = BrandingSchema.parse({});
@@ -189,6 +191,9 @@ createServer(async (req, res) => {
   }
   if (path === "/v1/browser/sessions/close") return json({ closed: 1 });
 
+
+  // ----- Quy trình (engine thật, host giả: không gửi tin, không gọi MCP/agent thật) -----
+  if (path.startsWith("/v1/workflows") || path.startsWith("/v1/secrets")) return workflowMock(path, method, req, json);
   // ----- Cron -----
   if (path === "/v1/cron" && method === "GET") return json(cronView());
   const cronM = /^\/v1\/cron\/([^/]+)(\/runs)?$/.exec(path);
@@ -301,3 +306,155 @@ createServer(async (req, res) => {
   if (/^\/v1\/memory-docs\//.test(path)) return json({ doc: { path: "MEMORY.md", content: "# MEMORY\n\n- Khách hàng thân thiết từ 2025." } });
   return json({});
 }).listen(port, "127.0.0.1", () => console.log(`Dashboard giả: http://127.0.0.1:${port}/#/users`));
+
+// ===== Quy trình giả (engine thật, host giả) =====
+type MockWf = {
+  id: string; slug: string; name: string; description: string; enabled: boolean; version: number; definition: WorkflowDefinition;
+  lastRunAt: string | null; lastRunStatus: string | null; lastChangeVia: string;
+  versions: Array<{ version: number; definition: WorkflowDefinition; changeVia: string; changeNote: string; createdAt: string }>;
+  runs: Array<{ run: Record<string, unknown>; steps: StepLog[] }>;
+};
+const mockWfs: MockWf[] = [];
+const mockSecrets = [{ id: "s1", name: "MISA_API_KEY", note: "Khóa API MISA", createdAt: iso(500), updatedAt: iso(100) }];
+const wfCatalog = {
+  channels: [
+    { id: "ch1", ref: "telegram:Bot", kind: "telegram", name: "Bot", enabled: true, running: true, chats: [{ to: "1068263601", title: "IMGROUP Đức" }, { to: "-100222", title: "Nhóm kinh doanh" }], toHint: "chat id Telegram" },
+    { id: "ch2", ref: "zalo_personal:Zalo", kind: "zalo_personal", name: "Zalo", enabled: true, running: false, chats: [{ to: "group:771", title: "👥 Nhóm kho" }], toHint: '"direct:<uid>" hoặc "group:<id>"' },
+  ],
+  tools: [
+    { name: "http_fetch", description: "Tải nội dung một trang web/API công khai", parameters: { type: "object", properties: { url: { type: "string", description: "Địa chỉ" }, method: { type: "string", enum: ["GET", "POST"] } }, required: ["url"] }, custom: false, requiresApproval: false },
+    { name: "tao_don_misa", description: "Custom tool: tạo đơn trên MISA", parameters: { type: "object", properties: { ma_kh: { type: "string" }, so_tien: { type: "number" }, gui_email: { type: "boolean" } } }, custom: true, requiresApproval: true },
+  ],
+  mcp: [{ serverId: "m1", serverName: "misa", tools: [{ name: "create_report", description: "Tạo báo cáo ngày", parameters: { type: "object", properties: { date: { type: "string" }, total: { type: "number" } }, required: ["date"] } }] }],
+  agents: agents.map((a) => ({ key: a.key, name: a.name })),
+  workflows: [] as Array<{ id: string; slug: string; name: string }>,
+  secrets: mockSecrets.map((x) => ({ name: x.name, note: x.note })),
+};
+function wfPresent(w: MockWf) {
+  const hasHook = w.definition.triggers?.some((t) => t.type === "webhook");
+  return {
+    id: w.id, slug: w.slug, name: w.name, description: w.description, enabled: w.enabled, version: w.version,
+    triggers: (w.definition.triggers ?? []).map((t) => (t.type === "schedule" ? "schedule " + (t.cron ?? t.schedule) : t.type)),
+    lastRunAt: w.lastRunAt, lastRunStatus: w.lastRunStatus,
+    nextRunAt: w.enabled && w.definition.triggers?.some((t) => t.type === "schedule") ? iso(-60) : null,
+    lastChangeVia: w.lastChangeVia, ownerUserId: "u1", definition: w.definition,
+    ...(hasHook ? { webhook: { url: "http://127.0.0.1:" + port + "/webhooks/workflow/" + w.id + "/tokenmau", hmacSecret: "abc123" } } : {}),
+    stats: { total: w.runs.length, failed: w.runs.filter((r) => r.run.status === "failed").length, avgMs: 120 },
+  };
+}
+const wfCat = () => ({ channels: wfCatalog.channels, agents: agents.map((a) => a.key), tools: wfCatalog.tools.map((t) => t.name) });
+async function addMockWf(def: WorkflowDefinition, via: string, enabled: boolean) {
+  const v = await validateDefinition(def);
+  if (!v.ok) return { error: v.errors };
+  const id = crypto.randomUUID();
+  const w: MockWf = {
+    id, slug: def.name.toLowerCase().replace(/\s+/g, "-"), name: def.name, description: def.description ?? "", enabled, version: 1, definition: v.definition,
+    lastRunAt: null, lastRunStatus: null, lastChangeVia: via, versions: [{ version: 1, definition: v.definition, changeVia: via, changeNote: "Tạo mới", createdAt: iso(0) }], runs: [],
+  };
+  mockWfs.push(w);
+  wfCatalog.workflows.push({ id, slug: w.slug, name: w.name });
+  return { w };
+}
+let wfSeeded = false;
+async function workflowMock(path: string, method: string, req: IncomingMessage, json: (b: unknown, s?: number) => unknown) {
+  if (!wfSeeded) {
+    wfSeeded = true;
+    const r = await addMockWf(JSON.parse(JSON.stringify(WORKFLOW_TEMPLATES[0]!.definition)), "dashboard", true);
+    if (r.w) r.w.lastChangeVia = "agent";
+    await addMockWf(JSON.parse(JSON.stringify(WORKFLOW_TEMPLATES[1]!.definition)), "template", false);
+  }
+  if (path === "/v1/secrets" && method === "GET") return json({ secrets: mockSecrets });
+  if (path === "/v1/secrets") {
+    const b = await readBody(req);
+    mockSecrets.push({ id: "s" + Date.now(), name: String(b.name), note: String(b.note ?? ""), createdAt: iso(0), updatedAt: iso(0) });
+    return json({ secret: { name: b.name } });
+  }
+  if (path === "/v1/workflows" && method === "GET") {
+    return json({ workflows: mockWfs.map((w) => ({ ...wfPresent(w), definition: undefined, stepCount: JSON.stringify(w.definition.steps).split('"id"').length - 1 })), running: 0, enabled: true });
+  }
+  if (path === "/v1/workflows/templates") return json({ templates: WORKFLOW_TEMPLATES });
+  if (path === "/v1/workflows/catalog") return json({ ...wfCatalog, stepTypes: {} });
+  if (path === "/v1/workflows/validate") {
+    const b = await readBody(req);
+    const v = await validateDefinition(b.definition ?? b, { catalog: wfCat() });
+    return json({ ok: v.ok, errors: v.errors, warnings: v.warnings, definition: v.definition });
+  }
+  if (path === "/v1/workflows" && method === "POST") {
+    const b = await readBody(req);
+    const def = (b.template ? WORKFLOW_TEMPLATES.find((t) => t.key === b.template)?.definition : b.definition) as WorkflowDefinition;
+    const r = await addMockWf(JSON.parse(JSON.stringify(def)), b.template ? "template" : "dashboard", b.enabled === true);
+    if (r.error) return json({ error: "Định nghĩa chưa hợp lệ", issues: r.error }, 400);
+    return json({ workflow: wfPresent(r.w!), warnings: [] }, 201);
+  }
+  const m = /^\/v1\/workflows\/([^/]+)(?:\/(.*))?$/.exec(path);
+  const w = m ? mockWfs.find((x) => x.id === m[1] || x.slug === m[1]) : undefined;
+  if (!m || !w) return json({ error: "Không có quy trình" }, 404);
+  const sub = m[2] ?? "";
+  if (!sub && method === "GET") {
+    const last = w.runs[w.runs.length - 1];
+    const steps: Record<string, unknown> = {};
+    for (const s of last?.steps ?? []) steps[s.stepId] = { status: s.status, output: s.output, error: s.error, durationMs: s.durationMs };
+    return json({ workflow: wfPresent(w), lastRun: last ? { runId: last.run.id, steps } : null });
+  }
+  if (!sub && method === "PUT") {
+    const b = await readBody(req);
+    const v = await validateDefinition(b.definition, { catalog: wfCat() });
+    if (!v.ok) return json({ error: "Định nghĩa chưa hợp lệ", issues: v.errors }, 400);
+    w.definition = v.definition; w.name = v.definition.name; w.version++; w.lastChangeVia = "dashboard";
+    w.versions.unshift({ version: w.version, definition: v.definition, changeVia: "dashboard", changeNote: String(b.note ?? ""), createdAt: iso(0) });
+    return json({ workflow: wfPresent(w), warnings: v.warnings, diff: [{ kind: "changed", id: "x" }] });
+  }
+  if (!sub && method === "PATCH") {
+    const b = await readBody(req);
+    if (typeof b.enabled === "boolean") w.enabled = b.enabled;
+    return json({ workflow: wfPresent(w) });
+  }
+  if (!sub && method === "DELETE") { mockWfs.splice(mockWfs.indexOf(w), 1); return json({ ok: true }); }
+  if (sub === "versions") return json({ versions: w.versions.map((v) => ({ ...v, definition: undefined })) });
+  const vm = /^versions\/(\d+)(\/restore)?$/.exec(sub);
+  if (vm) {
+    const v = w.versions.find((x) => x.version === Number(vm[1]));
+    if (!v) return json({ error: "không có" }, 404);
+    if (vm[2]) { w.definition = v.definition; w.version++; w.versions.unshift({ ...v, version: w.version, changeVia: "restore", changeNote: "Hoàn về bản " + vm[1] }); }
+    return json({ version: v, workflow: wfPresent(w) });
+  }
+  if (sub === "runs") return json({ runs: [...w.runs].reverse().map((r) => r.run) });
+  const rm = /^runs\/([^/]+)$/.exec(sub);
+  if (rm) { const r = w.runs.find((x) => x.run.id === rm[1]); return r ? json(r) : json({ error: "không có" }, 404); }
+  if (sub === "run" || sub === "test") {
+    const b = await readBody(req);
+    const def = (b.definition as WorkflowDefinition) ?? w.definition;
+    const steps: StepLog[] = [];
+    const runId = crypto.randomUUID();
+    const res = await runWorkflow({
+      definition: (await validateDefinition(def)).definition,
+      inputs: (b.inputs as Record<string, unknown>) ?? {},
+      trigger: { type: sub === "test" ? "test" : "manual" },
+      timezone: TZ,
+      dryRun: b.dryRun === true,
+      workflow: { id: w.id, name: w.name, runId },
+      onStep: (l) => { steps.push(l); },
+      host: {
+        http: async (r) => {
+          const resp = await fetch(r.url, { method: r.method, headers: r.headers, ...(r.body ? { body: r.body } : {}), signal: r.signal });
+          const t = await resp.text();
+          let body: unknown = t;
+          try { body = JSON.parse(t); } catch { /* text */ }
+          return { status: resp.status, headers: {}, body };
+        },
+        send: async (x) => ({ sent: true, channel: x.channel, to: x.to }),
+        tool: async (x) => ({ mock: true, tool: x.tool, args: x.args }),
+        mcp: async (x) => ({ mock: true, server: x.server, tool: x.tool }),
+        agent: async (x) => ({ text: "(agent giả) Doanh số ổn định, đơn tăng nhẹ so với hôm trước.", message: x.message }),
+        subworkflow: async () => ({ status: "success" }),
+        file: async (x) => ({ path: x.path }),
+        shell: async () => ({ output: "" }),
+      },
+    });
+    const run = { id: runId, status: res.status, error: res.error, output: res.output, response: res.response, durationMs: res.durationMs, stepCount: res.stepCount, triggerType: sub === "test" ? "test" : "manual", isTest: sub === "test", dryRun: b.dryRun === true, startedAt: iso(0) };
+    w.runs.push({ run, steps });
+    if (sub === "run") { w.lastRunAt = iso(0); w.lastRunStatus = res.status; }
+    return json({ runId, finished: true, run, steps });
+  }
+  return json({ ok: true });
+}

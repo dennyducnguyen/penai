@@ -5,3 +5,4 @@ export * from "./scheduler.js";
 export * from "./cron.js";
 export * from "./provider-gate.js";
 export * from "./gated-provider.js";
+export * from "./workflow/index.js";

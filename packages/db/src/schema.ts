@@ -1,5 +1,6 @@
 import {
   bigint,
+  bigserial,
   boolean,
   customType,
   integer,
@@ -1117,3 +1118,112 @@ export const browserProfiles = pgTable(
   },
   (t) => [uniqueIndex("browser_profiles_ws_name_uq").on(t.workspaceId, t.name)],
 );
+
+/** Quy trình tự động (0036) — định nghĩa JSON dạng cây, xem packages/core/src/workflow. */
+export const workflows = pgTable(
+  "workflows",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    enabled: boolean("enabled").notNull().default(true),
+    ownerUserId: uuid("owner_user_id"),
+    definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+    version: integer("version").notNull().default(1),
+    webhookTokenEncrypted: text("webhook_token_encrypted"),
+    webhookSecretEncrypted: text("webhook_secret_encrypted"),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastRunStatus: text("last_run_status"),
+    createdVia: text("created_via").notNull().default("dashboard"),
+    lastChangeVia: text("last_change_via"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("workflows_workspace_id_slug_key").on(t.workspaceId, t.slug)],
+);
+
+export const workflowVersions = pgTable("workflow_versions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id").notNull(),
+  workflowId: uuid("workflow_id")
+    .notNull()
+    .references(() => workflows.id, { onDelete: "cascade" }),
+  version: integer("version").notNull(),
+  definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+  changedByUserId: uuid("changed_by_user_id"),
+  changedByAgentId: uuid("changed_by_agent_id"),
+  changeVia: text("change_via").notNull().default("dashboard"),
+  changeNote: text("change_note").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const workflowRuns = pgTable("workflow_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id").notNull(),
+  workflowId: uuid("workflow_id")
+    .notNull()
+    .references(() => workflows.id, { onDelete: "cascade" }),
+  version: integer("version").notNull(),
+  triggerType: text("trigger_type").notNull(),
+  trigger: jsonb("trigger").$type<Record<string, unknown>>().notNull().default({}),
+  inputs: jsonb("inputs").$type<Record<string, unknown>>().notNull().default({}),
+  status: text("status").notNull().default("running"),
+  isTest: boolean("is_test").notNull().default(false),
+  dryRun: boolean("dry_run").notNull().default(false),
+  parentRunId: uuid("parent_run_id"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  durationMs: integer("duration_ms"),
+  error: text("error"),
+  output: jsonb("output"),
+  response: jsonb("response"),
+  stepCount: integer("step_count").notNull().default(0),
+});
+
+export const workflowRunSteps = pgTable("workflow_run_steps", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  runId: uuid("run_id")
+    .notNull()
+    .references(() => workflowRuns.id, { onDelete: "cascade" }),
+  seq: integer("seq").notNull(),
+  stepId: text("step_id").notNull(),
+  type: text("type").notNull(),
+  path: text("path").notNull(),
+  iteration: integer("iteration"),
+  status: text("status").notNull(),
+  input: jsonb("input"),
+  output: jsonb("output"),
+  error: text("error"),
+  attempts: integer("attempts").notNull().default(1),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  durationMs: integer("duration_ms").notNull().default(0),
+});
+
+/** Khóa bí mật của workspace (0036) — {{ secrets.TEN }} trong quy trình; mã hóa, API không trả giá trị. */
+export const workspaceSecrets = pgTable(
+  "workspace_secrets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: text("name").notNull(),
+    valueEncrypted: text("value_encrypted").notNull(),
+    note: text("note").notNull().default(""),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("workspace_secrets_workspace_id_name_key").on(t.workspaceId, t.name)],
+);
+
+export const workflowWebhookNonces = pgTable("workflow_webhook_nonces", {
+  workspaceId: uuid("workspace_id").notNull(),
+  workflowId: uuid("workflow_id").notNull(),
+  nonce: text("nonce").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
