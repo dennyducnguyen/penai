@@ -395,7 +395,7 @@ export async function validateDefinition(
     else {
       const s = def.settings;
       if (s.concurrency !== undefined && !["skip", "queue", "parallel"].includes(String(s.concurrency))) {
-        err("settings.concurrency", 'concurrency là "skip" (bỏ lượt mới nếu đang chạy), "queue" (xếp hàng) hoặc "parallel"');
+        err("settings.concurrency", 'concurrency là "skip" (bỏ lượt mới nếu đang chạy), "queue" (xếp hàng) hoặc "parallel" — mặc định: lịch "skip", webhook/tay "parallel"');
       }
       if (s.timeoutSec !== undefined && (typeof s.timeoutSec !== "number" || s.timeoutSec < 1 || s.timeoutSec > limits.maxRunSeconds)) {
         err("settings.timeoutSec", `timeoutSec từ 1 đến ${limits.maxRunSeconds} giây`);

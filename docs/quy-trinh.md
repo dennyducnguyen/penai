@@ -112,6 +112,7 @@ curl -X POST 'https://<tên-miền>/webhooks/workflow/<id>/<token>' -H 'content-
 
 - **🧪 Chạy thử** chạy đúng bản đang sửa trên màn hình, chưa cần lưu. Mặc định là "dry run": bước gửi tin, POST, MCP, tool, ghi file chỉ hiện sẽ làm gì. Mỗi thẻ bước hiện ✓/✗ và kết quả; bấm vào bước để xem đầu vào/đầu ra.
 - **🕘 Lịch sử**: mỗi quy trình giữ 200 lần chạy gần nhất (`workflows.keepRuns`). Trong ⚙ Cài đặt có thể đặt "Báo khi chạy lỗi" để gửi cảnh báo vào chat.
+- **Lượt trùng** (`settings.concurrency`): mặc định lượt theo lịch bị bỏ nếu lượt trước chưa xong; webhook và bấm tay chạy song song. Đặt `"skip"`, `"queue"` (xếp hàng) hoặc `"parallel"` để áp cho mọi cách kích hoạt.
 - **Người sở hữu**: lần chạy mang quyền hiện tại của người tạo, ws_admin đổi được. Người sở hữu mất quyền operator thì quy trình không chạy.
 - **Ai làm gì**: viewer chỉ xem; operator và ws_admin tạo, sửa, chạy, xóa. Agent ở trang Chat chỉ quản lý được khi người đang chat là operator trở lên. Người dùng nhắn qua kênh (Zalo, Telegram…) chỉ được nhờ agent **chạy** các quy trình đã bật "Cho phép agent chạy khi được nhờ qua kênh chat" (`settings.allowFromChat`).
 - **Tool cần duyệt** (custom tool có "cần duyệt", lệnh `exec`/`shell`): trong quy trình không có ai bấm duyệt lúc chạy, nên operator phải tick "Cho phép chạy không cần duyệt" cho từng bước đó. Agent và AI bên ngoài không tự tick được.

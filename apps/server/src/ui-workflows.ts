@@ -866,7 +866,7 @@ export const WORKFLOWS_UI = String.raw`
       b.innerHTML = "<h3>⚙ Cài đặt</h3>";
       var st = S.draft.settings = S.draft.settings || {};
       field(b, "Mô tả", S.draft, "description", { kind: "area", rows: 2, dropEmpty: true });
-      field(b, "Khi lần chạy trước chưa xong", st, "concurrency", { kind: "select", options: [["", "Bỏ qua lượt mới (mặc định)"], ["queue", "Xếp hàng chạy sau"], ["parallel", "Chạy song song"]], dropEmpty: true });
+      field(b, "Khi lần chạy trước chưa xong", st, "concurrency", { kind: "select", options: [["", "Mặc định: lịch bỏ lượt trùng, webhook/tay chạy song song"], ["skip", "Luôn bỏ qua lượt mới"], ["queue", "Xếp hàng chạy sau"], ["parallel", "Luôn chạy song song"]], dropEmpty: true });
       field(b, "Trần thời gian một lần chạy (giây)", st, "timeoutSec", { kind: "number" });
       field(b, "Cho agent chạy quy trình này khi người dùng nhờ qua kênh chat (Zalo, Telegram…)", st, "allowFromChat", { kind: "check" });
       b.appendChild(el("h4", { style: "margin:12px 0 0;font-size:.85rem" }, "Báo khi chạy lỗi"));

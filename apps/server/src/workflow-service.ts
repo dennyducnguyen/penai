@@ -512,7 +512,9 @@ export class WorkflowService {
     if (!row.enabled && !req.allowDisabled) throw new WorkflowError(`Quy trình "${row.name}" đang tắt`, 409);
     if ((req.depth ?? 0) > 3) throw new WorkflowError("Gọi quy trình lồng nhau quá 3 cấp", 400);
     const def = row.definition as unknown as WorkflowDefinition;
-    const conc = def.settings?.concurrency ?? "skip";
+    // Mặc định: lượt theo lịch trùng lượt trước thì bỏ; webhook/tay chạy song song
+    // (nhiều bên gọi webhook độc lập — bỏ lượt là mất dữ liệu của họ).
+    const conc = def.settings?.concurrency ?? (req.triggerType === "schedule" ? "skip" : "parallel");
     const busy = this.inFlight.get(row.id) ?? 0;
     if (busy > 0 && conc === "skip" && (req.triggerType === "schedule" || req.triggerType === "webhook")) {
       return { skipped: "Lần chạy trước của quy trình chưa xong (concurrency: skip)" };
