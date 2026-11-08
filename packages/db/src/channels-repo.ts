@@ -263,17 +263,42 @@ export async function listPendingPairings(db: Db, ctx: WorkspaceContext) {
 
 // ===== Contacts (dedup theo workspace + kênh + external_id) =====
 
+type UpsertContactInput = {
+  channelId?: string;
+  channelKind: string;
+  externalId: string;
+  displayName?: string;
+  /** Gộp vào contacts.metadata (vd { zalo_kind: "group" }) — không xóa khóa cũ. */
+  metadata?: Record<string, unknown>;
+};
+
+function isUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: string; cause?: { code?: string } } | null;
+  return e?.code === "23505" || e?.cause?.code === "23505";
+}
+
+/**
+ * Ghi/cập nhật contact. Hai luồng cùng ghi lần đầu cho một người (Inbox lưu tin + runtime
+ * trước cổng pairing) có thể cùng INSERT → một bên vướng khóa duy nhất → chạy lại một lần
+ * (lúc đó đã thấy dòng của bên kia và chỉ cập nhật).
+ */
 export async function upsertContact(
   db: Db,
   ctx: WorkspaceContext,
-  input: {
-    channelId?: string;
-    channelKind: string;
-    externalId: string;
-    displayName?: string;
-    /** Gộp vào contacts.metadata (vd { zalo_kind: "group" }) — không xóa khóa cũ. */
-    metadata?: Record<string, unknown>;
-  },
+  input: UpsertContactInput,
+): Promise<{ contactId: string; principalId: string }> {
+  try {
+    return await upsertContactOnce(db, ctx, input);
+  } catch (err) {
+    if (isUniqueViolation(err)) return upsertContactOnce(db, ctx, input);
+    throw err;
+  }
+}
+
+async function upsertContactOnce(
+  db: Db,
+  ctx: WorkspaceContext,
+  input: UpsertContactInput,
 ): Promise<{ contactId: string; principalId: string }> {
   const metaJson = input.metadata ? JSON.stringify(input.metadata) : null;
   return withWorkspace(db, ctx, async (tx) => {
