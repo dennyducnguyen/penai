@@ -4,6 +4,18 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.17.0 — 2026-11-08
+
+Giao diện dùng tốt trên điện thoại, Chat làm lại theo kiểu ChatGPT/Claude:
+
+- **💬 Chat**: cột **cuộc trò chuyện** bên trái — nút **＋ Cuộc trò chuyện mới**, ô tìm, nhóm theo Hôm nay / Hôm qua / 7 ngày qua…, **⋯ Đổi tên / Xóa**. Cuộc trò chuyện **tự đặt tên theo câu hỏi đầu tiên**. Khung chat ở giữa màn hình, ô nhập tự giãn, nút **■ Dừng** khi AI đang trả lời, **⧉ Sao chép** câu trả lời, gợi ý câu hỏi khi bắt đầu. Đường dẫn `#/chat/<mã>` mở lại đúng cuộc trò chuyện. Cuộc mới chỉ được tạo khi gửi tin đầu (không còn phiên trống).
+- **Cuộn mượt, không giật**: chỉ vùng tin nhắn cuộn (cả trang đứng yên), tự bám tin mới nhất chỉ khi bạn đang ở cuối (đang đọc tin cũ thì không bị kéo xuống, có nút ↓), câu trả lời vẽ lại theo khung hình. **Tự focus ô nhập** khi mở Chat / cuộc trò chuyện / hội thoại Inbox.
+- **Điện thoại**: menu trái thành ngăn kéo (nút ☰), Đổi mật khẩu / Đăng xuất nằm cuối menu; Chat có ngăn kéo danh sách cuộc trò chuyện; **Inbox một màn hình** — chạm hội thoại để mở, nút ‹ hoặc nút Back của điện thoại để quay lại danh sách; chạm vào tin của khách để thả cảm xúc; chiều cao tự khớp khi bàn phím bật; chữ trong ô nhập 16px (iPhone không tự phóng to); trên điện thoại Enter là xuống dòng, gửi bằng nút ➤.
+- **Tổng quan**: lối tắt tới Chat, Inbox, Quy trình, Dữ liệu…; bấm vào ô số liệu để mở mục tương ứng. Thông báo nổi ở cuối màn hình.
+- **Sửa lỗi**: trang Chat bị **treo** khi câu trả lời có danh sách đánh số (1. 2. 3.); phần xem trước system prompt ở trang Agents thay nhầm chữ "s" bằng dấu cách.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.16.0 — 2026-11-08
 
 - **🗃️ CSDL riêng của mỗi workspace** — bảng PostgreSQL thật ngay trong PenAI, không cần Supabase hay Google Sheets. Quy trình, agent, API và AI bên ngoài (MCP) dùng chung:

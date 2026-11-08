@@ -6,6 +6,7 @@
 //   Trang Trình duyệt (hồ sơ cookie):            http://127.0.0.1:18899/#/browser
 //   Trang Quy trình (engine thật, host giả):      http://127.0.0.1:18899/#/workflows
 //   Trang Dữ liệu (CSDL giả trong RAM):           http://127.0.0.1:18899/#/database
+//   Chat (trả lời giả chạy từng chữ) + Inbox giả:  http://127.0.0.1:18899/#/chat  ·  #/inbox
 import { createServer, type IncomingMessage } from "node:http";
 import { BrandingSchema } from "../packages/shared/src/index.js";
 import { composeSystemPrompt } from "../packages/core/src/agent-loop.js";
@@ -266,6 +267,70 @@ async function dbMock(path: string, method: string, url: URL, req: IncomingMessa
   return json({ ok: true });
 }
 
+
+// ===== Chat (phiên + trả lời giả dạng SSE) và Inbox (hội thoại giả) =====
+type MockSession = { id: string; agentId: string; title: string | null; ownerUserId: string | null; createdAt: string; updatedAt: string; messages: Array<{ role: string; content: unknown }> };
+const mockSessions: MockSession[] = [
+  ["Báo cáo doanh thu tuần 45", 30], ["Soạn email trả lời khách Lan", 60 * 5], ["Kế hoạch livestream tháng 11", 60 * 26], ["Tóm tắt hợp đồng đại lý", 60 * 24 * 3], ["Phân tích đơn hàng hủy", 60 * 24 * 12], ["Chính sách đổi trả", 60 * 24 * 40],
+].map(([t, ago], i) => ({
+  id: "00000000-0000-4000-9000-00000000000" + i, agentId: "a1", title: t as string, ownerUserId: i === 4 ? null : "u1", createdAt: iso(ago as number), updatedAt: iso(ago as number),
+  messages: Array.from({ length: 8 }, (_, k) => k % 2 === 0
+    ? { role: "user", content: { kind: "text", text: "Câu hỏi số " + (k / 2 + 1) + " về " + t } }
+    : { role: "assistant", content: { kind: "assistant", text: "**Trả lời " + ((k + 1) / 2) + "**\n\n- Ý một: doanh thu tăng 12% so với tuần trước.\n- Ý hai: đơn hủy giảm còn 3%.\n- Ý ba: nên đẩy mạnh livestream tối thứ Sáu.\n\nBạn muốn tôi lập bảng chi tiết không?", toolCalls: [] } }),
+}));
+async function chatMock(path: string, method: string, req: IncomingMessage, res: import("node:http").ServerResponse, json: (b: unknown, s?: number) => unknown) {
+  if (path === "/v1/sessions" && method === "GET") return json({ sessions: [...mockSessions].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).map(({ messages, ...s }) => s) });
+  if (path === "/v1/sessions" && method === "POST") {
+    const s: MockSession = { id: crypto.randomUUID(), agentId: "a1", title: null, ownerUserId: "u1", createdAt: iso(0), updatedAt: iso(0), messages: [] };
+    mockSessions.push(s);
+    const { messages, ...out } = s;
+    return json({ session: out }, 201);
+  }
+  const sm = /^\/v1\/sessions\/([^/]+)(\/messages)?$/.exec(path);
+  if (sm) {
+    const s = mockSessions.find((x) => x.id === sm[1]);
+    if (!s) return json({ error: "Session không tồn tại" }, 404);
+    if (sm[2]) return json({ messages: s.messages });
+    if (method === "PATCH") { s.title = String((await readBody(req)).title ?? s.title); return json({ ok: true }); }
+    if (method === "DELETE") { mockSessions.splice(mockSessions.indexOf(s), 1); return json({ deleted: true }); }
+  }
+  if (path === "/v1/chat") {
+    const b = await readBody(req);
+    const s = mockSessions.find((x) => x.id === b.sessionId);
+    if (!s) return json({ error: "Session không tồn tại" }, 404);
+    const msg = String(b.message ?? "");
+    if (!s.title) s.title = msg.split(/\r?\n/)[0]!.slice(0, 60);
+    s.updatedAt = iso(0);
+    s.messages.push({ role: "user", content: { kind: "text", text: msg } });
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+    const answer = "Đây là câu trả lời **mẫu** cho: _" + msg.slice(0, 80) + "_\n\n" + Array.from({ length: 6 }, (_, i) => (i + 1) + ". Ý số " + (i + 1) + " — nội dung trả lời chạy từng chữ để thử cuộn mượt khi AI đang viết.").join("\n");
+    const words = answer.split(/(\s+)/);
+    for (const w of words) {
+      res.write("data: " + JSON.stringify({ type: "text_delta", text: w }) + "\n\n");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    s.messages.push({ role: "assistant", content: { kind: "assistant", text: answer, toolCalls: [] } });
+    res.write("data: " + JSON.stringify({ type: "done", finalText: answer }) + "\n\n");
+    return res.end();
+  }
+  return json({ error: "không có" }, 404);
+}
+const ibxThreads = Array.from({ length: 14 }, (_, i) => ({
+  threadId: String(1000 + i), kind: i % 4 === 0 ? "group" : "direct", name: ["Lan Nguyễn", "Nhóm Kinh doanh", "Minh Trần", "Hùng Phạm", "Nhóm Kho", "Thảo Lê", "An Võ"][i % 7] + (i > 6 ? " " + i : ""),
+  contactAlias: null, avatar: null, lastMessage: ["Em gửi báo giá giúp chị nhé", "Đơn 2411A3 giao chưa?", "Ok em cảm ơn", "Mai anh qua lấy hàng"][i % 4], lastMessageAt: iso(i * 47), unreadCount: i % 3 === 0 ? i % 5 + 1 : 0, aiMode: "auto", pausedUntil: null, isContact: true,
+}));
+function ibxMsgs(tid: string) {
+  return Array.from({ length: 30 }, (_, k) => ({ id: Number(tid) * 100 + k, msgId: "m" + k, direction: k % 3 === 0 ? "out" : "in", source: k % 3 === 0 ? (k % 2 ? "agent" : "web") : "zalo", webUserName: "Quản trị", senderName: "Lan", contentType: "text", text: k % 3 === 0 ? "Dạ shop gửi chị báo giá ạ, chị xem giúp em nhé. Mẫu số " + k : "Chị hỏi chút về đơn hàng số " + k + ", còn hàng không em?", sentAt: iso(300 - k * 9), reactions: k === 4 ? [{ icon: "/-heart", reactorId: "me", reactorName: "Tôi", source: "web" }] : [], canReact: true, meta: {} }));
+}
+async function inboxMock(path: string, method: string, json: (b: unknown, s?: number) => unknown) {
+  if (path === "/v1/inbox/channels") return json({ channels: [{ id: "c1", name: "Zalo bán hàng", platform: "Zalo", kind: "zalo_personal", connected: true, account: { id: "me", name: "Nguyễn Minh Đức" }, inbox: true, pauseMinutes: 30, autoReaction: "heart" }], canManage: true });
+  if (/\/threads$/.test(path)) return json({ threads: ibxThreads });
+  const mm = /\/threads\/([^/]+)\/messages$/.exec(path);
+  if (mm) return json({ messages: ibxMsgs(mm[1]!), thread: ibxThreads.find((t) => t.threadId === mm[1]) });
+  if (/\/send$/.test(path)) return json({ ok: true });
+  return json({ ok: true });
+}
+
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     let raw = "";
@@ -324,6 +389,9 @@ createServer(async (req, res) => {
   // ----- Quy trình (engine thật, host giả: không gửi tin, không gọi MCP/agent thật) -----
   if (path.startsWith("/v1/workflows") || path.startsWith("/v1/secrets")) return workflowMock(path, method, req, json);
   if (path.startsWith("/v1/db/")) return dbMock(path, method, url, req, json, res);
+  if (path.startsWith("/v1/sessions") || path === "/v1/chat") return chatMock(path, method, req, res, json);
+  if (path.startsWith("/v1/inbox/")) return inboxMock(path, method, json);
+  if (path === "/v1/usage") return json({ monthTokens: 1234567, cap: null });
   // ----- Cron -----
   if (path === "/v1/cron" && method === "GET") return json(cronView());
   const cronM = /^\/v1\/cron\/([^/]+)(\/runs)?$/.exec(path);

@@ -29,6 +29,7 @@ import {
   getBrowserProfile,
   getAgentByKey,
   getSession,
+  setSessionTitle,
   listAgents,
   listSessions,
   loadMessages,
@@ -2827,6 +2828,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { messages: await loadMessages(db, req.authCtx, id) };
   });
 
+  app.patch("/v1/sessions/:id", async (req, reply) => {
+    if (!requireChat(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const title = String((req.body as { title?: unknown } | undefined)?.title ?? "").trim();
+    if (!title) return reply.code(400).send({ error: "Nhập tiêu đề" });
+    if (!(await getSession(db, req.authCtx, id))) return reply.code(404).send({ error: "Session không tồn tại" });
+    await setSessionTitle(db, req.authCtx, id, title);
+    return { ok: true };
+  });
+
   app.delete("/v1/sessions/:id", async (req, reply) => {
     if (!requireChat(req, reply)) return;
     const { id } = req.params as { id: string };
@@ -4138,6 +4149,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const agent = await getAgentById(db, req.authCtx, session.agentId);
     if (!agent) {
       return reply.code(404).send({ error: "Agent không tồn tại" });
+    }
+    // Phiên chưa có tiêu đề → lấy câu đầu của tin nhắn (danh sách cuộc trò chuyện bên trái)
+    if (!session.title) {
+      const first = message.trim().split(/\r?\n/)[0] ?? "";
+      const t = first.length > 60 ? first.slice(0, 57).replace(/\s+\S*$/, "") + "…" : first;
+      await setSessionTitle(db, req.authCtx, sessionId, t || (files[0]?.name ?? ""), true).catch(() => false);
     }
     const traceStart = performance.now();
 

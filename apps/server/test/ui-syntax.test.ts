@@ -32,6 +32,11 @@ describe("Dashboard HTML", () => {
     expect(INDEX_HTML).toMatch(/id="cpNew" type="password"/);
   });
 
+  it("Markdown: danh sách đánh số không làm treo trang (regex \\d còn nguyên khi ra trình duyệt)", () => {
+    expect(INDEX_HTML).toContain("if (/\\d/.test(m[2]) !== ordered) break;");
+    expect(INDEX_HTML).toContain("if (!items.length) { para.push(line); i++; continue; }");
+  });
+
   it("menu không hiện mục Teams", () => {
     expect(INDEX_HTML).not.toContain('{ id: "teams"');
   });
