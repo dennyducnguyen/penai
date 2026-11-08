@@ -28,7 +28,11 @@ describe("MCP server — OAuth helpers", () => {
   });
 
   it("scope: mặc định đủ bộ, bỏ scope lạ", () => {
-    const all = ["zalo:read", "zalo:send", "zalo:messages", "whatsapp:read", "whatsapp:send", "whatsapp:messages", "workflow:read", "workflow:run", "workflow:manage", "db:read", "db:write"];
+    const all = [
+      "zalo:read", "zalo:send", "zalo:messages", "whatsapp:read", "whatsapp:send", "whatsapp:messages",
+      "channels:read", "channels:send", "channels:messages", "pages:publish", "pages:comments", "pages:insights",
+      "workflow:read", "workflow:run", "workflow:manage", "db:read", "db:write",
+    ];
     expect(parseScopes(undefined)).toEqual(all);
     expect(parseScopes("zalo:read offline_access")).toEqual(["zalo:read"]);
     expect(parseScopes("openid")).toEqual(all);
@@ -47,7 +51,12 @@ describe("MCP server — OAuth helpers", () => {
 
 describe("Inbox — cấu hình + ảnh gửi đi", () => {
   it("readInboxConfig: mặc định bật lưu, tạm dừng 30 phút", () => {
-    expect(readInboxConfig({})).toEqual({ enabled: true, pauseMinutes: 30, mcpReadMessages: false, autoReaction: null, agentReply: true, photoAck: "short" });
+    expect(readInboxConfig({})).toEqual({
+      enabled: true, pauseMinutes: 30, mcpReadMessages: false, autoReaction: null, agentReply: true, photoAck: "short",
+      comments: true, commentAiPublic: true, commentAiPrivate: true,
+    });
+    // Fanpage/Instagram: khách chỉ gửi ảnh → mặc định AI trả lời luôn; tắt từng kiểu trả lời bình luận
+    expect(readInboxConfig({ comment_ai_private: false }, "facebook")).toMatchObject({ photoAck: "ai", commentAiPublic: true, commentAiPrivate: false });
     expect(readInboxConfig({ inbox: false, inbox_pause_minutes: 0 })).toMatchObject({ enabled: false, pauseMinutes: 0, mcpReadMessages: false });
     // Tự thả cảm xúc mặc định tắt; công tắc Agent tự trả lời mặc định bật
     expect(readInboxConfig({ auto_reaction: "heart", agent_reply: false })).toMatchObject({ autoReaction: "heart", agentReply: false });
