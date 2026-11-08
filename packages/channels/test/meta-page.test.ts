@@ -475,6 +475,32 @@ describe("Bình luận, app riêng, thao tác Trang", () => {
     expect(logs[0]).toMatchObject({ threadId: "post:1065_99", source: "web", webUserId: "w1", meta: { parentId: "99_1" } });
   });
 
+  it("không đọc được hồ sơ khách (app thiếu tính năng hồ sơ) → lấy tên qua hội thoại của Trang", async () => {
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      const u = new URL(String(input));
+      const path = u.pathname.replace("/v22.0", "");
+      if (path === "/555") return new Response(JSON.stringify({ error: { message: "Unsupported get request", code: 100 } }), { status: 400 });
+      if (path === "/1065/conversations" && u.searchParams.get("user_id") === "555")
+        return new Response(JSON.stringify({ data: [{ participants: { data: [{ id: "555", name: "Con Ngan" }, { id: "1065", name: "KOS" }] } }] }), { status: 200 });
+      return base(input, init);
+    });
+    reply = async () => ({ kind: "ignore" });
+    const names: string[] = [];
+    const ch = new MetaPageChannel("facebook", {
+      id: "chP", name: "KOS", token: serializeMetaCredentials({ pageAccessToken: "t", penaiSecret: "", appSecret: APP_SECRET }),
+      config: { mode: "app", pageId: "1065" }, requirePairing: false,
+      onInbound: async (m) => { inbound.push(m); return { kind: "ignore" }; },
+      onMessageLog: (e) => logs.push(e),
+      onPeerProfile: (p) => names.push(p.name),
+    });
+    await ch.start();
+    ch.ingest({ object: "page", entry: [{ id: "1065", messaging: [{ sender: { id: "555" }, recipient: { id: "1065" }, timestamp: 1, message: { mid: "m.p1", text: "xin chào" } }] }] });
+    await ch.idle();
+    expect(inbound[0]).toMatchObject({ senderName: "Con Ngan" });
+    expect(names).toEqual(["Con Ngan"]);
+  });
+
   it("app riêng: token hỏng (190) không gọi hub, báo đăng nhập lại", async () => {
     vi.stubGlobal("fetch", async (input: string | URL) => {
       calls.push({ url: String(input), method: "POST", body: null });

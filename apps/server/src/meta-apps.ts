@@ -500,6 +500,7 @@ export function registerMetaAppRoutes(app: FastifyInstance, deps: { db: Db }): v
       let routed = 0;
       for (const entry of Array.isArray(payload.entry) ? payload.entry : []) {
         const entryId = str(obj(entry).id);
+        const before = routed;
         for (const { channel } of channelHandlers.values()) {
           if (!(channel instanceof MetaPageChannel)) continue;
           const info = channel.pageInfo();
@@ -507,6 +508,7 @@ export function registerMetaAppRoutes(app: FastifyInstance, deps: { db: Db }): v
           const match = object === "instagram" ? channel.kind === "instagram" && info.igAccountId === entryId : channel.kind === "facebook" && info.pageId === entryId;
           if (match) routed += channel.ingest({ object, entry: [entry] });
         }
+        if (routed === before) logger.warn(`meta_app.webhook (${a.appId}): ${object} ${entryId} chưa có kênh trong PenAI — tin bị bỏ qua (Channels → ＋ Thêm kênh → App Facebook riêng)`);
       }
       return reply.send({ ok: true, events: routed });
     });

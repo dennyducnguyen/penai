@@ -545,7 +545,8 @@ export class MetaPageChannel implements InboxChannel {
       return;
     }
     // Kiểm token nền, không chặn khởi động
-    void this.graph(`/${this.cfg.pageId}`, { query: { fields: "id,name" }, timeoutMs: 15_000 })
+    // Kiểm token nền, không chặn khởi động — dùng quyền nhắn tin (pages_messaging) mà mọi kênh đều có
+    void this.graph(`/${this.cfg.pageId}/conversations`, { query: { platform: this.kind === "instagram" ? "instagram" : "messenger", limit: "1", fields: "id" }, timeoutMs: 15_000 })
       .then(() => { this.authError = null; })
       .catch((err: unknown) => {
         if (err instanceof MetaGraphError && (err.code === 190 || err.status === 401) && !this.authError) {
@@ -977,6 +978,7 @@ export class MetaPageChannel implements InboxChannel {
       try {
         const j = obj(await this.graph(`/${userId}`, { query: { fields }, timeoutMs: 6_000 }));
         const name = str(j.name) || [str(j.last_name), str(j.first_name)].filter(Boolean).join(" ") || (str(j.username) ? `@${str(j.username)}` : "");
+        if (!name) continue;
         const p = { name, avatar: str(j.profile_pic), at: Date.now() };
         this.profiles.set(userId, p);
         if (this.profiles.size > 5000) this.profiles.delete(this.profiles.keys().next().value!);
@@ -985,6 +987,29 @@ export class MetaPageChannel implements InboxChannel {
       } catch {
         // thử bộ trường khác / bỏ qua
       }
+    }
+    // App mới chưa có tính năng "Business Asset User Profile Access": đọc tên qua hội thoại của Trang (chỉ cần pages_messaging)
+    try {
+      const j = obj(
+        await this.graph(`/${this.cfg.pageId}/conversations`, {
+          query: { platform: this.kind === "instagram" ? "instagram" : "messenger", user_id: userId, fields: "participants" },
+          timeoutMs: 6_000,
+        }),
+      );
+      for (const conv of Array.isArray(j.data) ? j.data : []) {
+        for (const part of Array.isArray(obj(obj(conv).participants).data) ? (obj(obj(conv).participants).data as unknown[]) : []) {
+          const o = obj(part);
+          if (str(o.id) !== userId) continue;
+          const name = str(o.name) || (str(o.username) ? `@${str(o.username)}` : "");
+          if (!name) continue;
+          const p = { name, avatar: "", at: Date.now() };
+          this.profiles.set(userId, p);
+          this.deps.onPeerProfile?.({ threadId: userId, name });
+          return p;
+        }
+      }
+    } catch {
+      // bỏ qua — Inbox hiện mã khách
     }
     this.profiles.set(userId, { name: cached?.name ?? "", avatar: cached?.avatar ?? "", at: Date.now() - 5 * 3600_000 });
     return cached ?? null;
