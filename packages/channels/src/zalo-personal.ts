@@ -940,6 +940,10 @@ export class ZaloPersonalChannel implements Channel {
     api.custom("penaiDecodeSendResponse", async ({ utils, props }: { utils: { resolve: (response: Response) => Promise<unknown> }; props: Response }) => utils.resolve(props));
     this.decodeSendResponse = (response) => (api as unknown as { penaiDecodeSendResponse: (r: Response) => Promise<{ msgId?: string | number }> }).penaiDecodeSendResponse(response);
     const info = await api.fetchAccountInfo();
+    // Kênh bị dừng trong lúc đăng nhập (sửa kênh/khởi động lại liên tiếp): bản này
+    // đã bị gỡ khỏi manager — gắn listener lúc này sẽ thành bản chạy ngầm, vẫn nhận
+    // tin và tự thả cảm xúc theo cấu hình cũ, không tắt được từ giao diện.
+    if (!this.running) return;
     const profile = info.profile;
     this.stopListener();
     this.api = api;

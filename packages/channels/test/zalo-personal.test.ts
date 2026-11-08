@@ -99,6 +99,34 @@ describe("Zalo Personal credentials", () => {
       ),
     ).toMatchObject({ imei: "imei", userAgent: "ua" });
   });
+
+  it("dừng kênh lúc đang khôi phục phiên → không gắn listener (không để bản chạy ngầm)", async () => {
+    const channel = new ZaloPersonalChannel({
+      id: "zp-stop",
+      name: "Zalo test",
+      token: JSON.stringify({ imei: "imei", userAgent: "ua", cookie: [] }),
+      config: { auto_reaction: "heart" },
+      requirePairing: false,
+      onInbound: async () => ({ kind: "ignore" }),
+    });
+    let releaseLogin!: () => void;
+    const loginGate = new Promise<void>((resolve) => (releaseLogin = resolve));
+    let listenerStarted = false;
+    const api = {
+      custom: () => {},
+      fetchAccountInfo: async () => ({ profile: { userId: "1", displayName: "Bot" } }),
+      listener: { on: () => {}, start: () => (listenerStarted = true), stop: () => {} },
+    };
+    (channel as unknown as { newZalo: () => unknown }).newZalo = () => ({
+      login: async () => (await loginGate, api),
+    });
+    const starting = channel.start();
+    await channel.stop();
+    releaseLogin();
+    await starting;
+    expect(listenerStarted).toBe(false);
+    expect(channel.status()).toMatchObject({ running: false, connected: false });
+  });
 });
 
 describe("Zalo Personal group gating", () => {
