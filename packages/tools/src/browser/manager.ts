@@ -98,6 +98,8 @@ class Session {
   chain: Promise<unknown> = Promise.resolve();
   notes: string[] = [];
   blocked = new Set<string>();
+  /** Tên miền đã báo "đã đóng hộp hỏi cookie" (báo một lần mỗi trang web). */
+  consentHosts = new Set<string>();
   constructor(
     readonly key: string,
     readonly profile: BrowserProfileData | null,
@@ -431,6 +433,87 @@ export class BrowserManager {
     await p.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => {});
   }
 
+  /**
+   * Hộp/thanh hỏi cookie phủ lên trang (vd vbpl.vn phủ cả màn hình, lớp trên cùng) làm mọi
+   * cú bấm trúng lớp phủ. Bấm "Từ chối" / "Chỉ cookie cần thiết" (lựa chọn bảo vệ riêng tư
+   * nhất); không có nút đó thì ẩn lớp phủ. Không bao giờ tự bấm "Đồng ý".
+   */
+  private async dismissConsent(s: Session): Promise<void> {
+    const res = await s.page
+      .evaluate(
+        `(function () {
+          var KW = /(cookie|consent|gdpr|quyền riêng tư|dữ liệu cá nhân|bảo vệ dữ liệu)/i;
+          var DENY = /^(từ chối( tất cả)?|chỉ (dùng |sử dụng )?(cookie )?cần thiết|không đồng ý|reject( all)?|decline( all)?|deny|only necessary|necessary only|use necessary cookies only)$/i;
+          var vw = window.innerWidth, vh = window.innerHeight;
+          var nodes = document.querySelectorAll("div, section, aside, dialog, form, [role=dialog], [aria-modal=true]");
+          var hits = [];
+          for (var i = 0; i < nodes.length && i < 4000; i++) {
+            var el = nodes[i];
+            var st = window.getComputedStyle(el);
+            if (st.position !== "fixed" && st.position !== "sticky") continue;
+            if (st.display === "none" || st.visibility === "hidden") continue;
+            var r = el.getBoundingClientRect();
+            if (r.width < 200 || r.height < 40) continue;
+            var t = el.innerText || "";
+            if (!t || t.length > 3000 || !KW.test(t)) continue;
+            hits.push({ el: el, cover: (r.width * r.height) / (vw * vh) });
+          }
+          if (!hits.length) return "";
+          // Vỏ bao ngoài hộp cookie (lớp phủ trong suốt, không có chữ) cũng chặn cú bấm
+          var shells = [];
+          for (var q = 0; q < hits.length; q++) {
+            for (var pa = hits[q].el.parentElement; pa && pa !== document.body; pa = pa.parentElement) {
+              var ps = window.getComputedStyle(pa);
+              if (ps.position === "fixed" && shells.indexOf(pa) < 0) shells.push(pa);
+            }
+          }
+          var declined = "";
+          for (var j = 0; j < hits.length && !declined; j++) {
+            var bs = hits[j].el.querySelectorAll("button, a, [role=button]");
+            for (var k = 0; k < bs.length; k++) {
+              var name = String(bs[k].innerText || bs[k].getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim();
+              if (DENY.test(name)) { bs[k].click(); declined = name; break; }
+            }
+          }
+          // Lớp phủ vẫn còn che quá nửa màn hình sau khi từ chối (vỏ trong suốt) hoặc không có nút từ chối → ẩn
+          return new Promise(function (res) {
+            setTimeout(function () {
+              var hid = 0;
+              var all = hits.map(function (x) { return x.el; }).concat(shells);
+              for (var h = 0; h < all.length; h++) {
+                var e = all[h];
+                if (!e.isConnected) continue;
+                var s2 = window.getComputedStyle(e);
+                if (s2.display === "none" || s2.visibility === "hidden" || s2.pointerEvents === "none") continue;
+                var r2 = e.getBoundingClientRect();
+                if ((r2.width * r2.height) / (vw * vh) < 0.5) continue;
+                // Đã từ chối: chỉ ẩn phần còn sót mà không còn nội dung hỏi cookie (vỏ trong suốt)
+                if (declined && KW.test(e.innerText || "") && (e.innerText || "").length > 30) continue;
+                e.style.setProperty("display", "none", "important"); hid++;
+              }
+              res(declined ? "declined:" + declined : hid ? "hidden" : "");
+            }, declined ? 600 : 0);
+          });
+        })()`,
+      )
+      .catch(() => "");
+    if (!res) return;
+    let host = "";
+    try {
+      host = new URL(s.page.url()).host;
+    } catch {
+      host = "";
+    }
+    if (s.consentHosts.has(host)) return;
+    s.consentHosts.add(host);
+    s.notes.push(
+      String(res).startsWith("declined:")
+        ? `Đã tự đóng hộp hỏi cookie bằng nút "${String(res).slice(9)}" (chỉ giữ cookie cần thiết).`
+        : "Đã ẩn lớp phủ hỏi cookie đang che trang.",
+    );
+    await s.page.waitForTimeout(400).catch(() => {});
+  }
+
   private locate(s: Session, ref: string) {
     const r = ref.trim().replace(/^\[|\]$/g, "");
     if (!/^e\d{1,4}$/.test(r)) throw new BrowserActionError(`ref "${ref}" không hợp lệ — dùng dạng e12 lấy từ kết quả snapshot.`);
@@ -449,6 +532,7 @@ export class BrowserManager {
           }
           const resp = await p.goto(a.url, { waitUntil: "domcontentloaded" });
           await this.settle(p, 8000);
+          await this.dismissConsent(s);
           const st = resp?.status();
           if (st && st >= 400) s.notes.push(`Máy chủ trang trả mã lỗi HTTP ${st}.`);
           return { text: await this.describe(s, { maxItems: 80, textChars: 3000 }) };
@@ -462,6 +546,7 @@ export class BrowserManager {
           };
         }
         case "click": {
+          await this.dismissConsent(s);
           const loc = this.locate(s, a.ref);
           await loc
             .evaluate((el) => el.scrollIntoView({ block: "center", inline: "nearest" }))
@@ -474,8 +559,15 @@ export class BrowserManager {
           try {
             await loc.click({ timeout: 4_500 });
           } catch {
-            // Fallback force click nếu có thanh banner cố định (vd cookie banner) che một phần nút
-            await loc.click({ force: true, timeout: 4_500 });
+            // Bị thanh dính đầu trang / banner che (bấm "ép" theo tọa độ vẫn trúng lớp che) →
+            // gọi thẳng sự kiện click của phần tử; không được nữa mới bấm ép.
+            const ok = await loc
+              .evaluate((el) => {
+                (el as unknown as { click(): void }).click();
+                return true;
+              })
+              .catch(() => false);
+            if (!ok) await loc.click({ force: true, timeout: 4_500 });
           }
           // Chờ tải file (nút tải đã báo trước) thì không chờ trang yên — tải xong là trả ngay
           if (!a.expectDownload) await this.settle(s.page);

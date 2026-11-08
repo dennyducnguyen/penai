@@ -10,7 +10,8 @@ Trình duyệt của agent thao tác tốt hơn (đem từ bản cài legal.pena
 
 - **Tải file bằng trình duyệt**: agent bấm nút tải (kể cả trang tạo file bằng JavaScript/blob), file được lưu vào thư mục làm việc hoặc thư viện của agent (nếu agent được ghi), tên chuẩn hóa không dấu, giữ đuôi gốc, trùng tên thì tự thêm `-1`, `-2`. Tối đa 100 MB mỗi file. Sau đó agent đọc được bằng `read_document` hoặc gửi cho người dùng.
 - **Chờ trang SPA tải xong** (khung xương, biểu tượng đang tải, `aria-busy`, chữ "Đang tải...") trước khi đọc trang — bớt cảnh agent thấy trang trống.
-- **Bấm chắc hơn**: cuộn phần tử ra giữa màn hình, bị thanh cookie/banner che thì bấm thẳng.
+- **Bấm chắc hơn**: cuộn phần tử ra giữa màn hình; bị thanh dính đầu trang hay banner che thì gọi thẳng nút bấm.
+- **Tự đóng hộp hỏi cookie** che trang (vd vbpl.vn) bằng nút "Từ chối" / "Chỉ cookie cần thiết" — không bao giờ tự bấm "Đồng ý"; lớp phủ trong suốt còn sót lại thì ẩn đi.
 - **Nhận ra nhiều phần tử bấm được hơn** (thẻ `div` có kiểu con trỏ bấm), nút chỉ có biểu tượng được đặt tên theo dòng chứa nó, nút lặp lại trên từng thẻ ("Tải về", "Xem", "Chi tiết"…) kèm tiêu đề thẻ; link dài hiện đủ hơn.
 - **Báo tiến độ**: mỗi bước dùng trình duyệt, agent có thể gửi một câu báo đang làm tới đâu; trang Chat hiện thành từng tin riêng giữa các bước.
 
