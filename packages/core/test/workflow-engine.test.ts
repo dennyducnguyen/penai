@@ -34,6 +34,8 @@ function fakeHost(over: Partial<WorkflowHost> = {}): WorkflowHost & { sent: unkn
     subworkflow: async (x) => ({ sub: x.workflow, inputs: x.inputs }),
     file: async (x) => ({ action: x.action, path: x.path }),
     shell: async () => ({ code: 0, stdout: "" }),
+    db: async (x) => ({ rows: [], row: null, count: 0, sql: x.sql, params: x.params, dryRun: x.dryRun, kind: "write" }),
+    secret: async (x) => ({ output: { op: x.op, name: x.name } }),
     ...over,
   };
 }

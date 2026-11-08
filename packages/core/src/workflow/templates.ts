@@ -183,4 +183,106 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       ],
     },
   },
+  {
+    key: "lam-moi-token",
+    title: "Làm mới token OAuth (lưu vào Khóa bí mật)",
+    summary: "Mỗi 30 phút kiểm hạn access token; sắp hết thì khóa chờ lượt, gọi API làm mới bằng refresh token, lưu cả hai vào Khóa bí mật (mã hóa).",
+    definition: {
+      name: "Làm mới token OAuth",
+      description: "Giữ ACCESS_TOKEN luôn còn hạn. Lần đầu: nhập REFRESH_TOKEN, CLIENT_ID, CLIENT_SECRET ở 🔑 Khóa bí mật và tick 'Quy trình được ghi' cho REFRESH_TOKEN.",
+      triggers: [{ type: "schedule", schedule: "every 30m" }, { type: "manual" }],
+      settings: { concurrency: "skip" },
+      steps: [
+        { id: "han", type: "secret", op: "info", name: "ACCESS_TOKEN" },
+        {
+          id: "can_lam_moi",
+          type: "if",
+          cond: "!steps.han.output.exists || steps.han.output.expiresInSec === null || steps.han.output.expiresInSec < 600",
+          then: [
+            { id: "cho_luot", type: "secret", op: "lock", name: "ACCESS_TOKEN", wait: "60s" },
+            { id: "han_lai", type: "secret", op: "info", name: "ACCESS_TOKEN", note: "Lần chạy khác có thể vừa làm mới trong lúc chờ" },
+            {
+              id: "van_can",
+              type: "if",
+              cond: "!steps.han_lai.output.exists || steps.han_lai.output.expiresInSec === null || steps.han_lai.output.expiresInSec < 600",
+              then: [
+                {
+                  id: "lam_moi",
+                  type: "http",
+                  name: "Gọi API làm mới token",
+                  method: "POST",
+                  url: "https://example.com/oauth/token",
+                  bodyType: "form",
+                  body: {
+                    grant_type: "refresh_token",
+                    refresh_token: "{{ secrets.REFRESH_TOKEN }}",
+                    client_id: "{{ secrets.CLIENT_ID }}",
+                    client_secret: "{{ secrets.CLIENT_SECRET }}",
+                  },
+                },
+                {
+                  id: "luu_access",
+                  type: "secret",
+                  op: "set",
+                  name: "ACCESS_TOKEN",
+                  value: "{{ steps.lam_moi.output.body.access_token }}",
+                  expiresIn: "{{ steps.lam_moi.output.body.expires_in || 3600 }}",
+                },
+                {
+                  id: "doi_refresh",
+                  type: "if",
+                  cond: "!!steps.lam_moi.output.body.refresh_token",
+                  then: [{ id: "luu_refresh", type: "secret", op: "set", name: "REFRESH_TOKEN", value: "{{ steps.lam_moi.output.body.refresh_token }}" }],
+                },
+              ],
+            },
+            { id: "nha", type: "secret", op: "unlock", name: "ACCESS_TOKEN" },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    key: "luu-don-csdl",
+    title: "Đồng bộ đơn hàng vào CSDL + báo cáo",
+    summary: "Mỗi giờ lấy đơn từ API, lưu (thêm hoặc cập nhật) vào bảng don_hang trong CSDL của workspace; trả tổng doanh thu hôm nay.",
+    definition: {
+      name: "Đồng bộ đơn hàng vào CSDL",
+      description: "Cần bảng don_hang (ma_don khóa chính, ngay_dat, khach, tong_tien, trang_thai) — tạo ở 🗃️ Dữ liệu hoặc nhờ agent.",
+      triggers: [{ type: "schedule", schedule: "every 1h" }, { type: "manual" }],
+      steps: [
+        { id: "lay_don", type: "http", name: "Lấy đơn", method: "GET", url: "https://dummyjson.com/carts?limit=10" },
+        {
+          id: "tung_don",
+          type: "loop",
+          over: "steps.lay_don.output.body.carts || []",
+          as: "don",
+          max: 500,
+          body: [
+            {
+              id: "luu_don",
+              type: "db",
+              op: "upsert",
+              table: "don_hang",
+              match: ["ma_don"],
+              values: {
+                ma_don: "{{ String(don.id) }}",
+                ngay_dat: "{{ now() }}",
+                khach: "{{ 'Khách ' + don.userId }}",
+                tong_tien: "{{ don.total }}",
+                trang_thai: "moi",
+              },
+              returning: false,
+            },
+          ],
+        },
+        {
+          id: "tong_hom_nay",
+          type: "db",
+          sql: "SELECT count(*) AS so_don, COALESCE(sum(tong_tien), 0) AS doanh_thu FROM don_hang WHERE ngay_dat::date = $1::date",
+          params: ["{{ today() }}"],
+        },
+      ],
+    },
+  },
 ];

@@ -1,4 +1,5 @@
 import { WORKFLOWS_UI } from "./ui-workflows.js";
+import { DATABASE_UI } from "./ui-database.js";
 import { LIBRARY_EDITOR_UI } from "./ui-library-editor.js";
 
 /**
@@ -329,6 +330,7 @@ export const INDEX_HTML = `<!doctype html>
     { id: "channels", icon: "📡", label: "Channels" },
     { id: "cron", icon: "⏰", label: "Cron & lịch hẹn" },
     { id: "workflows", icon: "⚙️", label: "Quy trình" },
+    { id: "database", icon: "🗃️", label: "Dữ liệu" },
     { id: "users", icon: "👤", label: "Người dùng", admin: true },
     { id: "apikeys", icon: "🔑", label: "Khóa API (tích hợp)", admin: true },
     { grp: "Năng lực" },
@@ -4179,6 +4181,7 @@ ${LIBRARY_EDITOR_UI}
   };
 
 ${WORKFLOWS_UI}
+${DATABASE_UI}
   // ===== Router =====
   function refreshAgents() { return api("/v1/agents").then(function (j) { state.agents = j.agents; }).catch(function () {}); }
   function route() {

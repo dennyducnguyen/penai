@@ -43,6 +43,10 @@ const SecretBody = z.object({
   name: z.string().trim().regex(/^[A-Z][A-Z0-9_]{0,63}$/, "Tên khóa viết HOA, số, dấu _ (vd MISA_API_KEY)"),
   value: z.string().min(1).max(20_000).optional(),
   note: z.string().max(500).optional(),
+  /** Quy trình được ghi đè / xóa khóa này (bước secret). */
+  workflowWritable: z.boolean().optional(),
+  /** Hạn dùng (ISO) — null = bỏ hạn. */
+  expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
 });
 
 function viaOf(req: FastifyRequest): WorkflowActor["via"] {
@@ -408,6 +412,9 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: { svc: Workfl
         name: p.data.name,
         ...(p.data.value !== undefined ? { valueEncrypted: encryptSecret(p.data.value) } : {}),
         ...(p.data.note !== undefined ? { note: p.data.note } : {}),
+        ...(p.data.workflowWritable !== undefined ? { workflowWritable: p.data.workflowWritable } : {}),
+        ...(p.data.expiresAt !== undefined ? { expiresAt: p.data.expiresAt ? new Date(p.data.expiresAt) : null } : {}),
+        via: viaOf(req),
       });
       await recordAudit(db, req.authCtx, "secret.upsert", { name: s.name });
       return { secret: s };

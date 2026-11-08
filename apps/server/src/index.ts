@@ -12,6 +12,7 @@ import { McpManager } from "./mcp-manager.js";
 import { syncAllSkillsToDisk } from "./skills-fs.js";
 import { shutdownBrowser } from "./browser-runtime.js";
 import { getWorkflowService } from "./workflow-service.js";
+import { getWsdbService } from "./wsdb-service.js";
 
 try {
   process.loadEnvFile(".env");
@@ -102,6 +103,8 @@ logger.info("Cron runner đã khởi động");
 // Quy trình tự động: bộ chạy theo lịch + dọn lần chạy cũ
 const workflows = getWorkflowService({ db, providers, tools, config, mcp, gate: providerGate });
 await workflows.startScheduler();
+const wsdb = getWsdbService({ db, providers, tools, config, mcp, gate: providerGate });
+wsdb.start();
 
 // Memory worker: tự tóm tắt session đã nguội thành memory episodic
 const memoryWorker = new MemoryWorker({ db, providers, tools, config, mcp, gate: providerGate });
@@ -116,6 +119,7 @@ const stopWatch = await watchConfig((next) => {
   config.timezone = next.timezone;
   // Giới hạn quy trình (số lần chạy song song, trần thời gian…) đọc mỗi lần chạy
   config.workflows = next.workflows;
+  config.workspaceDb = next.workspaceDb;
   providerGate.reconfigure({
     concurrency: next.api.queue.concurrency,
     cliTotal: next.api.queue.cliTotal,
@@ -131,6 +135,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     await stopWatch();
     await cronRunner.stop();
     await workflows.stop();
+    wsdb.stop();
     await memoryWorker.stop();
     if (channelManager) await channelManager.stopAll();
     await mcp.stopAll();

@@ -48,6 +48,7 @@ export { imageGenTool } from "./builtin/image-gen.js";
 export { publishFileTool } from "./builtin/publish-file.js";
 export { approvalCardTool } from "./builtin/approval-card.js";
 export { cronCreateTool, cronListTool, cronUpdateTool, cronDeleteTool } from "./builtin/cron.js";
+export { dbSchemaTool, dbQueryTool } from "./builtin/database.js";
 export { workflowListTool, workflowGetTool, workflowCatalogTool, workflowCreateTool, workflowUpdateTool, workflowTestTool, workflowRunTool, workflowRunsTool, workflowDeleteTool } from "./builtin/workflow.js";
 export * from "./custom-tool.js";
 
@@ -94,6 +95,7 @@ import { imageGenTool } from "./builtin/image-gen.js";
 import { publishFileTool } from "./builtin/publish-file.js";
 import { approvalCardTool } from "./builtin/approval-card.js";
 import { cronCreateTool, cronListTool, cronUpdateTool, cronDeleteTool } from "./builtin/cron.js";
+import { dbSchemaTool, dbQueryTool } from "./builtin/database.js";
 import { workflowListTool, workflowGetTool, workflowCatalogTool, workflowCreateTool, workflowUpdateTool, workflowTestTool, workflowRunTool, workflowRunsTool, workflowDeleteTool } from "./builtin/workflow.js";
 
 /** Registry với toàn bộ tool built-in mặc định. */
@@ -149,5 +151,7 @@ export function createDefaultToolRegistry(): ToolRegistry {
     .register(workflowRunTool)
     .register(workflowRunsTool)
     .register(workflowDeleteTool)
+    .register(dbSchemaTool)
+    .register(dbQueryTool)
     .register(cronDeleteTool);
 }
