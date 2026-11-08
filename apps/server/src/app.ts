@@ -194,7 +194,9 @@ import {
   parseFeishuWebhook,
   isPersonalChannel,
   isPersonalChannelKind,
-  personalPlatformLabel,
+  isInboxChannelKind,
+  inboxPlatformLabel,
+  isMetaChannelKind,
   type PersonalChannel,
   TeamsChannel,
   parseTeamsActivity,
@@ -276,6 +278,7 @@ import {
 } from "./web-auth.js";
 import { registerLibraryRoutes } from "./library.js";
 import { registerInboxRoutes } from "./inbox.js";
+import { registerMetaRoutes, unregisterMetaWebhook } from "./meta-channels.js";
 import { buildXlsx, type XlsxCell } from "./xlsx.js";
 import { isMcpPublicPath, registerMcpServerRoutes } from "./mcp-server.js";
 import { registerBrowserRoutes } from "./browser-runtime.js";
@@ -736,6 +739,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   // Inbox Zalo cá nhân (trực chat nhiều người) + PenAI MCP server (Claude/ChatGPT gọi vào)
   registerInboxRoutes(app, { db, dataDir: deps.config.dataDir });
+  registerMetaRoutes(app, { db });
   registerMcpServerRoutes(app, { db, dataDir: deps.config.dataDir, config: deps.config, workflows: getWorkflowService(deps), wsdb: getWsdbService(deps) });
 
   // Trình duyệt của agent: hồ sơ cookie, thử truy cập, phiên đang mở (ws_admin)
@@ -1729,6 +1733,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const b = parsed.data;
     const existing = await getChannelById(db, req.authCtx, id);
     if (!existing) return reply.code(404).send({ error: "Channel không tồn tại" });
+    if (b.token && isMetaChannelKind(existing.kind)) {
+      return reply.code(400).send({ error: "Kênh Facebook/Instagram đổi token bằng nút Kết nối Trang → dán mã kết nối mới" });
+    }
     let agentId: string | undefined;
     if (b.agentKey) {
       const agent = await getAgentByKey(db, req.authCtx, b.agentKey);
@@ -1764,6 +1771,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.delete("/v1/channels/:id", async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const { id } = req.params as { id: string };
+    const before = await getChannelById(db, req.authCtx, id);
+    if (before && isMetaChannelKind(before.kind)) await unregisterMetaWebhook(before).catch(() => {});
     const ok = await deleteChannel(db, req.authCtx, id);
     if (!ok) return reply.code(404).send({ error: "Channel không tồn tại" });
     await applyChannelChange(id, null).catch(() => {});
@@ -2141,11 +2150,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         ],
       },
     ];
-    const zaloChannels = allChannels.filter((c) => isPersonalChannelKind(c.kind) && (!channelId || c.id === channelId));
+    const zaloChannels = allChannels.filter((c) => isInboxChannelKind(c.kind) && (!channelId || c.id === channelId));
     for (const zc of zaloChannels) {
       const threads = await listAllInboxThreads(db, req.authCtx, zc.id);
       sheets.push({
-        name: `Danh bạ ${personalPlatformLabel(zc.kind)} - ${zc.name}`.slice(0, 31),
+        name: `Danh bạ ${inboxPlatformLabel(zc.kind)} - ${zc.name}`.slice(0, 31),
         widths: [10, 22, 30, 16, 12, 12, 17, 10, 12],
         rows: [
           ["Loại", "UID / ID", "Tên", "SĐT", "Bạn bè / đang trong nhóm", "Số thành viên", "Tin gần nhất", "Chưa đọc", "AI"],

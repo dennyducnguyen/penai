@@ -442,7 +442,7 @@ export const INDEX_HTML = `<!doctype html>
       // Thành viên: chỉ có trang Chat
       nav.appendChild(el("div", { "class": "grp" }, "Trợ lý AI"));
       nav.appendChild(el("a", { href: "#/chat", "class": cur === "inbox" ? "" : "active" }, "💬 <span>Chat</span>"));
-      if ((state.inboxChannels || []).length) nav.appendChild(el("a", { href: "#/inbox", "class": cur === "inbox" ? "active" : "" }, "📥 <span>Inbox Zalo</span>"));
+      if ((state.inboxChannels || []).length) nav.appendChild(el("a", { href: "#/inbox", "class": cur === "inbox" ? "active" : "" }, "📥 <span>Inbox</span>"));
       navAccount(nav);
       return;
     }
@@ -1300,11 +1300,41 @@ export const INDEX_HTML = `<!doctype html>
     zalo_personal: "Zalo cá nhân qua zca-js (unofficial). Không cần token; tạo kênh xong bấm Kết nối QR. Mọi tin nhắn được lưu vào Inbox để nhân viên cùng xem/trả lời (tắt được trong Inbox → Cài đặt). AI chỉ tự trả lời trong thread được chỉ định demo (hoặc mọi tin riêng nếu tắt pairing).",
     whatsapp_personal: "WhatsApp cá nhân (kết nối không chính thức, kiểu thiết bị đã liên kết). Không cần token; tạo kênh xong bấm Kết nối QR. Điện thoại vẫn dùng WhatsApp bình thường. Mọi tin nhắn được lưu vào Inbox để nhân viên cùng xem/trả lời. AI chỉ tự trả lời trong hội thoại được chỉ định (hoặc mọi tin riêng nếu tắt pairing). Nên dùng số dành riêng — WhatsApp có thể khóa số gửi dồn cho người lạ.",
     feishu: "App credentials Feishu/Lark (app_id:app_secret).",
+    facebook: "Fanpage Facebook (Messenger) nối qua hub HoiAI — không cần tự tạo Meta App. Bấm <b>Kết nối nhanh</b> (đăng nhập hub, chọn Trang, cấp quyền) hoặc dán mã <code>hfb_…</code> lấy ở trang Facebook của hub. Mỗi Trang một kênh, gắn agent riêng. Mọi tin vào Inbox; người trả lời trên Meta Business Suite cũng hiện trong Inbox và AI tự tạm im.",
+    instagram: "Instagram Business (Direct) nối qua hub HoiAI — tài khoản Instagram phải liên kết với một Fanpage. Bấm <b>Kết nối nhanh</b> hoặc dán mã <code>hig_…</code>. Mỗi tài khoản một kênh, gắn agent riêng. Mọi tin vào Inbox.",
     msteams: "Bot Microsoft Teams qua Azure Bot. Token = <b>client secret</b> của App Registration; điền thêm App ID + Tenant ID bên dưới. Azure Bot → Configuration → Messaging endpoint phải trỏ: <code>" + location.origin + "/webhooks/teams</code>."
   };
 
   // Tên hiển thị của loại kênh: mã "zalo" là Zalo Official Account — ghi rõ để khỏi nhầm với zalo_personal
-  function channelKindLabel(k) { return k === "zalo" ? "Zalo OA" : k; }
+  function channelKindLabel(k) { return k === "zalo" ? "Zalo OA" : k === "facebook" ? "Facebook Fanpage" : k === "instagram" ? "Instagram" : k; }
+  // Kênh Trang Meta: nối qua hub (mặc định chat.hoiai.vn) bằng mã kết nối, có Inbox
+  var META_KINDS = { facebook: "Facebook", instagram: "Instagram" };
+  function isMetaKind(k) { return !!META_KINDS[k]; }
+  function metaState() {
+    var a = new Uint8Array(16);
+    try { window.crypto.getRandomValues(a); } catch (e) { for (var i = 0; i < 16; i++) a[i] = Math.floor(Math.random() * 256); }
+    return Array.prototype.map.call(a, function (x) { return ("0" + x.toString(16)).slice(-2); }).join("");
+  }
+  // Mở cửa sổ cấp quyền của hub; hub gửi mã kết nối về bằng postMessage (không qua URL)
+  function metaPopup(kind, onCode) {
+    var w = window.open("about:blank", "penai_meta_connect", "width=680,height=780");
+    if (!w) { toast("Trình duyệt chặn cửa sổ bật lên — cho phép popup cho trang này rồi bấm lại", true); return; }
+    api("/v1/channels/meta/hub").then(function (h) {
+      if (!h.ready) { w.close(); toast("Máy chủ thiếu PENAI_PUBLIC_URL trong penai.env — hub không gửi tin về được", true); return; }
+      var state = metaState(), origin = new URL(h.hubUrl).origin;
+      function onMsg(ev) {
+        if (ev.origin !== origin) return;
+        var d = ev.data || {};
+        if (d.type !== "HOIAI_PENAI_CONNECTED" || !d.connect_code) return;
+        if (d.state && d.state !== state) return;
+        window.removeEventListener("message", onMsg);
+        try { w.close(); } catch (e) {}
+        onCode(d);
+      }
+      window.addEventListener("message", onMsg);
+      w.location.href = h.connectUrl + "?platform=" + encodeURIComponent(kind || "all") + "&state=" + state + "&origin=" + encodeURIComponent(location.origin) + "&app_name=" + encodeURIComponent(BRAND.name || "PenAI");
+    }).catch(function (e) { try { w.close(); } catch (x) {} toast(e.message, true); });
+  }
   // Kênh "tài khoản cá nhân": đăng nhập bằng mã QR, có Inbox trực chat và chế độ an toàn
   var PERSONAL_KINDS = { zalo_personal: "Zalo", whatsapp_personal: "WhatsApp" };
   function isPersonalKind(k) { return !!PERSONAL_KINDS[k]; }
@@ -1339,6 +1369,10 @@ export const INDEX_HTML = `<!doctype html>
       '<div id="cTeamsWrap" style="display:none"><div class="row" style="margin-top:8px">' +
       '<div style="flex:1"><label>Microsoft App ID *</label><input id="cAppId" placeholder="00000000-0000-0000-0000-000000000000" style="width:100%" value="' + (isEdit ? esc((existing.config || {}).appId || "") : "") + '"></div>' +
       '<div style="flex:1"><label>Tenant ID <span class="muted">(bot Single Tenant; Multi Tenant để trống)</span></label><input id="cTenant" placeholder="35ee052b-..." style="width:100%" value="' + (isEdit ? esc((existing.config || {}).tenantId || "") : "") + '"></div></div></div>' +
+      '<div id="cMetaWrap" style="display:none;margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:10px">' +
+      '<div class="row" style="gap:8px;align-items:center"><button type="button" id="cMetaPop">🔗 Kết nối nhanh với HoiAI</button><span class="muted" style="font-size:.78rem">Mở cửa sổ hub → chọn Trang → Cấp quyền cho PenAI</span></div>' +
+      '<label style="margin-top:8px">Hoặc dán mã kết nối <span class="muted">(hfb_… cho Fanpage, hig_… cho Instagram)</span></label><textarea id="cMetaCode" rows="2" style="width:100%;font-family:monospace;font-size:.75rem" placeholder="hfb_eyJ2Ijox..."></textarea>' +
+      '<div id="cMetaInfo" class="muted" style="font-size:.8rem;margin-top:4px"></div></div>' +
       '<div class="muted" id="cHint" style="font-size:.78rem;margin-top:4px"></div>' +
       '<div class="row" style="margin-top:10px"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cAgentReply"' + (isEdit && (existing.config || {}).agent_reply === false ? "" : " checked") + "> Agent tự trả lời</label>" +
       '<span class="muted" style="font-size:.78rem">Bỏ tick: kênh vẫn kết nối và lưu tin (Inbox), AI không trả lời; lịch hẹn vẫn gửi</span></div>' +
@@ -1352,10 +1386,25 @@ export const INDEX_HTML = `<!doctype html>
     function showHint() {
       var kind = $("#cKind", dlg).value;
       $("#cHint", dlg).innerHTML = CHANNEL_HINTS[kind] || "";
-      $("#cTokenWrap", dlg).style.display = isPersonalKind(kind) ? "none" : "block";
+      $("#cTokenWrap", dlg).style.display = isPersonalKind(kind) || isMetaKind(kind) ? "none" : "block";
       $("#cTeamsWrap", dlg).style.display = kind === "msteams" ? "block" : "none";
+      $("#cMetaWrap", dlg).style.display = isMetaKind(kind) && !isEdit ? "block" : "none";
       $("#cPair", dlg).disabled = false;
+      // Fanpage: khách lạ nhắn tới là chuyện thường → mặc định không bắt duyệt pairing
+      if (!isEdit && isMetaKind(kind) && !pairTouched) $("#cPair", dlg).checked = false;
+      if (!isEdit && !isMetaKind(kind) && !pairTouched) $("#cPair", dlg).checked = true;
     }
+    var pairTouched = false;
+    $("#cPair", dlg).addEventListener("change", function () { pairTouched = true; });
+    function metaInfo(d) {
+      var ig = d.platform === "instagram";
+      $("#cMetaInfo", dlg).innerHTML = '<span class="pill ok">đã nhận mã</span> ' + (ig ? "Instagram " + esc(d.ig_username ? "@" + d.ig_username : "") + " (Trang " + esc(d.page_name || "") + ")" : "Fanpage " + esc(d.page_name || d.page_id || "")) + " — chọn agent rồi bấm Tạo kênh.";
+      if (!$("#cName", dlg).value.trim()) $("#cName", dlg).value = ig ? (d.ig_username ? "@" + d.ig_username : "Instagram") : (d.page_name || "Fanpage");
+      if (d.platform && d.platform !== $("#cKind", dlg).value) { $("#cKind", dlg).value = d.platform; showHint(); }
+    }
+    $("#cMetaPop", dlg).onclick = function () {
+      metaPopup($("#cKind", dlg).value, function (d) { $("#cMetaCode", dlg).value = d.connect_code; metaInfo(d); });
+    };
     $("#cKind", dlg).onchange = showHint; showHint();
     $("#cCancel", dlg).onclick = function () { dlg.close(); dlg.remove(); };
     $("#cSave", dlg).onclick = function () {
@@ -1364,12 +1413,24 @@ export const INDEX_HTML = `<!doctype html>
       var kind = $("#cKind", dlg).value;
       var agentKey = $("#cAgent", dlg).value;
       var errs = [];
-      if (!name) errs.push("nhập Tên kênh");
+      var metaCode = isMetaKind(kind) && !isEdit ? $("#cMetaCode", dlg).value.trim() : "";
+      if (!name && !(isMetaKind(kind) && !isEdit)) errs.push("nhập Tên kênh");
       if (!agentKey) errs.push("chọn Agent (chưa có thì tạo ở trang Agents trước)");
-      if (!isEdit && !token && !isPersonalKind(kind)) errs.push("nhập Token");
+      if (isMetaKind(kind) && !isEdit && !metaCode) errs.push("bấm Kết nối nhanh hoặc dán mã kết nối");
+      if (!isEdit && !token && !isPersonalKind(kind) && !isMetaKind(kind)) errs.push("nhập Token");
       if (kind === "msteams" && !$("#cAppId", dlg).value.trim()) errs.push("nhập Microsoft App ID");
       if (errs.length) { $("#cMsg", dlg).innerHTML = '<span class="err">' + esc(errs.join(" · ")) + "</span>"; return; }
       $("#cMsg", dlg).textContent = "Đang lưu...";
+      if (metaCode) {
+        api("/v1/channels/meta/connect", { method: "POST", body: { code: metaCode, agentKey: agentKey, name: name, requirePairing: $("#cPair", dlg).checked, agentReply: $("#cAgentReply", dlg).checked } })
+          .then(function (r) {
+            toast((r.created ? "Đã tạo kênh " : "Đã kết nối lại ") + r.channel.name + (r.registered ? " — tin nhắn sẽ về Inbox" : ""));
+            (r.warnings || []).forEach(function (w) { toast(w, true); });
+            dlg.close(); dlg.remove(); onDone();
+          })
+          .catch(function (e) { $("#cMsg", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+        return;
+      }
       var body;
       if (isEdit) {
         body = { name: name, agentKey: agentKey, requirePairing: $("#cPair", dlg).checked, enabled: $("#cEnabled", dlg).checked };
@@ -1558,6 +1619,50 @@ export const INDEX_HTML = `<!doctype html>
     loadObserved();
   }
 
+  function openMetaChannel(ch, onDone) {
+    var dlg = el("dialog", { style: "width:640px;max-width:95vw;padding:18px" });
+    var P = META_KINDS[ch.kind] || "Meta";
+    dlg.innerHTML = '<h3 style="margin:0 0 8px">Kết nối ' + P + " — " + esc(ch.name) + "</h3>" +
+      '<div id="mcBody" class="muted">Đang tải...</div>' +
+      '<label style="margin-top:12px">Kết nối lại bằng mã mới <span class="muted">(Trang đổi quyền, hub cấp lại mã, token hết hạn…)</span></label>' +
+      '<div class="row" style="gap:8px"><button type="button" class="ghost sm" id="mcPop">🔗 Kết nối nhanh với HoiAI</button></div>' +
+      '<textarea id="mcCode" rows="2" style="width:100%;font-family:monospace;font-size:.75rem;margin-top:6px" placeholder="' + (ch.kind === "instagram" ? "hig_…" : "hfb_…") + '"></textarea>' +
+      '<div class="dialog-actions"><button class="ghost" id="mcClose">Đóng</button><button class="ghost" id="mcReg">Đăng ký lại với hub</button><button id="mcSave">Kết nối lại</button></div><div id="mcMsg" style="margin-top:6px"></div>';
+    document.body.appendChild(dlg); dlg.showModal();
+    function close() { dlg.close(); dlg.remove(); if (onDone) onDone(); }
+    $("#mcClose", dlg).onclick = close;
+    function load() {
+      api("/v1/channels/" + ch.id + "/meta").then(function (j) {
+        var st = j.status || {}, pg = j.page || {};
+        var who = ch.kind === "instagram" ? "@" + esc(pg.igUsername || pg.igAccountId) + ' <span class="muted">(Trang ' + esc(pg.name) + ")</span>" : esc(pg.name) + ' <span class="muted">· Page ID ' + esc(pg.id) + "</span>";
+        $("#mcBody", dlg).innerHTML =
+          '<div style="line-height:1.8">' + (pg.avatar ? '<img src="' + esc(pg.avatar) + '" referrerpolicy="no-referrer" style="width:28px;height:28px;border-radius:50%;vertical-align:middle;margin-right:6px">' : "") + "<b>" + who + "</b><br>" +
+          "Trạng thái: " + (st.connected ? '<span class="pill ok">đang hoạt động</span>' : '<span class="pill err">chưa sẵn sàng</span>') + (st.authError ? ' <span class="err">' + esc(st.authError) + "</span>" : "") + "<br>" +
+          "Đăng ký với hub: " + (j.registeredAt && !j.registerError ? '<span class="pill ok">đã đăng ký</span> <span class="muted">' + esc(new Date(j.registeredAt).toLocaleString("vi-VN")) + "</span>" : '<span class="pill err">chưa</span>' + (j.registerError ? ' <span class="err">' + esc(j.registerError) + "</span>" : "")) + "<br>" +
+          'Tin gần nhất từ hub: <span class="muted">' + (st.lastWebhookAt ? esc(new Date(st.lastWebhookAt).toLocaleString("vi-VN")) : "chưa có (từ lúc máy chủ khởi động)") + "</span><br>" +
+          'Địa chỉ nhận tin: <code style="font-size:.75rem">' + esc(j.webhookUrl) + "</code><br>" +
+          'Hub: <a href="' + esc(j.hubUrl) + '/facebook" target="_blank" rel="noopener">' + esc(j.hubUrl) + "</a></div>" +
+          '<div class="muted" style="font-size:.78rem;margin-top:6px">Nhắn thử vào Trang từ một tài khoản khác → tin hiện ở 📥 Inbox. Người trả lời trên Meta Business Suite cũng hiện trong Inbox (ghi rõ nguồn) và AI tự tạm im theo cài đặt Inbox.</div>';
+      }).catch(function (e) { $("#mcBody", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    }
+    $("#mcReg", dlg).onclick = function () {
+      $("#mcMsg", dlg).textContent = "Đang đăng ký...";
+      api("/v1/channels/" + ch.id + "/meta/register", { method: "POST", body: {} })
+        .then(function (r) { $("#mcMsg", dlg).innerHTML = '<span class="ok">Đã đăng ký</span>' + (r.warning ? ' · <span class="err">' + esc(r.warning) + "</span>" : ""); load(); })
+        .catch(function (e) { $("#mcMsg", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    };
+    $("#mcPop", dlg).onclick = function () { metaPopup(ch.kind, function (d) { $("#mcCode", dlg).value = d.connect_code; $("#mcMsg", dlg).innerHTML = '<span class="pill ok">đã nhận mã</span> bấm Kết nối lại'; }); };
+    $("#mcSave", dlg).onclick = function () {
+      var code = $("#mcCode", dlg).value.trim();
+      if (!code) { $("#mcMsg", dlg).innerHTML = '<span class="err">Bấm Kết nối nhanh hoặc dán mã kết nối</span>'; return; }
+      $("#mcMsg", dlg).textContent = "Đang kết nối...";
+      api("/v1/channels/meta/connect", { method: "POST", body: { code: code, channelId: ch.id } })
+        .then(function (r) { $("#mcCode", dlg).value = ""; $("#mcMsg", dlg).innerHTML = '<span class="ok">Đã kết nối lại</span>' + (r.warnings && r.warnings.length ? ' · <span class="err">' + esc(r.warnings.join(" ")) + "</span>" : ""); load(); })
+        .catch(function (e) { $("#mcMsg", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    };
+    load();
+  }
+
   PAGES.channels = function () {
     var m = page("Channels", "Kênh nhắn tin (Telegram, Discord...) — mỗi kênh gắn 1 agent trả lời");
     var top = card(m);
@@ -1566,7 +1671,7 @@ export const INDEX_HTML = `<!doctype html>
     var listC = card(m, "Danh sách kênh");
     var pendingC = card(m, "Yêu cầu chờ duyệt");
     var zaloC = card(m, "Zalo — nhóm/thread chờ duyệt");
-    var kinds = ["telegram", "discord", "slack", "whatsapp", "whatsapp_personal", "zalo", "zalo_personal", "feishu", "msteams"];
+    var kinds = ["telegram", "facebook", "instagram", "discord", "slack", "whatsapp", "whatsapp_personal", "zalo", "zalo_personal", "feishu", "msteams"];
     function loadPending() {
       pendingC.innerHTML = '<h3>Yêu cầu chờ duyệt</h3><div class="muted">Đang tải...</div>';
       api("/v1/channel-pairings/pending").then(function (j) {
@@ -1668,6 +1773,9 @@ export const INDEX_HTML = `<!doctype html>
           if (isPersonalKind(r.kind)) {
             connect = el("button", { "class": "ghost sm" }, "Kết nối QR");
             connect.onclick = function () { openZaloPersonal(r, function () { load(); loadZaloPending(); }); };
+          } else if (isMetaKind(r.kind)) {
+            connect = el("button", { "class": "ghost sm" }, "Kết nối Trang");
+            connect.onclick = function () { openMetaChannel(r, load); };
           }
           var tog = el("button", { "class": "ghost sm" }, r.enabled ? "Tạm dừng" : "Bật");
           tog.onclick = function () {
@@ -2905,7 +3013,7 @@ export const INDEX_HTML = `<!doctype html>
         '<label>Vai trò</label><select id="uRole" style="width:100%">' + Object.keys(ROLE_LABELS).map(function (r) { return '<option value="' + r + '">' + esc(ROLE_LABELS[r]) + "</option>"; }).join("") + "</select>" +
         '<div id="uRoleHelp" class="muted" style="margin-top:4px"></div>' +
         '<div id="uAgentWrap"><label>Agent được phép chat</label></div>' +
-        '<div id="uZaloWrap"><label>Kênh được trực (Inbox Zalo / WhatsApp — cũng là kênh tài khoản này dùng được qua MCP)</label></div>' +
+        '<div id="uZaloWrap"><label>Kênh được trực trong Inbox (Zalo / WhatsApp / Facebook / Instagram — kênh Zalo, WhatsApp cũng dùng được qua MCP)</label></div>' +
         '<div class="dialog-actions"><button class="ghost" id="uCancel">Hủy</button><button id="uSave">' + (isEdit ? "Lưu" : "Tạo tài khoản") + "</button></div>" +
         '<div id="uMsg" style="margin-top:8px"></div>';
       document.body.appendChild(dlg);
@@ -2915,7 +3023,7 @@ export const INDEX_HTML = `<!doctype html>
       if (!(DATA.zaloChannels || []).length) zbox.innerHTML = '<span class="muted">Chưa có kênh Zalo cá nhân / WhatsApp cá nhân nào.</span>';
       (DATA.zaloChannels || []).forEach(function (z) {
         var lb = el("label"); var cb = el("input", { type: "checkbox", value: z.id }); if (isEdit && (u.zaloChannelIds || []).indexOf(z.id) >= 0) cb.checked = true;
-        lb.appendChild(cb); lb.appendChild(document.createTextNode(z.name + (z.kind === "whatsapp_personal" ? " (WhatsApp)" : ""))); zbox.appendChild(lb);
+        lb.appendChild(cb); lb.appendChild(document.createTextNode(z.name + (z.kind === "whatsapp_personal" ? " (WhatsApp)" : z.kind === "facebook" ? " (Facebook)" : z.kind === "instagram" ? " (Instagram)" : ""))); zbox.appendChild(lb);
       });
       $("#uZaloWrap", dlg).appendChild(zbox);
       if (isEdit) { $("#uName", dlg).value = u.name; $("#uEmail", dlg).value = u.email; $("#uRole", dlg).value = u.role; }
@@ -2977,7 +3085,7 @@ export const INDEX_HTML = `<!doctype html>
   };
 
   // ===== Contacts: hồ sơ, nhãn và chỉ dẫn cho AI theo từng người (0029) =====
-  var CH_LABELS = { telegram: "Telegram", zalo_personal: "Zalo cá nhân", whatsapp_personal: "WhatsApp cá nhân", zalo: "Zalo OA", zalo_oa: "Zalo OA", msteams: "Microsoft Teams", discord: "Discord", slack: "Slack", whatsapp: "WhatsApp", feishu: "Feishu/Lark", web: "Web" };
+  var CH_LABELS = { telegram: "Telegram", facebook: "Facebook Fanpage", instagram: "Instagram", zalo_personal: "Zalo cá nhân", whatsapp_personal: "WhatsApp cá nhân", zalo: "Zalo OA", zalo_oa: "Zalo OA", msteams: "Microsoft Teams", discord: "Discord", slack: "Slack", whatsapp: "WhatsApp", feishu: "Feishu/Lark", web: "Web" };
   var PAIR_LABELS = { da_duyet: ["Đã duyệt", "ok"], cho_duyet: ["Chờ duyệt", ""], chua_duyet: ["Chưa duyệt", "err"], khong_can: ["Không cần duyệt", ""], khong_ro: ["—", ""] };
   function chLabel(k) { return CH_LABELS[k] || k; }
   function fmtTime(s) { if (!s) return ""; var d = new Date(s); return isNaN(d.getTime()) ? "" : d.toLocaleString("vi-VN"); }
@@ -3766,14 +3874,14 @@ ${LIBRARY_EDITOR_UI}
   }
   function ibxNl(s) { return esc(s).split(String.fromCharCode(10)).join("<br>"); }
   function ibxInitial(name) { var n = String(name || "?").trim(); return esc((n.split(" ").pop() || "?").charAt(0).toUpperCase() || "?"); }
-  var IBX_PLATFORM_ICON = { zalo_personal: "🟦 Zalo", whatsapp_personal: "🟩 WhatsApp" };
+  var IBX_PLATFORM_ICON = { zalo_personal: "🟦 Zalo", whatsapp_personal: "🟩 WhatsApp", facebook: "🔵 Facebook", instagram: "🟣 Instagram" };
   var IBX_SRC = { agent: "🤖 AI", web: "👤 Nhân viên", app: "📱 Điện thoại", mcp: "🔌 Ứng dụng AI", api: "🔌 API" };
   var IBX_RX = [["heart", "/-heart", "❤️"], ["like", "/-strong", "👍"], ["haha", ":>", "😆"], ["wow", ":o", "😮"], ["cry", ":-((", "😢"], ["angry", ":-h", "😡"]];
   function ibxRxEmoji(icon) { for (var i = 0; i < IBX_RX.length; i++) if (IBX_RX[i][1] === icon) return IBX_RX[i][2]; return icon && icon.charCodeAt(0) > 127 ? icon : "💬"; }
   var IBX_RX_SRC = { web: "nhân viên", auto: "tự thả", mcp: "ứng dụng AI", app: "điện thoại", zalo: "", peer: "" };
 
   PAGES.inbox = function () {
-    var m = page("Inbox", "Nhiều người cùng xem và trả lời khách trên Zalo cá nhân, WhatsApp cá nhân. Nhân viên trả lời thì AI tự tạm im trong hội thoại đó.");
+    var m = page("Inbox", "Nhiều người cùng xem và trả lời khách trên Zalo cá nhân, WhatsApp cá nhân, Fanpage Facebook, Instagram. Nhân viên trả lời (ở đây hoặc trên điện thoại / Meta Business Suite) thì AI tự tạm im trong hội thoại đó.");
     m.className = "fill pad";
     var touch = (function () { try { return window.matchMedia("(pointer: coarse)").matches; } catch (e) { return false; } })();
     var mobile = function () { return window.matchMedia("(max-width: 760px)").matches; };
@@ -3796,16 +3904,25 @@ ${LIBRARY_EDITOR_UI}
     if (window.visualViewport) window.visualViewport.addEventListener("resize", keepBottom);
 
     function chInfo() { for (var i = 0; i < S.channels.length; i++) if (S.channels[i].id === S.ch) return S.channels[i]; return null; }
+    // Tính năng của kênh (Fanpage/Instagram: không nhóm, không nhắn mới, không đồng bộ danh bạ)
+    function caps() { var c = chInfo(); return (c && c.capabilities) || { groups: true, phoneLookup: true, syncContacts: true, reactions: true, newConversation: true, mcp: true }; }
+    function isMetaCh() { var c = chInfo(); return !!(c && isMetaKind(c.kind)); }
     function renderStatus() {
       var c = chInfo(), st = $("#ibxSt");
       if (!c) { st.innerHTML = ""; return; }
-      st.innerHTML = (c.connected ? '<span class="pill ok">đã kết nối</span> ' + esc(c.account ? c.account.name : "") : '<span class="pill err">chưa kết nối</span> <span class="muted">— quản trị vào Channels → Kết nối QR</span>') +
+      st.innerHTML = (c.connected ? '<span class="pill ok">đã kết nối</span> ' + esc(c.account ? c.account.name : "") : '<span class="pill err">chưa kết nối</span> <span class="muted">— quản trị vào Channels → ' + (isMetaKind(c.kind) ? "Kết nối Trang" : "Kết nối QR") + "</span>") +
         (c.inbox ? "" : ' · <span class="err">đang TẮT lưu nội dung</span>') +
         (c.mcpReadMessages ? ' · <span class="pill" title="Ứng dụng AI bên ngoài (MCP) được đọc hội thoại của kênh này">🔓 AI ngoài đọc được tin</span>' : "") +
         (c.agentReply === false ? ' · <span class="pill" title="Channels → Sửa → Agent tự trả lời">🤖 AI đang tắt</span>' : "") +
         (c.autoReaction ? ' · <span class="pill" title="Tự thả cảm xúc khi khách nhắn">' + (c.autoReaction === "like" ? "👍" : "❤️") + " tự thả</span>" : "");
-      $("#ibxSync").style.display = S.canManage ? "" : "none";
+      var cp = caps();
+      $("#ibxSync").style.display = S.canManage && cp.syncContacts !== false ? "" : "none";
+      $("#ibxNew").style.display = cp.newConversation !== false ? "" : "none";
       $("#ibxSet").style.display = isAdmin() ? "" : "none";
+      var kSel = $("#ibxKind"), gOpt = kSel.querySelector('option[value="group"]'), dOpt = kSel.querySelector('option[value="direct"]');
+      if (gOpt) gOpt.hidden = cp.groups === false;
+      if (dOpt) dOpt.hidden = cp.groups === false;
+      $("#ibxQ").placeholder = isMetaKind(c.kind) ? "Tìm tên khách…" : "Tìm tên, uid, SĐT…";
     }
     function aiBadge(t) {
       if (t.aiMode === "off") return '<span title="Đã tắt AI cho hội thoại này">🚫</span>';
@@ -3848,6 +3965,8 @@ ${LIBRARY_EDITOR_UI}
     function msgEl(x) {
       var out = x.direction === "out";
       var who = out ? (x.source === "web" ? "👤 " + (x.webUserName || "Nhân viên") : (IBX_SRC[x.source] || "")) : (S.cur && S.cur.kind === "group" ? x.senderName : "");
+      // Trả lời ngoài PenAI (Meta Business Suite, ứng dụng khác) — ghi rõ nguồn
+      if (out && x.source === "app" && x.meta && x.meta.via) who = "🧑‍💼 Người trả lời qua " + x.meta.via;
       if (out && x.source === "mcp" && x.webUserName) who = "🔌 Ứng dụng AI (" + x.webUserName + ")";
       var q = x.meta && x.meta.quote && x.meta.quote.text ? '<div class="ibx-quote">↪ ' + esc(x.meta.quote.text) + "</div>" : "";
       var d = el("div", { "class": "ibx-msg " + (out ? "out" : "in"), "data-id": x.id });
@@ -3888,7 +4007,7 @@ ${LIBRARY_EDITOR_UI}
       if (!t) { h.innerHTML = "Chọn một hội thoại bên trái."; return; }
       var paused = t.pausedUntil && new Date(t.pausedUntil).getTime() > Date.now();
       h.className = "ibx-head";
-      h.innerHTML = '<button class="ibx-back" id="ibxBack" type="button" aria-label="Quay lại danh sách">‹</button><div style="flex:1;min-width:0;overflow:hidden"><b>' + (t.kind === "group" ? "👥 " : "👤 ") + esc(t.contactAlias || t.name || t.threadId) + '</b>' + (t.contactAlias && t.name && t.contactAlias !== t.name ? '<div class="muted">Zalo: ' + esc(t.name) + '</div>' : '') + ' <span class="muted">' + (t.kind === "group" ? "nhóm" : "cá nhân") + " · uid <code>" + esc(t.threadId) + "</code>" + (t.phone ? " · " + esc(t.phone) : "") + "</span></div>" +
+      h.innerHTML = '<button class="ibx-back" id="ibxBack" type="button" aria-label="Quay lại danh sách">‹</button><div style="flex:1;min-width:0;overflow:hidden"><b>' + (t.kind === "group" ? "👥 " : "👤 ") + esc(t.contactAlias || t.name || t.threadId) + '</b>' + (t.contactAlias && t.name && t.contactAlias !== t.name ? '<div class="muted">Zalo: ' + esc(t.name) + '</div>' : '') + ' <span class="muted">' + (t.kind === "group" ? "nhóm" : "cá nhân") + " · " + (isMetaCh() ? (chInfo().kind === "instagram" ? "IGSID" : "PSID") : "uid") + " <code>" + esc(t.threadId) + "</code>" + (t.phone ? " · " + esc(t.phone) : "") + "</span></div>" +
         '<div class="row" style="gap:6px"><span class="muted">AI trả lời:</span><select id="ibxAi" style="padding:3px 6px"><option value="auto">Theo cấu hình kênh</option><option value="off">Tắt cho hội thoại này</option></select>' +
         (paused ? '<span class="pill">⏸️ tạm dừng tới ' + esc(ibxTime(t.pausedUntil)) + '</span><button class="ghost sm" id="ibxResume">Cho AI trả lời lại</button>' : "") + "</div>";
       $("#ibxBack").onclick = function () { if (history.state && history.state.ibx) history.back(); else closeThread(); };
@@ -4044,18 +4163,23 @@ ${LIBRARY_EDITOR_UI}
         '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem"><input type="checkbox" id="isOn" style="width:auto"> Lưu nội dung tin nhắn (bật Inbox)</label>' +
         '<div class="muted" style="margin:4px 0 10px">Tắt thì tin mới không được lưu/hiện trong Inbox (tin cũ giữ nguyên). Lưu ý: bật là lưu cả tin riêng tư của tài khoản Zalo này.</div>' +
         '<label>AI tạm im bao nhiêu phút sau khi nhân viên trả lời (0 = không tạm dừng)</label><input id="isPause" type="number" min="0" max="1440" style="width:120px">' +
-        (c.kind === "zalo_personal" ? '<label style="margin-top:14px">Khi khách chỉ gửi ảnh</label><select id="isPhotoAck"><option value="short">Xác nhận ngắn ở ảnh đầu</option><option value="off">Im lặng, chỉ lưu ảnh</option></select><div class="muted">Ảnh gửi tiếp trong vòng 30 giây không được xác nhận lặp. Có yêu cầu kèm ảnh thì AI xử lý bình thường.</div>' : '') +
-        '<label style="margin-top:14px">Tự thả cảm xúc khi khách nhắn (cá nhân + nhóm)</label><select id="isAutoRx" style="width:200px"><option value="off">Tắt</option><option value="heart">❤️ Thả tim</option><option value="like">👍 Thích</option></select>' +
-        '<div class="muted" style="margin:4px 0 0">Thả vào tin cuối mỗi đợt khách nhắn, sau 1–4 giây. Nhóm đông người nhắn nhiều thì tài khoản thả rất nhiều — nền tảng có thể giới hạn tài khoản.</div>' +
-        '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem;margin-top:14px"><input type="checkbox" id="isMcpRead" style="width:auto"> Cho ứng dụng AI bên ngoài (MCP) đọc hội thoại và nội dung tin nhắn</label>' +
-        '<div class="muted" style="margin:4px 0 0">Mặc định TẮT. Bật thì Claude/ChatGPT… đã kết nối (và được cấp quyền đọc tin nhắn) xem được danh sách hội thoại, toàn bộ lịch sử tin nhắn cá nhân + nhóm của kênh này, tìm kiếm trong tin nhắn để làm báo cáo và trả lời vào hội thoại.</div>' +
+        (c.kind === "zalo_personal" || isMetaKind(c.kind) ? '<label style="margin-top:14px">Khi khách chỉ gửi ảnh</label><select id="isPhotoAck">' + (isMetaKind(c.kind) ? '<option value="ai">AI xem ảnh và trả lời luôn</option>' : "") + '<option value="short">Xác nhận ngắn ở ảnh đầu</option><option value="off">Im lặng, chỉ lưu ảnh</option></select><div class="muted">Ảnh gửi tiếp trong vòng 30 giây không được xác nhận lặp. Có yêu cầu kèm ảnh thì AI xử lý bình thường.</div>' : '') +
+        (caps().reactions !== false ? '<label style="margin-top:14px">Tự thả cảm xúc khi khách nhắn (cá nhân + nhóm)</label><select id="isAutoRx" style="width:200px"><option value="off">Tắt</option><option value="heart">❤️ Thả tim</option><option value="like">👍 Thích</option></select>' +
+        '<div class="muted" style="margin:4px 0 0">Thả vào tin cuối mỗi đợt khách nhắn, sau 1–4 giây. Nhóm đông người nhắn nhiều thì tài khoản thả rất nhiều — nền tảng có thể giới hạn tài khoản.</div>' : "") +
+        (caps().mcp !== false ? '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem;margin-top:14px"><input type="checkbox" id="isMcpRead" style="width:auto"> Cho ứng dụng AI bên ngoài (MCP) đọc hội thoại và nội dung tin nhắn</label>' +
+        '<div class="muted" style="margin:4px 0 0">Mặc định TẮT. Bật thì Claude/ChatGPT… đã kết nối (và được cấp quyền đọc tin nhắn) xem được danh sách hội thoại, toàn bộ lịch sử tin nhắn cá nhân + nhóm của kênh này, tìm kiếm trong tin nhắn để làm báo cáo và trả lời vào hội thoại.</div>' : "") +
+        (isMetaKind(c.kind) ? '<div class="muted" style="margin-top:12px">Người trả lời trên Meta Business Suite / ứng dụng Trang cũng tính là nhân viên trả lời → AI tạm im theo số phút ở trên. Meta chỉ cho Trang nhắn trong 24 giờ kể từ tin cuối của khách.</div>' : "") +
         '<div class="dialog-actions"><button class="ghost" id="isX">Hủy</button><button id="isOk">Lưu</button></div>';
       document.body.appendChild(dlg);
-      $("#isOn", dlg).checked = !!c.inbox; $("#isPause", dlg).value = c.pauseMinutes; $("#isMcpRead", dlg).checked = !!c.mcpReadMessages; $("#isAutoRx", dlg).value = c.autoReaction || "off";
-      if ($("#isPhotoAck", dlg)) $("#isPhotoAck", dlg).value = c.photoAck || "short";
+      $("#isOn", dlg).checked = !!c.inbox; $("#isPause", dlg).value = c.pauseMinutes;
+      if ($("#isMcpRead", dlg)) $("#isMcpRead", dlg).checked = !!c.mcpReadMessages;
+      if ($("#isAutoRx", dlg)) $("#isAutoRx", dlg).value = c.autoReaction || "off";
+      if ($("#isPhotoAck", dlg)) $("#isPhotoAck", dlg).value = c.photoAck || (isMetaKind(c.kind) ? "ai" : "short");
       $("#isX", dlg).onclick = function () { dlg.close(); dlg.remove(); };
       $("#isOk", dlg).onclick = function () {
-        var settings = { enabled: $("#isOn", dlg).checked, pauseMinutes: Number($("#isPause", dlg).value) || 0, mcpReadMessages: $("#isMcpRead", dlg).checked, autoReaction: $("#isAutoRx", dlg).value };
+        var settings = { enabled: $("#isOn", dlg).checked, pauseMinutes: Number($("#isPause", dlg).value) || 0 };
+        if ($("#isMcpRead", dlg)) settings.mcpReadMessages = $("#isMcpRead", dlg).checked;
+        if ($("#isAutoRx", dlg)) settings.autoReaction = $("#isAutoRx", dlg).value;
         if ($("#isPhotoAck", dlg)) settings.photoAck = $("#isPhotoAck", dlg).value;
         api("/v1/inbox/" + c.id + "/settings", { method: "PUT", body: settings })
           .then(function (j) { c.inbox = j.enabled; c.pauseMinutes = j.pauseMinutes; c.mcpReadMessages = j.mcpReadMessages; c.autoReaction = j.autoReaction; c.photoAck = j.photoAck; renderStatus(); dlg.close(); dlg.remove(); toast("Đã lưu"); })
@@ -4095,7 +4219,7 @@ ${LIBRARY_EDITOR_UI}
       S.channels = j.channels || []; S.canManage = !!j.canManage; state.inboxChannels = S.channels;
       var sel = $("#ibxCh");
       if (!S.channels.length) {
-        wrap.innerHTML = '<div class="card">' + (isMember() ? "Bạn chưa được gán trực kênh nào — nhờ quản trị vào Người dùng → Sửa → tick kênh." : 'Chưa có kênh Zalo cá nhân / WhatsApp cá nhân. Vào <a href="#/channels">Channels</a> → ＋ Thêm kênh → chọn <b>zalo_personal</b> hoặc <b>whatsapp_personal</b> → Kết nối QR.') + "</div>";
+        wrap.innerHTML = '<div class="card">' + (isMember() ? "Bạn chưa được gán trực kênh nào — nhờ quản trị vào Người dùng → Sửa → tick kênh." : 'Chưa có kênh có Inbox. Vào <a href="#/channels">Channels</a> → ＋ Thêm kênh → chọn <b>Facebook Fanpage</b> / <b>Instagram</b> (Kết nối nhanh với HoiAI) hoặc <b>zalo_personal</b> / <b>whatsapp_personal</b> (Kết nối QR).') + "</div>";
         top.style.display = "none"; return;
       }
       sel.innerHTML = S.channels.map(function (c) { return '<option value="' + c.id + '">' + esc(c.name) + " · " + esc(c.platform || "Zalo") + "</option>"; }).join("");

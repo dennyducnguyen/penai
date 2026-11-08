@@ -4,6 +4,21 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.19.0 — 2026-11-08
+
+- **Facebook Fanpage + Instagram** — kênh mới, nối qua hub **chat.hoiai.vn** nên **không cần tự tạo Meta App**:
+  - Tạo tài khoản chat.hoiai.vn → mục Facebook → kết nối Trang. Trong PenAI: Channels → ＋ Thêm kênh → **Facebook Fanpage** / **Instagram** → chọn agent → **🔗 Kết nối nhanh với HoiAI** (cửa sổ hub → chọn Trang → Cấp quyền) hoặc dán mã `hfb_…` / `hig_…`.
+  - **Mỗi Trang một kênh, gắn agent riêng** (Fanpage và Instagram của nó là hai kênh). Pairing mặc định tắt.
+  - Agent trả lời chữ, xem ảnh khách gửi (mặc định trả lời luôn khi khách chỉ gửi ảnh), đọc file; gửi ảnh/video/file; khách thấy "Đã xem" + "Đang soạn…". Token Trang hết hạn thì tự xin token mới từ hub.
+  - **📥 Inbox** có thêm Fanpage/Instagram: tên + ảnh đại diện khách, trả lời tay, tắt AI theo khách.
+  - **Biết người trả lời ở nơi khác**: tin trả lời từ Meta Business Suite, ứng dụng Trang hay ứng dụng chat khác hiện trong Inbox (ghi rõ nguồn) và **AI tự tạm im** trong hội thoại đó như khi nhân viên trả lời từ PenAI.
+  - Quy tắc 24 giờ của Meta được báo rõ; nhân viên trả lời quá 24 giờ thì PenAI thử thẻ HUMAN_AGENT.
+  - Hướng dẫn: [docs/facebook-instagram.md](docs/facebook-instagram.md). Bản fork dùng hub riêng: biến `PENAI_META_HUB_URL` trong `penai.env`.
+- **Inbox** đổi tên từ "Inbox Zalo" — dùng chung cho Zalo cá nhân, WhatsApp cá nhân, Facebook, Instagram.
+- **Sửa lỗi**: kênh Zalo cá nhân bị sửa/khởi động lại đúng lúc đang khôi phục phiên có thể còn chạy ngầm (vẫn nhận tin, tự thả cảm xúc theo cấu hình cũ).
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.18.0 — 2026-11-08
 
 - **Bản fork nội bộ dễ cập nhật**: thêm *điểm gắn mở rộng*. Công ty cần tính năng riêng đặt gói mở rộng ở `apps/server/src/extensions/` (route API, tool cho agent, trang Dashboard qua `window.PenaiUI.addPage`, việc chạy nền) và migration số `9001_…` — không sửa file lõi, nên gộp bản mới của PenAI gần như không xung đột. Hướng dẫn: [docs/mo-rong.md](docs/mo-rong.md).

@@ -11,6 +11,8 @@ export * from "./zalo.js";
 export * from "./zalo-personal.js";
 export * from "./whatsapp-personal.js";
 export * from "./personal.js";
+export * from "./inbox-channel.js";
+export * from "./meta-page.js";
 export * from "./feishu.js";
 export * from "./teams.js";
 export * from "./manager.js";

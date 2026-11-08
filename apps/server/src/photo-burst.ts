@@ -11,6 +11,12 @@ export class PhotoBurst {
   reset(key: string): void { this.last.delete(key); }
 }
 
-export function readPhotoAcknowledgement(config: Record<string, unknown>): "short" | "off" {
-  return config["photo_ack"] === "off" ? "off" : "short";
+/**
+ * Khách chỉ gửi ảnh (chưa nhắn yêu cầu): "short" = xác nhận ngắn ở ảnh đầu, "off" = im lặng chỉ lưu,
+ * "ai" = AI trả lời luôn (mặc định của Fanpage/Instagram — khách hay gửi ảnh sản phẩm để hỏi).
+ */
+export function readPhotoAcknowledgement(config: Record<string, unknown>, kind = ""): "short" | "off" | "ai" {
+  const v = config["photo_ack"];
+  if (v === "off" || v === "short" || v === "ai") return v;
+  return kind === "facebook" || kind === "instagram" ? "ai" : "short";
 }

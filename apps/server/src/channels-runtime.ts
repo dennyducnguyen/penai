@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { decryptSecret, encryptSecret, logger } from "@penai/shared";
@@ -18,6 +18,7 @@ import {
   updateChannel,
   upsertInboxObservedPeer,
   getInboxThreadAgentBlock,
+  createPublishedFile,
   type EnabledChannel,
   recordTraceSafe,
 } from "@penai/db";
@@ -39,7 +40,7 @@ import {
   type RunHooks,
 } from "@penai/channels";
 import { forgetInboxChannel, inboxHooks } from "./inbox.js";
-import { isPersonalChannelKind } from "@penai/channels";
+import { isInboxChannelKind, isMetaChannelKind, isPersonalChannelKind } from "@penai/channels";
 import { PhotoBurst, readPhotoAcknowledgement } from "./photo-burst.js";
 
 /** Handler + channel theo channelId — cho webhook route (WhatsApp, Teams) dùng. */
@@ -79,6 +80,7 @@ export async function dispatchChannelCallback(
 import {
   buildLoopDeps,
   agentOpts,
+  contentTypeOf,
   reasoningEffortOf,
   sanitizeUserKey,
   systemContext,
@@ -578,9 +580,9 @@ export function makeInboundHandler(
     // kết nối + Inbox vẫn lưu tin, chỉ agent không trả lời. Lịch hẹn vẫn gửi (đi đường khác).
     if (channel.config["agent_reply"] === false) return { kind: "ignore" };
 
-    // Inbox Zalo: nhân viên đã tắt AI cho hội thoại này, hoặc vừa trả lời tay
-    // (web/điện thoại) → AI im trong lúc tạm dừng.
-    if (isPersonalChannelKind(msg.channelKind)) {
+    // Inbox (Zalo, WhatsApp, Fanpage, Instagram): nhân viên đã tắt AI cho hội thoại này,
+    // hoặc vừa trả lời tay (web/điện thoại/Meta Business Suite) → AI im trong lúc tạm dừng.
+    if (isInboxChannelKind(msg.channelKind)) {
       const threadId = msg.chatKey.slice(msg.chatKey.indexOf(":") + 1);
       const block = await getInboxThreadAgentBlock(db, ctx, channel.id, threadId).catch(() => null);
       if (block) return { kind: "ignore" };
@@ -708,7 +710,11 @@ export function makeInboundHandler(
       msg.text.trim().length > 0 ||
       (msg.media ?? []).some((m) => m.text !== undefined || m.note);
     const savedAll = [...savedImages, ...savedDocs];
-    if (!hasSubstance && savedAll.length) {
+    // Fanpage/Instagram: khách gửi ảnh sản phẩm thường là để hỏi → mặc định AI trả lời luôn.
+    const metaPhotoMode = isMetaChannelKind(channel.kind) && !hasSubstance && savedAll.length
+      ? readPhotoAcknowledgement((await getChannelById(db, ctx, channel.id).catch(() => null))?.config as Record<string, unknown> ?? channel.config, channel.kind)
+      : null;
+    if (!hasSubstance && savedAll.length && metaPhotoMode !== "ai") {
       await appendMessage(db, ctx, sessionId, {
         role: "user",
         content: {
@@ -716,10 +722,10 @@ export function makeInboundHandler(
           text: `[Đã gửi ${savedAll.length} file: ${savedAll.map((s) => s.name).join(", ")}]`,
         },
       }).catch(() => {});
-      if (channel.kind === "zalo_personal" && savedImages.length && !savedDocs.length) {
+      if ((channel.kind === "zalo_personal" || metaPhotoMode) && savedImages.length && !savedDocs.length) {
         const first = photoBursts.acknowledge(photoBurstKey);
         const settings = await getChannelById(db, ctx, channel.id);
-        if (first && readPhotoAcknowledgement((settings?.config as Record<string, unknown>) ?? channel.config) === "short") {
+        if (first && readPhotoAcknowledgement((settings?.config as Record<string, unknown>) ?? channel.config, channel.kind) === "short") {
           return { kind: "reply", text: "Đã nhận hình ạ." };
         }
         return { kind: "ignore" };
@@ -1031,8 +1037,10 @@ function buildChannel(
           logger.warn(`zalo.observed_persist lỗi: ${(err as Error).message}`),
         );
       },
-      // Inbox trực chat: lưu mọi tin đến/đi + danh bạ (zalo-inbox.ts)
-      ...(isPersonalChannelKind(ch.kind) ? inboxHooks(rt.db.db, ch, rt.config.dataDir) : {}),
+      // Inbox trực chat: lưu mọi tin đến/đi + danh bạ (inbox.ts)
+      ...(isInboxChannelKind(ch.kind) ? inboxHooks(rt.db.db, ch, rt.config.dataDir) : {}),
+      // Instagram chỉ nhận đính kèm bằng URL → link công khai có hạn cho file gửi đi
+      ...(isMetaChannelKind(ch.kind) ? { publishFile: channelPublishFile(rt, ch.workspaceId) } : {}),
     });
     channelHandlers.set(ch.id, { handler, channel, workspaceId: ch.workspaceId });
     return channel;
@@ -1040,6 +1048,25 @@ function buildChannel(
     logger.warn(`Không tạo được channel "${ch.name}": ${(err as Error).message}`);
     return null;
   }
+}
+
+/** Link công khai /f/<token> cho file gửi ra kênh (cần PENAI_PUBLIC_URL). */
+function channelPublishFile(rt: RuntimeDeps, workspaceId: string) {
+  return async (absPath: string, fileName: string, ttlSeconds: number): Promise<string | null> => {
+    const publicBase = (process.env.PENAI_PUBLIC_URL ?? "").replace(/\/$/, "");
+    if (!publicBase) return null;
+    const token = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+    await createPublishedFile(rt.db.db, systemContext(workspaceId), {
+      tokenHash: createHash("sha256").update(token).digest("hex"),
+      absPath: resolve(absPath),
+      fileName,
+      contentType: contentTypeOf(fileName),
+      createdBy: workspaceId,
+      expiresAt,
+    });
+    return `${publicBase}/f/${token}`;
+  };
 }
 
 /** Trạng thái runtime để sửa channel áp dụng NGAY, không cần restart server. */

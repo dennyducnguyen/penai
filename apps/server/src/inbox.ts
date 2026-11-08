@@ -1,5 +1,6 @@
 /**
- * Inbox trực chat dùng chung cho các kênh cá nhân (Zalo cá nhân, WhatsApp cá nhân) — 0031, 0034.
+ * Inbox trực chat dùng chung cho các kênh có Inbox (Zalo cá nhân, WhatsApp cá nhân,
+ * Facebook Fanpage, Instagram Business) — 0031, 0034.
  *
  * - Adapter của kênh báo MỌI tin đến/đi (onMessageLog) → lưu inbox_messages
  *   + inbox_threads → đẩy realtime (SSE) cho người đang trực.
@@ -45,9 +46,12 @@ import {
 } from "@penai/db";
 import {
   isPersonalChannel,
-  isPersonalChannelKind,
+  isInboxChannel,
+  isInboxChannelKind,
+  inboxCapabilitiesOf,
+  inboxPlatformLabel,
   isValidThreadId,
-  personalPlatformLabel,
+  type InboxChannel,
   type PersonalChannel,
   isZaloReactionKey,
   parseAutoReaction,
@@ -72,13 +76,13 @@ interface InboxChannelState {
 const inboxState = new Map<string, InboxChannelState>();
 let inboxDataDir = "";
 
-export function readInboxConfig(config: Record<string, unknown>): {
+export function readInboxConfig(config: Record<string, unknown>, kind = ""): {
   enabled: boolean;
   pauseMinutes: number;
   mcpReadMessages: boolean;
   autoReaction: "heart" | "like" | null;
   agentReply: boolean;
-  photoAck: "short" | "off";
+  photoAck: "short" | "off" | "ai";
 } {
   const raw = Number(config["inbox_pause_minutes"]);
   return {
@@ -90,7 +94,7 @@ export function readInboxConfig(config: Record<string, unknown>): {
     autoReaction: parseAutoReaction(config),
     // Công tắc "Agent tự trả lời" (Channels → Sửa): mặc định bật.
     agentReply: config["agent_reply"] !== false,
-    photoAck: readPhotoAcknowledgement(config),
+    photoAck: readPhotoAcknowledgement(config, kind),
   };
 }
 
@@ -134,14 +138,21 @@ function ctxOf(workspaceId: string): WorkspaceContext {
   return { workspaceId, userId: workspaceId, role: "ws_admin" };
 }
 
-function inboxRuntime(channelId: string): PersonalChannel | null {
+/** Kênh có Inbox đang chạy (cá nhân hoặc Trang Meta). */
+function inboxRuntime(channelId: string): InboxChannel | null {
+  const ch = channelHandlers.get(channelId)?.channel;
+  return isInboxChannel(ch) ? ch : null;
+}
+
+/** Kênh tài khoản cá nhân đang chạy (Zalo, WhatsApp) — tính năng riêng: danh bạ, tra SĐT, cảm xúc. */
+function personalRuntime(channelId: string): PersonalChannel | null {
   const ch = channelHandlers.get(channelId)?.channel;
   return isPersonalChannel(ch) ? ch : null;
 }
 
-/** Tên nền tảng của kênh (Zalo, WhatsApp) để ghi vào thông báo cho người dùng. */
+/** Tên nền tảng của kênh (Zalo, WhatsApp, Facebook, Instagram) để ghi vào thông báo cho người dùng. */
 function platformOf(channelId: string): string {
-  return personalPlatformLabel(channelHandlers.get(channelId)?.channel.kind ?? "zalo_personal");
+  return inboxPlatformLabel(channelHandlers.get(channelId)?.channel.kind ?? "zalo_personal");
 }
 
 const groupNameLookups = new Set<string>();
@@ -177,13 +188,13 @@ function recordInboxContact(
   }).catch((err) => logger.warn(`zalo.contact_store lỗi: ${(err as Error).message}`));
 }
 
-/** Hook onMessageLog / onContactsSynced / onThreadName… cho 1 kênh cá nhân (Zalo, WhatsApp). */
+/** Hook onMessageLog / onContactsSynced / onThreadName… cho 1 kênh có Inbox. */
 export function inboxHooks(
   db: Db,
   ch: { id: string; kind: string; workspaceId: string; config: Record<string, unknown> },
   dataDir: string,
 ) {
-  const cfg = readInboxConfig(ch.config);
+  const cfg = readInboxConfig(ch.config, ch.kind);
   inboxState.set(ch.id, { workspaceId: ch.workspaceId, enabled: cfg.enabled, pauseMinutes: cfg.pauseMinutes });
   const ctx = ctxOf(ch.workspaceId);
   const toInput = (entry: ChannelMessageLog) => ({
@@ -244,7 +255,7 @@ export function inboxHooks(
         const key = `${ch.id}:${entry.threadId}`;
         if (entry.peerKind === "group" && !saved.thread.name && !groupNameLookups.has(key)) {
           groupNameLookups.add(key);
-          const name = await inboxRuntime(ch.id)?.lookupGroupName(entry.threadId);
+          const name = await personalRuntime(ch.id)?.lookupGroupName(entry.threadId);
           if (name) {
             await setInboxThreadName(db, ctx, ch.id, entry.threadId, name);
             recordInboxContact(db, ctx, ch.id, ch.kind, entry.threadId, name, "group");
@@ -270,6 +281,16 @@ export function inboxHooks(
       )
         .then((n) => broadcast(ch.workspaceId, ch.id, "contacts", { channelId: ch.id, count: n }))
         .catch((err) => logger.warn(`zalo.contacts_store lỗi: ${(err as Error).message}`));
+    },
+    // Trang Meta: tên + ảnh đại diện của khách → hội thoại trong Inbox (không báo "đã đồng bộ")
+    onPeerProfile: (p: { threadId: string; name: string; avatar?: string }) => {
+      recordInboxContact(db, ctx, ch.id, ch.kind, p.threadId, p.name, "user");
+      void upsertInboxContacts(db, ctx, ch.id, [{ threadId: p.threadId, kind: "direct", name: p.name, ...(p.avatar ? { avatar: p.avatar } : {}) }])
+        .then(async () => {
+          const thread = await getInboxThread(db, ctx, ch.id, p.threadId);
+          if (thread) broadcast(ch.workspaceId, ch.id, "thread", { channelId: ch.id, thread });
+        })
+        .catch((err) => logger.warn(`inbox.peer_profile lỗi: ${(err as Error).message}`));
     },
     onThreadName: (threadId: string, name: string) => {
       void setInboxThreadName(db, ctx, ch.id, threadId, name).catch(() => {});
@@ -321,7 +342,10 @@ export async function reactInboxMessage(
   },
 ): Promise<void> {
   const err = (code: string, message: string) => Object.assign(new Error(message), { code });
-  const rt = inboxRuntime(input.channelId);
+  if (inboxRuntime(input.channelId) && !personalRuntime(input.channelId)) {
+    throw err("CANNOT_REACT", `${platformOf(input.channelId)} chưa hỗ trợ thả cảm xúc từ PenAI.`);
+  }
+  const rt = personalRuntime(input.channelId);
   if (!rt?.isConnected()) throw err("NOT_CONNECTED", `Kênh ${platformOf(input.channelId)} chưa kết nối — vào Channels → Kết nối QR để quét lại.`);
   const msg = await getInboxMessageById(db, ctx, input.channelId, input.threadId, input.messageId);
   if (!msg) throw err("MESSAGE_NOT_FOUND", "Không có tin nhắn này trong hội thoại.");
@@ -349,10 +373,10 @@ export function forgetInboxChannel(channelId: string): void {
 
 // ===== Quyền truy cập kênh =====
 
-/** Kênh zalo_personal người này được trực: operator trở lên = mọi kênh; member = kênh được gán; viewer = không. */
+/** Kênh có Inbox người này được trực: operator trở lên = mọi kênh; member = kênh được gán; viewer = không. */
 export async function allowedInboxChannelIds(db: Db, ctx: WorkspaceContext): Promise<string[]> {
   if (hasRole(ctx.role, "operator")) {
-    return (await listChannels(db, ctx)).filter((c) => isPersonalChannelKind(c.kind)).map((c) => c.id);
+    return (await listChannels(db, ctx)).filter((c) => isInboxChannelKind(c.kind)).map((c) => c.id);
   }
   if (ctx.role === "member") return listUserInboxChannelIds(db, ctx, ctx.userId);
   return [];
@@ -523,8 +547,8 @@ export async function prepareOutboundImages(dataDir: string, workspaceId: string
 
 /** Lỗi do Zalo trả về (tham số sai, bị chặn…) → chắc chắn tin CHƯA gửi. */
 export function isPlatformRejected(err: unknown): boolean {
-  const e = err as { name?: string; zaloRejected?: boolean } | null;
-  return !!e && (e.name === "ZcaApiError" || e.zaloRejected === true);
+  const e = err as { name?: string; zaloRejected?: boolean; platformRejected?: boolean } | null;
+  return !!e && (e.name === "ZcaApiError" || e.zaloRejected === true || e.platformRejected === true);
 }
 
 export async function sendInbox(dataDir: string, req: InboxSendRequest): Promise<{ msgIds: string[] }> {
@@ -550,8 +574,9 @@ export async function sendInbox(dataDir: string, req: InboxSendRequest): Promise
   return { msgIds };
 }
 
+/** MCP server: chỉ kênh cá nhân (bộ công cụ zalo_… / whatsapp_…). */
 export function inboxRuntimeFor(channelId: string): PersonalChannel | null {
-  return inboxRuntime(channelId);
+  return personalRuntime(channelId);
 }
 
 // ===== Routes =====
@@ -581,7 +606,7 @@ const InboxSettingsBody = z.object({
   pauseMinutes: z.number().int().min(0).max(1440).optional(),
   mcpReadMessages: z.boolean().optional(),
   autoReaction: z.enum(["off", "heart", "like"]).optional(),
-  photoAck: z.enum(["short", "off"]).optional(),
+  photoAck: z.enum(["short", "off", "ai"]).optional(),
 });
 
 const ReactBody = z.object({ reaction: z.enum(["heart", "like", "haha", "wow", "cry", "angry", "none"]) });
@@ -619,11 +644,12 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     return {
       channels: all.map((c) => {
         const rt = inboxRuntime(c.id);
-        const cfg = readInboxConfig((c.config as Record<string, unknown>) ?? {});
+        const cfg = readInboxConfig((c.config as Record<string, unknown>) ?? {}, c.kind);
         return {
           id: c.id,
           kind: c.kind,
-          platform: personalPlatformLabel(c.kind),
+          platform: inboxPlatformLabel(c.kind),
+          capabilities: inboxCapabilitiesOf(rt, c.kind),
           name: c.name,
           enabled: c.enabled,
           connected: rt?.isConnected() ?? false,
@@ -729,7 +755,10 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     if (!(await guard(req, reply, channelId))) return;
     const parsed = NewMessageBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Dữ liệu không hợp lệ" });
-    const rt = inboxRuntime(channelId);
+    if (inboxRuntime(channelId) && !personalRuntime(channelId)) {
+      return reply.code(400).send({ error: `${platformOf(channelId)} chỉ cho Trang trả lời người đã nhắn tới — không nhắn tin mới được.` });
+    }
+    const rt = personalRuntime(channelId);
     if (!rt?.isConnected()) return reply.code(409).send({ error: `Kênh ${platformOf(channelId)} chưa kết nối`, code: "NOT_CONNECTED" });
     let threadId = parsed.data.to ?? "";
     let peerKind = parsed.data.peerKind;
@@ -769,7 +798,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     if (!(await guard(req, reply, channelId))) return;
     const phone = String((req.query as { phone?: string }).phone ?? "").trim();
     if (!/^\+?\d{8,15}$/.test(phone)) return reply.code(400).send({ error: "Số điện thoại không hợp lệ" });
-    const rt = inboxRuntime(channelId);
+    const rt = personalRuntime(channelId);
     if (!rt?.isConnected()) return reply.code(409).send({ error: `Kênh ${platformOf(channelId)} chưa kết nối`, code: "NOT_CONNECTED" });
     const user = await rt.findUserByPhone(phone).catch(() => null);
     return { found: !!user, user };
@@ -795,8 +824,8 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     const { channelId } = req.params as { channelId: string };
     if (!hasRole(req.authCtx.role, "operator")) return reply.code(403).send({ error: "Cần quyền operator trở lên" });
     if (!(await guard(req, reply, channelId))) return;
-    const rt = inboxRuntime(channelId);
-    if (!rt?.isConnected()) return reply.code(409).send({ error: `Kênh ${platformOf(channelId)} chưa kết nối`, code: "NOT_CONNECTED" });
+    const rt = personalRuntime(channelId);
+    if (!rt?.isConnected()) return reply.code(409).send({ error: `Kênh ${platformOf(channelId)} chưa kết nối hoặc không có danh bạ để đồng bộ`, code: "NOT_CONNECTED" });
     try {
       return await rt.syncContacts();
     } catch (err) {
@@ -837,7 +866,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     const parsed = InboxSettingsBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Dữ liệu không hợp lệ" });
     const row = await getChannelById(db, req.authCtx, channelId);
-    if (!row || !isPersonalChannelKind(row.kind)) return reply.code(404).send({ error: "Không có kênh cá nhân này" });
+    if (!row || !isInboxChannelKind(row.kind)) return reply.code(404).send({ error: "Không có kênh Inbox này" });
     const config = { ...((row.config as Record<string, unknown>) ?? {}) };
     if (parsed.data.enabled !== undefined) config["inbox"] = parsed.data.enabled;
     if (parsed.data.pauseMinutes !== undefined) config["inbox_pause_minutes"] = parsed.data.pauseMinutes;
@@ -845,7 +874,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     if (parsed.data.autoReaction !== undefined) config["auto_reaction"] = parsed.data.autoReaction;
     if (parsed.data.photoAck !== undefined) config["photo_ack"] = parsed.data.photoAck;
     await updateChannel(db, req.authCtx, channelId, { config });
-    const cfg = readInboxConfig(config);
+    const cfg = readInboxConfig(config, row.kind);
     // Đặt "số phút AI tạm im" về 0 = không tạm dừng nữa → gỡ luôn các lượt tạm dừng đang treo,
     // nếu không hội thoại vừa có người trả lời vẫn im tới hết giờ cũ.
     if (parsed.data.pauseMinutes === 0) {
@@ -854,7 +883,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     }
     const st = inboxState.get(channelId);
     if (st) Object.assign(st, { enabled: cfg.enabled, pauseMinutes: cfg.pauseMinutes });
-    inboxRuntime(channelId)?.setAutoReaction(cfg.autoReaction);
+    personalRuntime(channelId)?.setAutoReaction(cfg.autoReaction);
     await recordAudit(db, req.authCtx, "zalo_inbox.settings", { channelId, ...cfg });
     return cfg;
   });

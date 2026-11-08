@@ -16,10 +16,11 @@ PenAI là hệ thống "trợ lý AI của công ty": bạn tạo các **agent**
 - **Nhà cung cấp AI (provider)**:
   - Gói thuê bao: **ChatGPT** (Plus/Pro/Team), **Claude** (Pro/Max qua Claude Code), **Google Antigravity** — đăng nhập ngay trong Dashboard.
   - API key: **OpenAI**, **Gemini**, **Qwen**, **Anthropic**, hoặc bất kỳ dịch vụ tương thích OpenAI (OpenRouter, DeepSeek...).
-- **Kênh chat**: Telegram, Zalo cá nhân, WhatsApp cá nhân, Zalo OA, Microsoft Teams, Discord, Slack, Feishu — cùng trang Chat ngay trong Dashboard.
+- **Kênh chat**: Telegram, **Facebook Fanpage, Instagram** (nối 1 chạm qua hub chat.hoiai.vn, không cần tự tạo Meta App), Zalo cá nhân, WhatsApp cá nhân, Zalo OA, Microsoft Teams, Discord, Slack, Feishu — cùng trang Chat ngay trong Dashboard.
 - **Hồ sơ contact**: mỗi người nhắn tới bot có hồ sơ riêng (tên, cách xưng hô, vai trò, nhãn VIP/Đại lý…) và chỉ dẫn riêng cho AI — AI biết đang nói chuyện với ai và trả lời đúng từng người.
 - **Kho tri thức (Vault)**: tải lên PDF/Word/Excel/TXT, tìm kiếm ngữ nghĩa, phân quyền theo bộ sưu tập, agent đọc toàn văn khi tìm trúng tài liệu.
 - **Skill & MCP**: nạp skill (thư mục `SKILL.md` + script), kết nối MCP server (Canva, Google, công cụ nội bộ...), phân quyền theo agent và theo người dùng.
+- **Inbox Fanpage / Instagram**: mỗi Trang gắn agent riêng; tin khách, AI và nhân viên (cả người trả lời trên Meta Business Suite) cùng hiện trong Inbox, nhân viên trả lời thì AI tự tạm im. Chi tiết: [docs/facebook-instagram.md](docs/facebook-instagram.md).
 - **Inbox Zalo cá nhân**: nhiều người cùng xem và trả lời khách Zalo ngay trong Dashboard (realtime, gửi ảnh, nhắn tin mới theo SĐT); nhân viên trả lời thì AI tự tạm im. **Kết nối AI bên ngoài (MCP)**: Claude, ChatGPT… (hoặc chính PenAI) gửi tin nhắn + ảnh Zalo, tra danh bạ/nhóm, tìm người theo SĐT. Chi tiết: [docs/zalo-personal.md](docs/zalo-personal.md).
 - **Lịch hẹn ngay trong lúc chat**: nhắn *"nhắc tôi 8h sáng mai…"*, *"sáng thứ Hai hằng tuần gửi tôi báo cáo…"* là agent tự đặt lịch; tới giờ agent tự chạy và gửi kết quả về đúng cuộc trò chuyện (Telegram, Zalo, trang Chat…). Chi tiết: [docs/lich-hen.md](docs/lich-hen.md).
 - **Tool có sẵn**: đọc/ghi file, chạy Python/Node trong sandbox, đọc tài liệu, tạo ảnh, tạo landing page, đặt lịch (cron), gửi thẻ duyệt có nút bấm, xuất link tải công khai có hạn...
@@ -89,6 +90,7 @@ Các lệnh vận hành khác (`penai status`, `penai backup`, `penai rollback`,
 | [docs/dang-nhap-nguoi-dung.md](docs/dang-nhap-nguoi-dung.md) | Tài khoản, vai trò, phân quyền |
 | [docs/ho-so-contact.md](docs/ho-so-contact.md) | Hồ sơ contact, nhãn, chỉ dẫn cho AI theo từng người |
 | [docs/huong-dan-teams-bot.md](docs/huong-dan-teams-bot.md) | Nối Microsoft Teams |
+| [docs/facebook-instagram.md](docs/facebook-instagram.md) | Facebook Fanpage + Instagram: kết nối qua hub, Inbox, nhận ra người trả lời trên Meta Business Suite, giới hạn 24 giờ |
 | [docs/zalo-personal.md](docs/zalo-personal.md) | Zalo cá nhân: kết nối QR, chế độ an toàn, Inbox trực chat, cảm xúc, Contacts + xuất Excel, kết nối Claude/ChatGPT qua MCP |
 | [docs/api-public.md](docs/api-public.md) · [docs/api-reference.md](docs/api-reference.md) | API tương thích OpenAI |
 | [docs/kien-truc.md](docs/kien-truc.md) | Kiến trúc: thành phần, mã nguồn, luồng xử lý, dữ liệu, bản cài trên máy chủ |
