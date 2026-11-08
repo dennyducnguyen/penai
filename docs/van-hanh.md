@@ -16,7 +16,7 @@ Script cài đặt tạo lệnh `/usr/local/bin/penai` trên máy chủ. Mọi l
 | `sudo penai install-cli claude\|agy\|all [--force]` | Cài/nâng cấp Claude Code CLI, Antigravity CLI. Máy có CPU không có AVX2 tự cài Claude Code 2.1.112 (bản mới không chạy được trên CPU đó) |
 | `sudo penai cli-concurrency [số]` | Xem / đổi số tiến trình Claude chạy cùng lúc (mỗi tiến trình ~220 MB RAM), không cần khởi động lại |
 | `sudo penai auto-update on\|off` | Bật/tắt tự cập nhật (`--channel stable\|main`, `--every 1d`) |
-| `sudo penai set-repo <url>` | Đổi nguồn mã (vd bản fork) |
+| `sudo penai set-repo <url> [--key …] [--tags …]` | Đổi nguồn mã (vd bản fork, kể cả repo riêng tư) — [mo-rong.md](mo-rong.md) |
 | `sudo penai version` | Phiên bản lệnh và ứng dụng |
 
 ## Cập nhật hoạt động thế nào

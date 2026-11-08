@@ -4167,6 +4167,22 @@ ${CHAT_UI}
     try { fn(); } catch (e) { $("#main").innerHTML = '<div class="card err">Lỗi render: ' + esc(e.message) + "</div>"; }
   }
   window.addEventListener("hashchange", route);
+  // API cho extension của bản fork (apps/server/src/extensions/*.ts → uiScript)
+  window.PenaiUI = {
+    PAGES: PAGES, NAV: NAV, state: state, api: api, el: el, esc: esc, page: page, card: card, table: table, toast: toast, modal: modal,
+    addPage: function (id, icon, label, render, opts) {
+      opts = opts || {};
+      PAGES[id] = render;
+      if (!NAV.some(function (n) { return n.id === id; })) {
+        var item = { id: id, icon: icon, label: label, admin: !!opts.admin };
+        var gi = -1;
+        if (opts.group) for (var i = 0; i < NAV.length; i++) if (NAV[i].grp === opts.group) gi = i;
+        if (gi < 0) { NAV.push({ grp: opts.group || "Mở rộng" }); NAV.push(item); }
+        else { var j = gi + 1; while (j < NAV.length && !NAV[j].grp) j++; NAV.splice(j, 0, item); }
+      }
+      if (state.me) { renderNav(); if ((location.hash.replace("#/", "").split("/")[0].split("?")[0]) === id) route(); }
+    }
+  };
   $("#navToggle").onclick = function () { setNav(!document.body.classList.contains("nav-open")); };
   $("#navBack").onclick = function () { setNav(false); };
   // Chiều cao thật của khung nhìn (trừ bàn phím ảo trên điện thoại) → --app-h

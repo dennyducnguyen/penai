@@ -282,6 +282,7 @@ import { registerBrowserRoutes } from "./browser-runtime.js";
 import { registerWorkflowRoutes } from "./workflow-routes.js";
 import { getWorkflowService } from "./workflow-service.js";
 import { registerWsdbRoutes } from "./wsdb-routes.js";
+import { extensionUiHtml, registerExtensionRoutes } from "./extensions.js";
 import { getWsdbService } from "./wsdb-service.js";
 
 declare module "fastify" {
@@ -743,6 +744,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Quy trình tự động: /v1/workflows/*, /v1/secrets, webhook /webhooks/workflow/:id/:token
   registerWorkflowRoutes(app, { svc: getWorkflowService(deps), db });
   registerWsdbRoutes(app, { svc: getWsdbService(deps) });
+  // Extension của bản fork (apps/server/src/extensions/*.ts) — sau mọi route lõi
+  registerExtensionRoutes(app, deps);
 
   // Phiên bản kèm theo để lệnh cập nhật kiểm tra đúng bản mới đã chạy.
   app.get("/healthz", async () => ({ ok: true, version: RELEASE.version, ...(RELEASE.commit ? { commit: RELEASE.commit } : {}) }));
@@ -817,7 +820,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   // Trang chat thử nghiệm cho trình duyệt (public, không lộ dữ liệu)
   app.get("/", async (_req, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderIndexHtml(INDEX_HTML, deps.config.branding));
+    return reply.type("text/html; charset=utf-8").send(renderIndexHtml(INDEX_HTML, deps.config.branding).replace("</body>", extensionUiHtml() + "</body>"));
   });
 
   // ===== WhatsApp Cloud API webhook =====

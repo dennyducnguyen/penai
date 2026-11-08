@@ -61,7 +61,7 @@ EOF
 
 # ------------------------------------------------------------------ tham số
 INSTANCE="penai"; DOMAIN=""; EMAIL=""; PORT=""; DB_PORT="5432"; NEW_CLUSTER=0; REPO_URL="$REPO_URL_DEFAULT"
-REF=""; CHANNEL="stable"; AUTO_UPDATE=0; ADMIN_PASSWORD=""; MEMORY_MAX=""; NO_NGINX=0; NO_SSL=0; SKIP_CLI=0
+REPO_SSH_KEY=""; TAG_RE=""; REF=""; CHANNEL="stable"; AUTO_UPDATE=0; ADMIN_PASSWORD=""; MEMORY_MAX=""; NO_NGINX=0; NO_SSL=0; SKIP_CLI=0
 WITH_OFFICE=0; ASSUME_YES=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -76,6 +76,8 @@ while [[ $# -gt 0 ]]; do
     --channel) CHANNEL="${2:-}"; shift 2 ;;
     --auto-update) AUTO_UPDATE=1; shift ;;
     --admin-password) ADMIN_PASSWORD="${2:-}"; shift 2 ;;
+    --repo-key) REPO_SSH_KEY="${2:-}"; shift 2 ;;
+    --tags) TAG_RE="${2:-}"; shift 2 ;;
     --memory-max) MEMORY_MAX="${2:-}"; shift 2 ;;
     --no-nginx) NO_NGINX=1; NO_SSL=1; shift ;;
     --no-ssl) NO_SSL=1; shift ;;
@@ -272,6 +274,11 @@ install -d -m 0755 "$BASE_DIR" "$BASE_DIR/releases"
 install -d -m 0750 -o root -g "$APP_USER" "$ETC_DIR"
 install -d -m 0750 -o "$APP_USER" -g "$APP_USER" "$DATA_HOME" "$DATA_HOME/data" "$DATA_HOME/codex-accounts" "$DATA_HOME/.local" "$DATA_HOME/.local/bin"
 install -d -m 0700 "/var/backups/$INSTANCE"; install -d -m 0750 "/var/log/$INSTANCE"
+if [[ -n $REPO_SSH_KEY ]]; then
+  [[ -f $REPO_SSH_KEY ]] || die "Không thấy khóa --repo-key $REPO_SSH_KEY"
+  chmod 0600 "$REPO_SSH_KEY"
+  export GIT_SSH_COMMAND="ssh -i $REPO_SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$ETC_DIR/known_hosts"
+fi
 if [[ ! -d $REPO_DIR ]]; then
   git clone --quiet --mirror "$REPO_URL" "$REPO_DIR" || die "Không tải được mã nguồn từ $REPO_URL"
 else
@@ -279,7 +286,7 @@ else
 fi
 if [[ -z $REF ]]; then
   if [[ $CHANNEL == stable ]]; then
-    REF="$(git --git-dir="$REPO_DIR" tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
+    REF="$(git --git-dir="$REPO_DIR" tag -l 'v*' --sort=-v:refname | grep -E "${TAG_RE:-^v[0-9]+\.[0-9]+\.[0-9]+$}" | head -n1 || true)"
     [[ -n $REF ]] || { warn "Kho mã chưa có bản phát hành (tag v*) — cài từ nhánh main"; REF=main; }
   else
     REF=main
@@ -346,6 +353,8 @@ MEMORY_MAX=$MEMORY_MAX
 CLI_TOTAL=$CLI_TOTAL
 NODE_DIR=$NODE_DIR
 PNPM_BIN=$PNPM_BIN
+REPO_SSH_KEY=$REPO_SSH_KEY
+TAG_RE=$TAG_RE
 INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 chown root:"$APP_USER" "$CONF_FILE"; chmod 0640 "$CONF_FILE"

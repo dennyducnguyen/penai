@@ -4,6 +4,13 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.18.0 — 2026-11-08
+
+- **Bản fork nội bộ dễ cập nhật**: thêm *điểm gắn mở rộng*. Công ty cần tính năng riêng đặt gói mở rộng ở `apps/server/src/extensions/` (route API, tool cho agent, trang Dashboard qua `window.PenaiUI.addPage`, việc chạy nền) và migration số `9001_…` — không sửa file lõi, nên gộp bản mới của PenAI gần như không xung đột. Hướng dẫn: [docs/mo-rong.md](docs/mo-rong.md).
+- **Cài / cập nhật từ repo riêng tư**: `install.sh --repo-key <khóa>`, `penai set-repo <url> --key <khóa SSH chỉ đọc> --tags '<mẫu tag>'` (vd tag `v1.18.0-congty.1`).
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.17.0 — 2026-11-08
 
 Giao diện dùng tốt trên điện thoại, Chat làm lại theo kiểu ChatGPT/Claude:
