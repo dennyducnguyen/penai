@@ -100,6 +100,50 @@ interface RegisterOutcome {
   previousUrl?: string;
 }
 
+/**
+ * Đăng ký Trang gửi sự kiện (tin nhắn, tin dội lại, bấm nút; thêm bình luận nếu token có quyền) cho app
+ * đã cấp token — với kênh qua hub là app của hub. Hub có thể quên bước này → Meta không gửi gì.
+ * Thử kèm "feed" trước, thiếu quyền thì đăng ký phần tin nhắn.
+ */
+async function subscribePageForToken(pageId: string, pageToken: string): Promise<string | null> {
+  let lastErr = "";
+  for (const fields of ["messages,messaging_postbacks,message_echoes,feed", "messages,messaging_postbacks,message_echoes"]) {
+    try {
+      const url = new URL(`https://graph.facebook.com/v22.0/${pageId}/subscribed_apps`);
+      url.searchParams.set("access_token", pageToken);
+      const res = await fetch(url, { method: "POST", body: new URLSearchParams({ subscribed_fields: fields }), signal: AbortSignal.timeout(15_000) });
+      const j = (await res.json().catch(() => ({}))) as { success?: boolean; error?: { message?: string } };
+      if (res.ok && j.success) return null;
+      lastErr = j.error?.message ?? `HTTP ${res.status}`;
+    } catch (err) {
+      lastErr = (err as Error).message;
+    }
+  }
+  return lastErr || "không đăng ký được";
+}
+
+/** Trạng thái Trang phía hub (đang bật? địa chỉ đang trỏ về) — qua API làm mới token của hub. */
+async function hubPageStatus(row: ChannelRow): Promise<{ isActive: boolean | null; webhookUrl: string | null; error?: string } | null> {
+  const cfg = readMetaConfig(row.kind as MetaChannelKind, (row.config as Record<string, unknown>) ?? {});
+  if (!cfg.refreshEndpoint || !sameOrigin(cfg.refreshEndpoint, metaHubUrl())) return null;
+  const creds = parseMetaCredentials(row.tokenEncrypted ? decryptSecret(row.tokenEncrypted) : "");
+  try {
+    const res = await fetch(cfg.refreshEndpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json", "x-penai-secret": creds.penaiSecret },
+      body: JSON.stringify({ page_id: cfg.pageId, ...(cfg.igAccountId ? { ig_account_id: cfg.igAccountId } : {}), penai_secret: creds.penaiSecret }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    const j = (await res.json().catch(() => ({}))) as { success?: boolean; message?: string; data?: Record<string, unknown> };
+    if (!res.ok || j.success === false) return { isActive: null, webhookUrl: null, error: j.message || `HTTP ${res.status}` };
+    const d = j.data ?? {};
+    const url = row.kind === "instagram" ? d["penai_ig_webhook_url"] : d["penai_webhook_url"];
+    return { isActive: typeof d["is_active"] === "boolean" ? (d["is_active"] as boolean) : d["is_active"] == null ? null : !!d["is_active"], webhookUrl: typeof url === "string" ? url : null };
+  } catch (err) {
+    return { isActive: null, webhookUrl: null, error: (err as Error).message };
+  }
+}
+
 /** Đăng ký địa chỉ nhận tin của kênh trên hub, ghi kết quả vào config kênh. */
 export async function registerMetaWebhook(db: Db, ctx: WorkspaceContext, row: ChannelRow): Promise<RegisterOutcome> {
   const kind = row.kind as MetaChannelKind;
@@ -120,11 +164,15 @@ export async function registerMetaWebhook(db: Db, ctx: WorkspaceContext, row: Ch
     webhookUrl,
   });
   const previous = typeof res.data.previous_webhook_url === "string" ? res.data.previous_webhook_url : "";
+  // Bảo đảm Trang gửi sự kiện cho app của hub (không thì Meta không gửi gì tới hub)
+  const subscribeError = res.ok && creds.pageAccessToken ? await subscribePageForToken(cfg.pageId, creds.pageAccessToken) : null;
+  if (subscribeError) logger.warn(`meta.subscribe_page (${row.name}): ${subscribeError}`);
   const config = {
     ...((row.config as Record<string, unknown>) ?? {}),
     webhookUrl: res.ok ? webhookUrl : ((row.config as Record<string, unknown>)?.["webhookUrl"] ?? ""),
     webhookRegisteredAt: res.ok ? new Date().toISOString() : ((row.config as Record<string, unknown>)?.["webhookRegisteredAt"] ?? null),
     webhookError: res.ok ? null : res.message,
+    subscribeError,
     // Hub hỗ trợ gỡ có điều kiện (expected_webhook_url) → xóa kênh thì gỡ đăng ký an toàn
     hubConditionalUnregister: res.ok ? res.data.supports_expected_webhook_url === true : ((row.config as Record<string, unknown>)?.["hubConditionalUnregister"] ?? false),
   };
@@ -326,6 +374,8 @@ export function registerMetaRoutes(app: FastifyInstance, deps: { db: Db }): void
       registeredUrl: cfg["webhookUrl"] ?? "",
       registeredAt: cfg["webhookRegisteredAt"] ?? null,
       registerError: cfg["webhookError"] ?? null,
+      subscribeError: cfg["subscribeError"] ?? null,
+      hub: await hubPageStatus(row),
       status: rt instanceof MetaPageChannel ? rt.status() : { running: false, connected: false, error: null, authError: null, lastWebhookAt: null, account: null },
     };
   });
