@@ -325,11 +325,25 @@ export async function* runAgent(
 
     // act + observe
     iterations += 1;
+    // Hỗ trợ tin nhắn báo cáo tiến độ liên tục ở mỗi bước gọi tool (qua tham số report của tool):
+    // nếu provider (như claude-code) không trả content kèm tool_call nhưng args có report,
+    // phát sự kiện text_delta và lưu vào lịch sử để hiển thị thành từng tin nhắn báo cáo.
+    const reportTexts = (response.toolCalls as ToolCallData[])
+      .map((tc) => (typeof tc.args?.["report"] === "string" ? tc.args["report"].trim() : ""))
+      .filter(Boolean);
+    const stepText = response.content?.trim()
+      ? response.content
+      : reportTexts.length
+        ? reportTexts.join("\n\n")
+        : response.content;
+    if (!response.content?.trim() && stepText) {
+      yield { type: "text_delta", text: stepText };
+    }
     await deps.store.appendMessage(ctx, sessionId, {
       role: "assistant",
       content: {
         kind: "assistant",
-        text: response.content,
+        text: stepText,
         toolCalls: response.toolCalls,
       },
     });

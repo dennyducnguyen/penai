@@ -33,7 +33,7 @@ Tùy chỉnh (thêm vào `penai.env` rồi chạy `sudo penai restart`; mọi kh
 Tool `browser` (Agents → Cấu hình → danh sách Tools; bỏ tick để cấm agent dùng). Mỗi agent + mỗi người đang chat có **một phiên riêng**, được giữ nguyên giữa các lượt nhắn cho tới khi rảnh quá 10 phút, nên agent làm được nhiều bước liên tiếp:
 
 1. `open` một địa chỉ. Kết quả trả về gồm tiêu đề, vị trí cuộn, **danh sách phần tử bấm/nhập được**, mỗi phần tử có một mã như `[e12]` (★ = đang thấy trên màn hình), và phần chữ của trang.
-2. `click` / `type` (gõ chữ, `submit` để nhấn Enter) / `select` theo mã phần tử. Mỗi thao tác trả về trang mới kèm mã **mới**.
+2. `click` / `type` (gõ chữ, `submit` để nhấn Enter) / `select` theo mã phần tử. Mỗi thao tác trả về trang mới kèm mã **mới**. Khi `click` vào nút tải file kèm `saveTo` (ví dụ `"thu-vien"` hoặc `"downloads"`) và `fileName`, trình duyệt sẽ bắt sự kiện tải file (kể cả blob/server-action), chuẩn hóa tên file sang chuẩn slug tiếng Việt không dấu (`a-z0-9-`, giữ đuôi gốc) và tự động thêm hậu tố `-1`, `-2` nếu file đã tồn tại (tối đa 100 MB; lưu vào `thu-vien` chỉ khi agent được ghi thư viện). Trang tự tải file khi bấm nút thường thì file vẫn được lưu vào thư mục làm việc. Có thể truyền thêm tham số `report` ở mỗi bước `browser` để gửi tin nhắn báo cáo tiến độ trực tiếp cho người dùng.
 3. `scroll` để xem thêm, `text` (kèm `offset`) để đọc tiếp trang dài, `back`, `wait`, `press` (nhấn phím).
 4. `screenshot`: ảnh chụp được đưa cho mô hình **xem** (mô hình phải đọc được ảnh, ví dụ ChatGPT/codex) và lưu vào `browser/man-hinh-….jpg` trong thư mục làm việc để gửi cho người dùng bằng `send_file`.
 5. `close` khi xong việc.
