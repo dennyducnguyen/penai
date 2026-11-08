@@ -1849,10 +1849,33 @@ export const INDEX_HTML = `<!doctype html>
     load();
   };
 
+  // Chọn nhóm quyền trước khi sang Facebook: mặc định chỉ Messenger (app ít quyền → không lỗi "Invalid Scopes", dễ được Meta duyệt)
+  var META_SCOPE_GROUPS = [
+    ["comments", "Bình luận bài viết", "đọc, trả lời, ẩn bình luận — app cần quyền pages_read_engagement, pages_read_user_content, pages_manage_engagement"],
+    ["posts", "Đăng bài", "đăng / xóa bài qua MCP — app cần pages_read_engagement, pages_manage_posts"],
+    ["insights", "Số liệu Trang", "app cần read_insights"],
+    ["instagram", "Instagram", "tin nhắn Instagram (cộng bình luận / đăng bài / số liệu Instagram nếu tick các mục trên) — app cần sản phẩm Instagram, instagram_basic, instagram_manage_messages…"]
+  ];
   function metaAppLogin(a) {
-    api("/v1/meta-apps/" + a.id + "/login", { method: "POST", body: { instagram: true } })
-      .then(function (j) { location.href = j.url; })
-      .catch(function (e) { toast(e.message, 1); });
+    var key = "penai_meta_scopes_" + a.id, saved = [];
+    try { saved = JSON.parse(localStorage.getItem(key) || "[]"); } catch (e) { saved = []; }
+    var dlg = el("dialog", { style: "width:560px;max-width:95vw;padding:20px" });
+    dlg.innerHTML = "<h3 style='margin:0 0 6px'>Đăng nhập Facebook — " + esc(a.name) + "</h3>" +
+      '<div class="muted" style="font-size:.82rem;margin-bottom:8px">Chọn tính năng cần dùng. Chỉ tick mục mà app trên Meta đã được thêm quyền tương ứng — thiếu quyền thì Facebook báo <b>Invalid Scopes</b>. Chỉ Messenger là đơn giản nhất và dễ được Meta duyệt nhất; cần thêm thì thêm quyền trong app rồi đăng nhập lại.</div>' +
+      (a.loginConfigId ? '<div class="pill" style="margin-bottom:8px">App dùng Login Configuration ' + esc(a.loginConfigId) + " — quyền lấy theo cấu hình đó, các ô dưới không có tác dụng</div>" : "") +
+      '<label style="display:flex;gap:8px;align-items:flex-start;opacity:1;font-size:.9rem"><input type="checkbox" checked disabled style="width:auto;margin-top:3px"> <span><b>Messenger</b> (bắt buộc) <span class="muted">— nhắn tin, Inbox, nhận ra người trả lời trên Meta Business Suite: pages_show_list, pages_manage_metadata, pages_messaging</span></span></label>' +
+      META_SCOPE_GROUPS.map(function (g) { return '<label style="display:flex;gap:8px;align-items:flex-start;opacity:1;font-size:.9rem;margin-top:6px"><input type="checkbox" class="msg" value="' + g[0] + '"' + (saved.indexOf(g[0]) >= 0 ? " checked" : "") + ' style="width:auto;margin-top:3px"> <span><b>' + esc(g[1]) + '</b> <span class="muted">— ' + esc(g[2]) + "</span></span></label>"; }).join("") +
+      '<div id="mlMsg" style="margin-top:8px"></div><div class="dialog-actions"><button class="ghost" id="mlX">Hủy</button><button id="mlGo">Tiếp tục sang Facebook</button></div>';
+    document.body.appendChild(dlg); dlg.showModal();
+    $("#mlX", dlg).onclick = function () { dlg.close(); dlg.remove(); };
+    $("#mlGo", dlg).onclick = function () {
+      var groups = Array.prototype.map.call(dlg.querySelectorAll(".msg:checked"), function (x) { return x.value; });
+      try { localStorage.setItem(key, JSON.stringify(groups)); } catch (e) {}
+      $("#mlGo", dlg).disabled = true;
+      api("/v1/meta-apps/" + a.id + "/login", { method: "POST", body: { groups: groups } })
+        .then(function (j) { location.href = j.url; })
+        .catch(function (e) { $("#mlGo", dlg).disabled = false; $("#mlMsg", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    };
   }
 
   function copyRow(label, value) {
@@ -1867,7 +1890,8 @@ export const INDEX_HTML = `<!doctype html>
       "<li>Thêm sản phẩm <b>Facebook Login for Business</b>, <b>Webhooks</b>, <b>Messenger</b> (và <b>Instagram</b> nếu dùng Instagram).</li>" +
       "<li>App settings → Basic: sao chép <b>App ID</b> và <b>App Secret</b> dán vào dưới đây → Lưu.</li>" +
       "<li>Facebook Login → Settings → <b>Valid OAuth Redirect URIs</b>: dán địa chỉ chuyển về (hiện sau khi lưu).</li>" +
-      "<li>Webhooks → chọn <b>Page</b> → Subscribe với Callback URL + Verify Token bên dưới, tick <code>messages, messaging_postbacks, message_echoes, feed</code>. Instagram: chọn <b>Instagram</b> → tick <code>messages, comments</code>.</li>" +
+      "<li>Webhooks → chọn <b>Page</b> → Subscribe với Callback URL + Verify Token bên dưới, tick <code>messages, messaging_postbacks, message_echoes</code> (thêm <code>feed</code> nếu dùng bình luận). Instagram: chọn <b>Instagram</b> → tick <code>messages</code> (thêm <code>comments</code> nếu dùng bình luận).</li>" +
+      "<li>Chỉ cần Messenger: trong app chỉ thêm quyền <code>pages_messaging</code>, <code>pages_manage_metadata</code>, <code>pages_show_list</code>. Bình luận / đăng bài / số liệu / Instagram cần thêm quyền tương ứng — lúc bấm Đăng nhập Facebook bạn chọn tính năng muốn dùng.</li>" +
       "<li>Quay lại đây bấm <b>Đăng nhập Facebook</b> → chọn Trang → <b>Chọn Trang</b> để tạo kênh.</li></ol>" +
       '<div class="row"><div style="flex:1"><label>Tên gợi nhớ</label><input id="maName" style="width:100%" value="' + (a ? esc(a.name) : "") + '"></div><div style="flex:1"><label>App ID *</label><input id="maId" style="width:100%" value="' + (a ? esc(a.appId) : "") + '"' + (a ? " disabled" : "") + "></div></div>" +
       '<label>App Secret ' + (a ? '<span class="muted">(bỏ trống = giữ nguyên)</span>' : "*") + '</label><input id="maSecret" type="password" style="width:100%" autocomplete="off">' +

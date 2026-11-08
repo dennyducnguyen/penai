@@ -38,20 +38,38 @@ import {
 } from "@penai/channels";
 import { applyChannelChange, channelHandlers } from "./channels-runtime.js";
 
-/** Quyền xin khi đăng nhập Facebook (người dùng bỏ tick được trên hộp thoại của Facebook). */
-const BASE_SCOPES = [
-  "pages_show_list",
-  "pages_manage_metadata",
-  "pages_messaging",
-  "pages_read_engagement",
-  "pages_read_user_content",
-  "pages_manage_engagement",
-  "pages_manage_posts",
-  "read_insights",
-];
-const INSTAGRAM_SCOPES = ["instagram_basic", "instagram_manage_messages", "instagram_manage_comments", "instagram_content_publish", "instagram_manage_insights"];
-/** Sự kiện Trang đăng ký nhận: tin nhắn, bấm nút, tin dội lại (người trả lời ngoài PenAI), bình luận. */
-const PAGE_FIELDS = "messages,messaging_postbacks,message_echoes,feed";
+/**
+ * Quyền xin khi đăng nhập Facebook — theo NHÓM người dùng tick trước khi đăng nhập.
+ * Mặc định chỉ Messenger: app trên Meta chưa thêm quyền nào khác thì Facebook báo "Invalid Scopes",
+ * và app càng ít quyền càng dễ được Meta duyệt.
+ */
+export const META_SCOPE_GROUPS = ["comments", "posts", "insights", "instagram"] as const;
+export type MetaScopeGroup = (typeof META_SCOPE_GROUPS)[number];
+
+export function metaLoginScopes(groups: readonly string[]): string[] {
+  const g = new Set(groups);
+  const out = new Set(["pages_show_list", "pages_manage_metadata", "pages_messaging"]);
+  if (g.has("comments")) ["pages_read_engagement", "pages_read_user_content", "pages_manage_engagement"].forEach((s) => out.add(s));
+  if (g.has("posts")) ["pages_read_engagement", "pages_manage_posts"].forEach((s) => out.add(s));
+  if (g.has("insights")) ["pages_read_engagement", "read_insights"].forEach((s) => out.add(s));
+  if (g.has("instagram")) {
+    ["instagram_basic", "instagram_manage_messages"].forEach((s) => out.add(s));
+    if (g.has("comments")) out.add("instagram_manage_comments");
+    if (g.has("posts")) out.add("instagram_content_publish");
+    if (g.has("insights")) out.add("instagram_manage_insights");
+  }
+  return [...out];
+}
+
+/**
+ * Sự kiện Trang đăng ký nhận: tin nhắn, bấm nút, tin dội lại (người trả lời ngoài PenAI);
+ * thêm bình luận (feed) chỉ khi đã được cấp quyền đọc bài — thiếu quyền mà xin feed thì Meta từ chối cả lần đăng ký.
+ */
+function pageFields(granted: string[]): string {
+  const base = ["messages", "messaging_postbacks", "message_echoes"];
+  if (granted.includes("pages_read_engagement") || granted.includes("pages_manage_engagement") || granted.includes("pages_read_user_content")) base.push("feed");
+  return base.join(",");
+}
 
 function publicBase(): string {
   return (process.env.PENAI_PUBLIC_URL ?? "").trim().replace(/\/+$/, "");
@@ -124,9 +142,9 @@ async function listUserPages(userToken: string, appSecret: string): Promise<Meta
 }
 
 /** Đăng ký Trang gửi sự kiện cho app (tin nhắn, tin dội lại, bình luận). */
-async function subscribePage(pageId: string, pageToken: string, appSecret: string): Promise<string | null> {
+async function subscribePage(pageId: string, pageToken: string, appSecret: string, granted: string[]): Promise<string | null> {
   try {
-    await graphPost(`/${pageId}/subscribed_apps`, pageToken, appSecret, { subscribed_fields: PAGE_FIELDS });
+    await graphPost(`/${pageId}/subscribed_apps`, pageToken, appSecret, { subscribed_fields: pageFields(granted) });
     return null;
   } catch (err) {
     return (err as Error).message;
@@ -155,7 +173,7 @@ export async function resubscribeAppChannel(db: Db, ctx: WorkspaceContext, row: 
   const app = await getMetaApp(db, ctx, str(cfg["metaAppId"]));
   if (!app) return { ok: false, message: "App Meta của kênh này đã bị xóa — kết nối lại Trang bằng app khác." };
   const creds = parseMetaCredentials(row.tokenEncrypted ? decryptSecret(row.tokenEncrypted) : "");
-  const err = await subscribePage(str(cfg["pageId"]), creds.pageAccessToken, decryptSecret(app.appSecretEncrypted));
+  const err = await subscribePage(str(cfg["pageId"]), creds.pageAccessToken, decryptSecret(app.appSecretEncrypted), app.grantedScopes);
   await updateChannel(db, ctx, row.id, { config: { ...cfg, subscribeError: err, subscribedAt: err ? (cfg["subscribedAt"] ?? null) : new Date().toISOString() } });
   return err ? { ok: false, message: err } : { ok: true, message: "OK" };
 }
@@ -278,7 +296,8 @@ export function registerMetaAppRoutes(app: FastifyInstance, deps: { db: Db }): v
     const { id } = req.params as { id: string };
     const a = await getMetaApp(db, req.authCtx, id);
     if (!a) return reply.code(404).send({ error: "Không có app này" });
-    const instagram = (req.body as { instagram?: boolean } | undefined)?.instagram !== false;
+    const rawGroups = (req.body as { groups?: unknown } | undefined)?.groups;
+    const groups = (Array.isArray(rawGroups) ? rawGroups : []).filter((x): x is MetaScopeGroup => (META_SCOPE_GROUPS as readonly string[]).includes(String(x)));
     const state = randomBytes(24).toString("base64url");
     pendingLogins.set(state, { workspaceId: req.authCtx.workspaceId, userId: req.authCtx.userId, role: req.authCtx.role, appRowId: id, at: Date.now() });
     for (const [k, v] of pendingLogins) if (Date.now() - v.at > 10 * 60_000) pendingLogins.delete(k);
@@ -288,8 +307,8 @@ export function registerMetaAppRoutes(app: FastifyInstance, deps: { db: Db }): v
     url.searchParams.set("state", state);
     url.searchParams.set("response_type", "code");
     if (a.loginConfigId) url.searchParams.set("config_id", a.loginConfigId);
-    else url.searchParams.set("scope", [...BASE_SCOPES, ...(instagram ? INSTAGRAM_SCOPES : [])].join(","));
-    return { url: url.toString() };
+    else url.searchParams.set("scope", metaLoginScopes(groups).join(","));
+    return { url: url.toString(), scopes: a.loginConfigId ? [] : metaLoginScopes(groups) };
   });
 
   // Facebook chuyển về sau khi người dùng cấp quyền (đường dẫn công khai — xác thực bằng state)
@@ -433,7 +452,7 @@ export function registerMetaAppRoutes(app: FastifyInstance, deps: { db: Db }): v
         config: { ...config, agent_reply: b.agentReply ?? true },
       });
     }
-    const subErr = await subscribePage(page.id, page.accessToken, secret);
+    const subErr = await subscribePage(page.id, page.accessToken, secret, a.grantedScopes);
     const fresh = (await updateChannel(db, req.authCtx, row.id, {
       config: { ...((row.config as Obj) ?? {}), subscribeError: subErr, subscribedAt: subErr ? null : new Date().toISOString() },
     })) ?? row;
