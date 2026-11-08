@@ -278,9 +278,23 @@ export class WorkflowService {
 
   // ======================= kiểm tra + lưu =======================
 
-  async validate(ctx: WorkspaceContext, input: unknown) {
+  /**
+   * lenientRefs: quy trình đang TẮT (tạo từ mẫu, nhập JSON, bản nháp) → tên kênh / agent /
+   * tool / MCP / quy trình / khóa bí mật chưa đúng chỉ là cảnh báo; bật lên mới kiểm chặt.
+   */
+  async validate(ctx: WorkspaceContext, input: unknown, opts: { lenientRefs?: boolean } = {}) {
     const catalog = await this.validatorCatalog(ctx);
     const res = await validateDefinition(input, { limits: this.limits(), catalog, timezone: this.rt.config.timezone });
+    if (opts.lenientRefs) {
+      const REF = /^(Kênh ".*" không tồn tại|Tool ".*" không có|MCP server ".*" không có|MCP ".*" không có tool|Agent ".*" không có|Quy trình ".*" không có|Khóa bí mật secrets\.)/;
+      const keep: ValidationIssue[] = [];
+      for (const e of res.errors) {
+        if (REF.test(e.message.normalize("NFC"))) res.warnings.push({ path: e.path, message: `${e.message} — sửa trước khi bật quy trình` });
+        else keep.push(e);
+      }
+      res.errors = keep;
+      res.ok = keep.length === 0;
+    }
     // MCP server có trong DB nhưng chưa kết nối → hạ lỗi thành cảnh báo
     const mcpNames = new Set((catalog.mcp ?? []).map((m) => m.name.toLowerCase()));
     if (!mcpNames.size) {
@@ -371,7 +385,7 @@ export class WorkflowService {
     input: unknown,
     opts: { enabled?: boolean; slug?: string; note?: string } = {},
   ): Promise<{ row: WorkflowRow; warnings: ValidationIssue[] }> {
-    const v = await this.validate(actor.ctx, input);
+    const v = await this.validate(actor.ctx, input, { lenientRefs: opts.enabled === false });
     if (!v.ok) throw new WorkflowError(`Định nghĩa chưa hợp lệ:\n${formatIssues(v.errors)}`, 400, v.errors, v.warnings);
     const def = v.definition;
     const stripped = this.enforceApprovals(def, null, actor.via);
@@ -414,7 +428,7 @@ export class WorkflowService {
         throw new WorkflowError((err as Error).message, 400);
       }
     } else throw new WorkflowError("Cần definition (JSON đầy đủ) hoặc ops (thao tác nhỏ)");
-    const v = await this.validate(actor.ctx, next);
+    const v = await this.validate(actor.ctx, next, { lenientRefs: !cur.enabled });
     if (!v.ok) throw new WorkflowError(`Định nghĩa chưa hợp lệ:\n${formatIssues(v.errors)}`, 400, v.errors, v.warnings);
     const def = v.definition;
     const stripped = this.enforceApprovals(def, prev, actor.via);
@@ -447,7 +461,14 @@ export class WorkflowService {
 
   async setEnabled(actor: WorkflowActor, id: string, enabled: boolean): Promise<WorkflowRow> {
     const cur = await this.mustGet(actor.ctx, id);
-    if (enabled && !cur.enabled) await this.assertEnabledQuota(actor.ctx);
+    if (enabled && !cur.enabled) {
+      // Bật lên = kiểm chặt: tên kênh / agent / tool… phải có thật
+      const v = await this.validate(actor.ctx, cur.definition);
+      if (!v.ok) {
+        throw new WorkflowError(`Chưa bật được — sửa các chỗ sau trước:\n${formatIssues(v.errors)}`, 400, v.errors, v.warnings);
+      }
+      await this.assertEnabledQuota(actor.ctx);
+    }
     const row = await updateWorkflowMeta(this.db, actor.ctx, id, {
       enabled,
       nextRunAt: this.computeNextRun(cur.definition as unknown as WorkflowDefinition, enabled),

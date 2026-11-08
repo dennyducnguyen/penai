@@ -127,6 +127,20 @@ describe("API /v1/workflows", () => {
     expect(body.issues?.[0]?.message).toContain("telegram:Bot");
   });
 
+  it("tạo từ mẫu (tên kênh giả định) được ở trạng thái tắt; bật khi chưa sửa → 400 chỉ rõ chỗ sai", async () => {
+    const r = await app.inject({ method: "POST", url: "/v1/workflows", headers: auth(fx.keys.aOperator), payload: { template: "bao-cao-sang" } });
+    expect(r.statusCode).toBe(201);
+    const w = r.json() as { workflow: { id: string; enabled: boolean }; warnings: Array<{ message: string }> };
+    expect(w.workflow.enabled).toBe(false);
+    expect(w.warnings.some((x) => /sửa trước khi bật/.test(x.message))).toBe(true);
+    const on = await app.inject({ method: "PATCH", url: `/v1/workflows/${w.workflow.id}`, headers: auth(fx.keys.aOperator), payload: { enabled: true } });
+    expect(on.statusCode).toBe(400);
+    expect(on.json().error).toMatch(/Chưa bật được/);
+    // Định nghĩa đang bật vẫn kiểm chặt
+    const strict = await create(baseDef([{ id: "g", type: "send", channel: "telegram:Khong Co", to: "1", text: "x" }]));
+    expect(strict.status).toBe(400);
+  });
+
   it("viewer chỉ xem; workspace khác không thấy", async () => {
     const { body } = await create(baseDef([]));
     expect((await app.inject({ method: "POST", url: "/v1/workflows", headers: auth(fx.keys.aViewer), payload: { definition: baseDef([]) } })).statusCode).toBe(403);

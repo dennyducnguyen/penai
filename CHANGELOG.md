@@ -4,6 +4,12 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.15.1 — 2026-11-08
+
+- **Sửa lỗi "📋 Từ mẫu" của trang Quy trình không tạo được quy trình** (báo kênh "telegram:Bot" không tồn tại). Mẫu và quy trình nhập JSON được tạo ở trạng thái tắt: tên kênh, agent, tool, MCP chưa đúng chỉ hiện cảnh báo để bạn sửa. Khi bấm **Bật** mới kiểm chặt — còn sai thì không bật và chỉ rõ chỗ cần sửa.
+
+Cập nhật: `sudo penai update`. Không phải làm gì thêm.
+
 ## 1.15.0 — 2026-11-08
 
 Thư viện file (Dashboard → 📁 Thư viện file) dùng thoải mái hơn (đem từ bản Helix về bản chính thức):
