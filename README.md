@@ -15,6 +15,7 @@ PenAI là hệ thống "trợ lý AI của công ty": bạn tạo các **agent**
 - **Agent**: nhiều agent, mỗi agent một vai trò, model, bộ tool, skill, thư viện file và trí nhớ riêng.
 - **Nhà cung cấp AI (provider)**:
   - Gói thuê bao: **ChatGPT** (Plus/Pro/Team), **Claude** (Pro/Max qua Claude Code), **Google Antigravity** — đăng nhập ngay trong Dashboard.
+  - **HoiAI** (chat.hoiai.vn): bấm **Kết nối HoiAI**, nhập mã kích hoạt trên trang HoiAI là xong — một tài khoản dùng cho chat (chữ, ảnh, tin nhắn thoại), embedding và tạo ảnh. Chi tiết: [docs/hoiai.md](docs/hoiai.md).
   - API key: **OpenAI**, **Gemini**, **Qwen**, **Anthropic**, hoặc bất kỳ dịch vụ tương thích OpenAI (OpenRouter, DeepSeek...).
 - **Kênh chat**: Telegram, **Facebook Fanpage, Instagram** (nối 1 chạm qua hub chat.hoiai.vn, không cần tự tạo Meta App), Zalo cá nhân, WhatsApp cá nhân, Zalo OA, Microsoft Teams, Discord, Slack, Feishu — cùng trang Chat ngay trong Dashboard.
 - **Hồ sơ contact**: mỗi người nhắn tới bot có hồ sơ riêng (tên, cách xưng hô, vai trò, nhãn VIP/Đại lý…) và chỉ dẫn riêng cho AI — AI biết đang nói chuyện với ai và trả lời đúng từng người.
@@ -60,7 +61,7 @@ Cài xong (khoảng 5–10 phút), màn hình in **địa chỉ đăng nhập v�
 ### Sau khi cài
 
 1. Mở `https://ai.congty.vn`, đăng nhập bằng email + mật khẩu vừa nhận.
-2. **Providers** → đăng nhập ChatGPT / Claude / Antigravity, hoặc thêm provider bằng API key.
+2. **Providers** → **Kết nối HoiAI**, đăng nhập ChatGPT / Claude / Antigravity, hoặc thêm provider bằng API key.
 3. **Agents** → mở agent mẫu "Trợ lý", chọn provider + model bạn có → Lưu.
 4. **Chat** để thử; **Channels** để nối Telegram, Zalo, Teams...
 

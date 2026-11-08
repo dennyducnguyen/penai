@@ -180,6 +180,11 @@ export interface AgentRunInput {
   userMessage: string;
   /** Ảnh kèm tin nhắn lượt này (data URL) — chỉ gửi provider, không lưu transcript. */
   userImages?: string[];
+  /**
+   * Tin nhắn thoại lượt này (base64 + định dạng) — chỉ gửi provider, không lưu
+   * transcript; provider tự bỏ nếu model không nghe được.
+   */
+  userAudio?: Array<{ data: string; format: string }>;
   signal?: AbortSignal;
 }
 
@@ -255,6 +260,12 @@ export async function* runAgent(
     const lastUser = [...transcript].reverse().find((m) => m.role === "user");
     if (lastUser && lastUser.role === "user") {
       lastUser.images = input.userImages;
+    }
+  }
+  if (input.userAudio?.length) {
+    const lastUser = [...transcript].reverse().find((m) => m.role === "user");
+    if (lastUser && lastUser.role === "user") {
+      lastUser.audio = input.userAudio;
     }
   }
 

@@ -3,6 +3,7 @@ import { listEnabledLlmProviders, type DbHandle } from "@penai/db";
 import {
   AnthropicProvider,
   GeminiProvider,
+  HoiaiProvider,
   OpenAICompatProvider,
   QwenProvider,
   type ProviderRegistry,
@@ -23,6 +24,17 @@ export function registerDbProvider(reg: ProviderRegistry, p: DbProviderInput): v
       p.workspaceId,
       p.name,
       new QwenProvider(p.name, {
+        ...(p.baseUrl ? { baseURL: p.baseUrl } : {}),
+        apiKey: p.apiKey,
+      }),
+    );
+    return;
+  }
+  if (p.kind === "hoiai") {
+    reg.registerRuntime(
+      p.workspaceId,
+      p.name,
+      new HoiaiProvider(p.name, {
         ...(p.baseUrl ? { baseURL: p.baseUrl } : {}),
         apiKey: p.apiKey,
       }),

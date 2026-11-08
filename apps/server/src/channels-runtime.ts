@@ -507,6 +507,34 @@ function toolReactionStatus(toolName: string): AgentStatus {
 }
 
 /** Ghép nội dung media vào user message cho LLM (ảnh ghi rõ tên file đã lưu). */
+/** Ghi chú khi âm thanh tin nhắn thoại đã được gửi kèm cho model. */
+export const VOICE_ATTACHED_NOTE =
+  "[Người dùng gửi tin nhắn thoại — âm thanh được đính kèm, hãy nghe và trả lời theo nội dung. Nếu không nghe được, lịch sự đề nghị họ nhắn chữ]";
+
+/**
+ * Lấy âm thanh các tin nhắn thoại để gửi model — chỉ khi provider của agent khai
+ * báo model nhận "audio". Đổi ghi chú của tin thoại tương ứng (sửa tại chỗ).
+ */
+export async function voiceForModel(
+  rt: { providers: { get(name: string, workspaceId?: string): { inputModalities?(model: string): Promise<string[] | null> } } },
+  workspaceId: string,
+  providerName: string,
+  model: string,
+  media: InboundMedia[] | undefined,
+): Promise<Array<{ data: string; format: string }>> {
+  const voices = (media ?? []).filter((m) => m.kind === "voice" && m.audio);
+  if (!voices.length) return [];
+  let modalities: string[] | null = null;
+  try {
+    modalities = (await rt.providers.get(providerName, workspaceId).inputModalities?.(model)) ?? null;
+  } catch {
+    modalities = null;
+  }
+  if (!modalities?.includes("audio")) return [];
+  for (const v of voices) v.note = VOICE_ATTACHED_NOTE;
+  return voices.map((v) => v.audio!);
+}
+
 export function mergeMediaText(
   text: string,
   media: InboundMedia[] | undefined,
@@ -826,6 +854,9 @@ export function makeInboundHandler(
     const filesBefore = await snapshotWorkDir(userDir);
 
     hooks?.onStatus?.("queued");
+    // Tin nhắn thoại: model của agent nghe được (provider khai báo "audio") thì
+    // gửi kèm âm thanh và đổi ghi chú; không thì giữ ghi chú "chưa hỗ trợ nghe".
+    const userAudio = await voiceForModel(rt, ctx.workspaceId, agent.provider, agent.model, msg.media);
     // Tin được tag trong nhóm Zalo: nối các tin liền trước của cùng người gửi
     // (trong 60 giây) để agent trả lời trọn ý, không chỉ câu cuối.
     const inboundText =
@@ -891,6 +922,7 @@ export function makeInboundHandler(
           sessionId: sessionId!,
           userMessage,
           ...(userImages.length ? { userImages } : {}),
+          ...(userAudio.length ? { userAudio } : {}),
           signal: ac.signal,
         })) {
           if (ev.type === "text_delta") {

@@ -7,6 +7,7 @@
 //   Trang Quy trình (engine thật, host giả):      http://127.0.0.1:18899/#/workflows
 //   Trang Dữ liệu (CSDL giả trong RAM):           http://127.0.0.1:18899/#/database
 //   Chat (trả lời giả chạy từng chữ) + Inbox giả:  http://127.0.0.1:18899/#/chat  ·  #/inbox
+//   Providers + Kết nối HoiAI (mã kích hoạt giả):  http://127.0.0.1:18899/#/providers
 import { createServer, type IncomingMessage } from "node:http";
 import { BrandingSchema } from "../packages/shared/src/index.js";
 import { composeSystemPrompt } from "../packages/core/src/agent-loop.js";
@@ -31,6 +32,12 @@ const users = [
   { id: "u1", name: "Quản trị", email: "admin@example.com", role: "ws_admin", agentIds: [], isActive: true, lastLoginAt: new Date().toISOString() },
   { id: "u2", name: "Nhân viên A", email: "nva@example.com", role: "member", agentIds: ["a1"], isActive: true, lastLoginAt: null },
 ];
+
+// ===== Provider mẫu (bảng llm_providers giả) =====
+const providerRows: Array<Record<string, unknown> & { id: string; name: string }> = [
+  { id: "pv-qwen", name: "qwen-api", kind: "qwen", baseUrl: null, defaultModel: "qwen-plus", defaultEmbeddingModel: null, embeddingDimensions: null, isDefaultEmbedding: false, enabled: true, hasKey: true },
+];
+let hoiaiPolls = 0;
 
 // ===== Dữ liệu mẫu Contacts (giữ trong RAM, sửa được) =====
 const now = Date.now();
@@ -406,6 +413,36 @@ createServer(async (req, res) => {
   if (path === "/v1/channel-pairings/pending") return json({ pending: [] });
   if (path === "/v1/meta-apps" && method === "GET") return json({ apps: [{ id: "ma1", name: "App shop", appId: "1234567890", loginConfigId: "", verifyToken: "pvt_demo", redirectUri: "http://127.0.0.1:" + port + "/oauth/meta/callback", webhookUrl: "http://127.0.0.1:" + port + "/webhooks/meta-app/ma1", loggedIn: true, fbUserName: "Nguyễn Văn A", tokenExpiresAt: new Date(Date.now() + 50 * 86400000).toISOString(), tokenExpired: false, grantedScopes: ["pages_messaging", "pages_manage_posts"], channels: 1 }], ready: true });
   if (path === "/v1/meta-apps/ma1/pages") return json({ pages: [{ id: "1065", name: "Thời Trang KOS", avatar: "", facebookChannelId: "fb1", instagram: { id: "1784", username: "kosshop", name: "KOS", avatar: "", channelId: null } }] });
+  // ----- Providers (giả) + Kết nối HoiAI bằng mã kích hoạt (lần hỏi thứ 3 thì "Đồng ý") -----
+  if (path === "/v1/providers" && method === "GET") {
+    return json({
+      providers: [
+        { name: "codex", kind: "codex", loggedIn: true, accounts: [{ alias: "a1", email: "a@example.com", status: "ok", inFlight: 0 }] },
+        ...providerRows.map((r) => ({ name: r.name, kind: "llm", supportsEmbedding: true })),
+      ],
+    });
+  }
+  if (path === "/v1/providers-db" && method === "GET") return json({ providers: providerRows });
+  if (path === "/v1/providers/hoiai/device/start") {
+    hoiaiPolls = 0;
+    return json({ flowId: "f1", userCode: "WXYZ-2345", verificationUri: "https://chat.hoiai.vn/kich-hoat", verificationUriComplete: "https://chat.hoiai.vn/kich-hoat?code=WXYZ-2345", expiresIn: 600, interval: 2 });
+  }
+  if (path === "/v1/providers/hoiai/device/poll") {
+    if (++hoiaiPolls < 3) return json({ status: "pending" });
+    if (!providerRows.some((r) => r.name === "hoiai")) {
+      providerRows.push({ id: "pv-hoiai", name: "hoiai", kind: "hoiai", baseUrl: "https://chat.hoiai.vn/api/v1", defaultModel: "flash", defaultEmbeddingModel: "text-embedding", embeddingDimensions: 1024, isDefaultEmbedding: true, enabled: true, hasKey: true });
+    }
+    return json({ status: "ok", provider: { name: "hoiai", defaultModel: "flash" }, account: { email: "a@example.com", credit_vnd: 50000 } });
+  }
+  if (/^\/v1\/providers-db\/[^/]+\/hoiai-account$/.test(path)) {
+    return json({ email: "a@example.com", keyName: "PenAI — demo", creditVnd: 48700, topupUrl: "https://chat.hoiai.vn/account/api", allowedModels: ["flash", "text-embedding", "image-3.0"] });
+  }
+  const pvM = /^\/v1\/providers-db\/([^/]+)$/.exec(path);
+  if (pvM && method === "DELETE") {
+    const i = providerRows.findIndex((r) => r.id === pvM[1]);
+    if (i >= 0) providerRows.splice(i, 1);
+    return json({ deleted: true });
+  }
   if (path === "/v1/usage") return json({ monthTokens: 1234567, cap: null });
   // ----- Cron -----
   if (path === "/v1/cron" && method === "GET") return json(cronView());

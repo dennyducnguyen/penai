@@ -240,6 +240,10 @@ import {
   GeminiProvider,
   OpenAICompatProvider,
   QwenProvider,
+  HoiaiProvider,
+  hoiaiDefaultBase,
+  hoiaiDeviceStart,
+  hoiaiDevicePoll,
   isEmbeddingProvider,
   startLoginFlow,
   parseCodexCallback,
@@ -366,6 +370,7 @@ function zodMessage(err: z.ZodError): string {
 function providerErrorMessage(err: unknown): string {
   const status = (err as { status?: number } | null)?.status;
   if (status === 401) return "API key không hợp lệ hoặc đã bị thu hồi";
+  if (status === 402) return "Hết credit HoiAI — nạp thêm tại chat.hoiai.vn rồi thử lại";
   if (status === 403) return "API key không có quyền truy cập model";
   if (status === 429) return "Tài khoản provider đã hết quota hoặc đang bị giới hạn";
   const message = err instanceof Error ? err.message : String(err);
@@ -373,6 +378,7 @@ function providerErrorMessage(err: unknown): string {
     .replace(/sk-[A-Za-z0-9._-]+/g, "[API_KEY]")
     .replace(/AQ\.[A-Za-z0-9._-]+/g, "[API_KEY]")
     .replace(/AIza[A-Za-z0-9_-]+/g, "[API_KEY]")
+    .replace(/hk_[A-Za-z0-9_-]{8,}/g, "[API_KEY]")
     .slice(0, 500);
 }
 
@@ -402,6 +408,15 @@ function normalizedProviderBaseUrl(
     if (url.protocol !== "https:" || !validHost || !/\/compatible-mode\/v1\/?$/.test(url.pathname)) {
       throw new Error("Qwen Base URL phải là endpoint HTTPS ...aliyuncs.com/compatible-mode/v1");
     }
+    return baseUrl.replace(/\/$/, "");
+  }
+  if (kind === "hoiai") {
+    // Luôn lưu base URL cụ thể: bản PenAI cũ (chưa biết kind hoiai) đọc dòng này
+    // như OpenAI-compatible và vẫn chat được.
+    if (!baseUrl) return hoiaiDefaultBase();
+    const url = new URL(baseUrl);
+    const localTest = process.env.NODE_ENV === "test" && ["127.0.0.1", "localhost"].includes(url.hostname);
+    if (url.protocol !== "https:" && !localTest) throw new Error("Base URL HoiAI phải dùng HTTPS");
     return baseUrl.replace(/\/$/, "");
   }
   if (kind === "openai-compat" && !baseUrl) {
@@ -535,7 +550,7 @@ const UpdateWorkspaceMemoryBody = z
   })
   .refine((body) => Object.keys(body).length > 0, "Không có trường nào để sửa");
 
-const ProviderKindSchema = z.enum(["openai", "gemini", "qwen", "openai-compat", "anthropic"]);
+const ProviderKindSchema = z.enum(["openai", "gemini", "qwen", "openai-compat", "anthropic", "hoiai"]);
 const ProviderCredentialBody = z.object({
   kind: ProviderKindSchema,
   baseUrl: z.string().url().optional(),
@@ -556,6 +571,18 @@ const CreateProviderBody = ProviderCredentialBody.extend({
   defaultEmbeddingModel: z.string().optional(),
   embeddingDimensions: z.number().int().min(64).max(4096).optional(),
   isDefaultEmbedding: z.boolean().optional(),
+});
+
+const HoiaiDeviceStartBody = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(80)
+    .transform((value) => slugify(value))
+    .pipe(z.string().min(1).max(60))
+    .optional(),
+  baseUrl: z.string().url().optional(),
 });
 
 const UpdateProviderBody = z
@@ -1223,6 +1250,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         ...(baseUrl ? { baseURL: baseUrl } : {}),
       });
     }
+    if (credential.kind === "hoiai") {
+      return new HoiaiProvider(name, {
+        apiKey: credential.apiKey,
+        ...(baseUrl ? { baseURL: baseUrl } : {}),
+      });
+    }
     if (credential.kind === "anthropic") {
       return new AnthropicProvider(name, {
         apiKey: credential.apiKey,
@@ -1587,9 +1620,184 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (row.isDefaultEmbedding) {
       return reply.code(409).send({ error: "Provider đang là embedding mặc định; hãy đổi provider mặc định trước" });
     }
+    if (row.kind === "hoiai" && row.apiKeyEncrypted) {
+      // Ngắt kết nối HoiAI = thu hồi luôn khóa phía HoiAI (lỗi mạng thì vẫn xóa ở PenAI).
+      try {
+        await new HoiaiProvider(row.name, {
+          apiKey: decryptSecret(row.apiKeyEncrypted),
+          ...(row.baseUrl ? { baseURL: row.baseUrl } : {}),
+        }).revokeKey();
+      } catch (err) {
+        logger.warn(`hoiai.revoke_failed: ${(err as Error).message}`);
+      }
+    }
     await deleteLlmProvider(db, req.authCtx, id);
     deps.providers.removeRuntime(req.authCtx.workspaceId, row.name);
     return { deleted: true };
+  });
+
+  // ===== HoiAI: đăng nhập bằng mã kích hoạt (RFC 8628) + xem tài khoản =====
+  // Kết quả đăng nhập là một API key bình thường, lưu như provider dán khóa tay.
+  const hoiaiFlows = new Map<
+    string,
+    { deviceCode: string; baseUrl: string; workspaceId: string; name: string; expiresAt: number }
+  >();
+
+  app.post("/v1/providers/hoiai/device/start", async (req, reply) => {
+    if (!requireRole(req, reply, "ws_admin")) return;
+    const parsed = HoiaiDeviceStartBody.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: zodMessage(parsed.error) });
+    const now = Date.now();
+    for (const [flowKey, f] of hoiaiFlows) if (f.expiresAt < now) hoiaiFlows.delete(flowKey);
+    let baseUrl: string;
+    try {
+      baseUrl = normalizedProviderBaseUrl("hoiai", parsed.data.baseUrl) ?? hoiaiDefaultBase();
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+    const publicUrl = (process.env.PENAI_PUBLIC_URL ?? "").replace(/\/$/, "");
+    let host = "";
+    try {
+      host = publicUrl ? new URL(publicUrl).host : "";
+    } catch {
+      host = "";
+    }
+    try {
+      const start = await hoiaiDeviceStart({
+        baseUrl,
+        clientName: `${deps.config.branding.name}${host ? ` — ${host}` : ""}`,
+        ...(publicUrl ? { clientUrl: publicUrl } : {}),
+        clientVersion: RELEASE.version,
+      });
+      const flowId = randomBytes(16).toString("hex");
+      hoiaiFlows.set(flowId, {
+        deviceCode: start.deviceCode,
+        baseUrl,
+        workspaceId: req.authCtx.workspaceId,
+        name: parsed.data.name ?? "hoiai",
+        expiresAt: now + start.expiresIn * 1000,
+      });
+      return {
+        flowId,
+        userCode: start.userCode,
+        verificationUri: start.verificationUri,
+        verificationUriComplete: start.verificationUriComplete,
+        expiresIn: start.expiresIn,
+        interval: start.interval,
+      };
+    } catch (err) {
+      return reply.code(502).send({ error: providerErrorMessage(err) });
+    }
+  });
+
+  app.post("/v1/providers/hoiai/device/poll", async (req, reply) => {
+    if (!requireRole(req, reply, "ws_admin")) return;
+    const flowId = String((req.body as { flowId?: unknown } | null)?.flowId ?? "");
+    const flow = hoiaiFlows.get(flowId);
+    if (!flow || flow.workspaceId !== req.authCtx.workspaceId) {
+      return reply.code(404).send({ error: "Phiên đăng nhập HoiAI không tồn tại — bấm Đăng nhập lại" });
+    }
+    if (flow.expiresAt < Date.now()) {
+      hoiaiFlows.delete(flowId);
+      return { status: "expired" };
+    }
+    let result;
+    try {
+      result = await hoiaiDevicePoll({ baseUrl: flow.baseUrl, deviceCode: flow.deviceCode });
+    } catch (err) {
+      return reply.code(502).send({ error: providerErrorMessage(err) });
+    }
+    if (result.status !== "ok") {
+      if (result.status === "denied" || result.status === "expired") hoiaiFlows.delete(flowId);
+      return { status: result.status };
+    }
+    hoiaiFlows.delete(flowId);
+    // HoiAI có thể chỉ định địa chỉ API khác (api_base) — chỉ nhận HTTPS.
+    let baseUrl = flow.baseUrl;
+    if (result.apiBase) {
+      try {
+        baseUrl = normalizedProviderBaseUrl("hoiai", result.apiBase) ?? baseUrl;
+      } catch {
+        /* api_base không hợp lệ → giữ địa chỉ cũ */
+      }
+    }
+    const provider = new HoiaiProvider(flow.name, { apiKey: result.apiKey, baseURL: baseUrl });
+    let chatModel: string | undefined;
+    let embedModel: { slug: string; dims?: number } | undefined;
+    try {
+      const models = await provider.models(true);
+      const chats = models.filter((m) => !m.type || m.type === "chat");
+      chatModel = (chats.find((m) => m.id === "flash") ?? chats[0])?.id;
+      const embeds = models.filter((m) => m.type === "embedding");
+      const emb = embeds.find((m) => m.id === "text-embedding") ?? embeds[0];
+      if (emb) {
+        const dims = emb.default_dimensions ?? (emb.dimensions?.includes(1024) ? 1024 : emb.dimensions?.[0]);
+        embedModel = { slug: emb.id, ...(dims ? { dims } : {}) };
+      }
+    } catch (err) {
+      logger.warn(`hoiai.models_after_login: ${(err as Error).message}`);
+    }
+    const rows = await listLlmProviders(db, req.authCtx);
+    const existing = rows.find((r) => r.name === flow.name);
+    if (existing && existing.kind !== "hoiai") {
+      return reply.code(409).send({ error: `Tên provider "${flow.name}" đã dùng cho loại khác` });
+    }
+    if (existing) {
+      // Đăng nhập lại: thay khóa, giữ model đã chọn.
+      await updateLlmProvider(db, req.authCtx, existing.id, {
+        apiKeyEncrypted: encryptSecret(result.apiKey),
+        baseUrl,
+        enabled: true,
+        ...(!existing.defaultModel && chatModel ? { defaultModel: chatModel } : {}),
+      });
+    } else {
+      const hasDefaultEmbedding = rows.some((r) => r.isDefaultEmbedding);
+      await createLlmProvider(db, req.authCtx, {
+        name: flow.name,
+        kind: "hoiai",
+        baseUrl,
+        apiKeyEncrypted: encryptSecret(result.apiKey),
+        ...(chatModel ? { defaultModel: chatModel } : {}),
+        ...(embedModel ? { defaultEmbeddingModel: embedModel.slug } : {}),
+        ...(embedModel?.dims ? { embeddingDimensions: embedModel.dims } : {}),
+        ...(embedModel && !hasDefaultEmbedding ? { isDefaultEmbedding: true } : {}),
+      });
+    }
+    registerDbProvider(deps.providers, {
+      name: flow.name,
+      workspaceId: req.authCtx.workspaceId,
+      kind: "hoiai",
+      baseUrl,
+      apiKey: result.apiKey,
+    });
+    return {
+      status: "ok",
+      provider: { name: flow.name, defaultModel: existing?.defaultModel ?? chatModel ?? null },
+      account: result.account ?? null,
+    };
+  });
+
+  app.get("/v1/providers-db/:id/hoiai-account", async (req, reply) => {
+    if (!requireRole(req, reply, "ws_admin")) return;
+    const { id } = req.params as { id: string };
+    const row = (await listLlmProviders(db, req.authCtx)).find((p) => p.id === id);
+    if (!row || row.kind !== "hoiai") return reply.code(404).send({ error: "Không phải provider HoiAI" });
+    if (!row.apiKeyEncrypted) return reply.code(400).send({ error: "Provider chưa có khóa" });
+    try {
+      const acc = await new HoiaiProvider(row.name, {
+        apiKey: decryptSecret(row.apiKeyEncrypted),
+        ...(row.baseUrl ? { baseURL: row.baseUrl } : {}),
+      }).account();
+      return {
+        email: acc.account_email ?? acc.email ?? null,
+        keyName: acc.key_name ?? null,
+        creditVnd: typeof acc.credit_vnd === "number" ? acc.credit_vnd : null,
+        topupUrl: typeof acc.topup_url === "string" && /^https:\/\//.test(acc.topup_url) ? acc.topup_url : null,
+        allowedModels: Array.isArray(acc.allowed_models) ? acc.allowed_models : [],
+      };
+    } catch (err) {
+      return reply.code(502).send({ error: providerErrorMessage(err) });
+    }
   });
 
   app.post("/v1/embeddings", async (req, reply) => {

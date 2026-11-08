@@ -23,6 +23,7 @@ import type {
   InboundMedia,
   OutboundMessage,
 } from "./types.js";
+import { VOICE_UNSUPPORTED_NOTE, audioFormatOf } from "./types.js";
 
 const ZALO_MAX_TEXT = 2_000;
 const MEDIA_MAX_BYTES = 10 * 1024 * 1024;
@@ -1349,7 +1350,38 @@ export class ZaloPersonalChannel implements Channel {
     }
 
     if (kind === "voice") {
-      return [{ kind: "voice", note: "[Người dùng gửi tin nhắn thoại — hệ thống chưa hỗ trợ nghe]" }];
+      // Tải âm thanh về để model nghe được (nếu provider hỗ trợ); lỗi thì chỉ còn ghi chú.
+      if (url && !(params.fileSize && params.fileSize > MEDIA_MAX_BYTES)) {
+        try {
+          const response = await fetch(url, {
+            signal: AbortSignal.timeout(60_000),
+            headers: { "user-agent": "Mozilla/5.0 (PenAI Zalo bridge)" },
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = Buffer.from(await response.arrayBuffer());
+          if (data.length > MEDIA_MAX_BYTES) throw new Error("media vượt 10MB");
+          const mime = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+          let ext = params.fileExt;
+          if (!ext) {
+            try {
+              ext = new URL(url).pathname.match(/\.([a-z0-9]+)$/i)?.[1];
+            } catch {
+              /* bỏ qua */
+            }
+          }
+          return [
+            {
+              kind: "voice",
+              name: `voice.${ext || "m4a"}`,
+              note: VOICE_UNSUPPORTED_NOTE,
+              audio: { data: data.toString("base64"), format: audioFormatOf(mime, `voice.${ext || "m4a"}`) },
+            },
+          ];
+        } catch (err) {
+          logger.warn(`zalo.voice_download_failed: ${(err as Error).message}`);
+        }
+      }
+      return [{ kind: "voice", note: VOICE_UNSUPPORTED_NOTE }];
     }
     if (kind === "video") {
       return [{ kind: "video", note: "[Người dùng gửi video — hệ thống chưa hỗ trợ xem]" }];

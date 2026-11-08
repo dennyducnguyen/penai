@@ -28,6 +28,7 @@ import type {
   InboundMedia,
   OutboundMessage,
 } from "./types.js";
+import { VOICE_UNSUPPORTED_NOTE, audioFormatOf } from "./types.js";
 import {
   normalizeZaloChatKey,
   parseAutoReaction,
@@ -921,7 +922,7 @@ export class WhatsappPersonalChannel implements Channel {
           media = { ...(media ?? {}), name, size: buf.length, ...(localPath ? { localPath } : {}) };
           if (type === "imageMessage") mediaOut.push({ kind: "photo", dataUrl: `data:${mime || "image/jpeg"};base64,${buf.toString("base64")}`, name });
           else if (type === "documentMessage") mediaOut.push({ kind: "document", dataB64: buf.toString("base64"), name });
-          else if (type === "audioMessage") mediaOut.push({ kind: "voice", name, note: "Tin nhắn thoại (chưa chuyển thành chữ)." });
+          else if (type === "audioMessage") mediaOut.push({ kind: "voice", name, note: VOICE_UNSUPPORTED_NOTE, audio: { data: buf.toString("base64"), format: audioFormatOf(mime, name) } });
           else if (type === "videoMessage") mediaOut.push({ kind: "video", name, note: "Video (chưa xem được nội dung)." });
         } catch (error) {
           mediaOut.push({ kind: "document", name, note: `Không tải được file ${name}: ${errText(error)}` });

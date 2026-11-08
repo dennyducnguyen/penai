@@ -15,3 +15,4 @@ export * from "./antigravity/provider.js";
 export * from "./claude-code/provider.js";
 export * from "./fallback.js";
 export * from "./images/index.js";
+export * from "./hoiai.js";

@@ -6,9 +6,21 @@ export type ProviderChatMessage =
       content: string;
       /** Ảnh đính kèm dạng data URL (vision) — provider không hỗ trợ thì bỏ qua. */
       images?: string[];
+      /**
+       * Âm thanh đính kèm (tin nhắn thoại) — chỉ gửi đi khi provider báo model
+       * nghe được (`inputModalities` có "audio"); provider khác bỏ qua.
+       */
+      audio?: ProviderAudioInput[];
     }
   | { role: "assistant"; content: string | null; toolCalls?: ToolCallData[] }
   | { role: "tool"; toolCallId: string; content: string };
+
+export interface ProviderAudioInput {
+  /** base64 thuần (không có tiền tố data:). */
+  data: string;
+  /** Định dạng file: ogg, opus, mp3, wav, m4a, aac, amr, webm… */
+  format: string;
+}
 
 export interface ToolDefinition {
   name: string;
@@ -50,6 +62,11 @@ export interface Provider {
   readonly name: string;
   chat(req: ChatRequest): Promise<ChatResponse>;
   chatStream(req: ChatRequest): AsyncIterable<StreamEvent>;
+  /**
+   * Loại đầu vào model nhận được ("text", "image", "audio"…) theo khai báo của
+   * provider. Không cài / trả null = không biết (giữ cách đoán cũ).
+   */
+  inputModalities?(model: string): Promise<string[] | null>;
 }
 
 export type EmbeddingInputType = "query" | "document" | "classification";

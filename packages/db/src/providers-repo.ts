@@ -4,7 +4,7 @@ import type { Db } from "./client.js";
 import { withWorkspace } from "./context.js";
 import { agents, llmProviders } from "./schema.js";
 
-export type LlmProviderKind = "openai" | "gemini" | "qwen" | "openai-compat" | "anthropic";
+export type LlmProviderKind = "openai" | "gemini" | "qwen" | "openai-compat" | "anthropic" | "hoiai";
 
 export type LlmProviderRow = typeof llmProviders.$inferSelect;
 

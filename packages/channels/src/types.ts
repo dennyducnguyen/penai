@@ -10,6 +10,29 @@ export interface InboundMedia {
   name?: string;
   /** Ghi chú cho LLM khi media không xử lý được (quá to, chưa hỗ trợ...). */
   note?: string;
+  /**
+   * Âm thanh tin nhắn thoại (base64 thuần + định dạng ogg/m4a/mp3…) — runtime
+   * chỉ gửi cho model khi provider báo model nghe được; còn lại dùng `note`.
+   */
+  audio?: { data: string; format: string };
+}
+
+/** Ghi chú mặc định cho tin nhắn thoại khi model không nghe được. */
+export const VOICE_UNSUPPORTED_NOTE =
+  "[Người dùng gửi tin nhắn thoại — hệ thống chưa hỗ trợ nghe, hãy lịch sự đề nghị họ nhắn chữ]";
+
+/** Định dạng âm thanh từ mime/đuôi file (cho trường input_audio.format). */
+export function audioFormatOf(mime: string | null | undefined, name?: string): string {
+  const m = (mime ?? "").toLowerCase();
+  if (m.includes("ogg") || m.includes("opus")) return "ogg";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("mp4") || m.includes("m4a") || m.includes("aac")) return "m4a";
+  if (m.includes("wav")) return "wav";
+  if (m.includes("webm")) return "webm";
+  if (m.includes("amr")) return "amr";
+  const ext = (name ?? "").toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  if (ext === "oga" || ext === "opus") return "ogg";
+  return ext || "ogg";
 }
 
 /** Tin nhắn vào từ một kênh, đã chuẩn hóa. */
