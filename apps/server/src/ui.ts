@@ -151,6 +151,10 @@ export const INDEX_HTML = `<!doctype html>
   #chatWrap.drop { outline: 2px dashed var(--accent2); outline-offset: -4px; }
   dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: inherit; max-width: 90vw; }
   dialog::backdrop { background: #0008; }
+  /* Nút × góc phải trên của mọi popup (gắn tự động khi mở) */
+  .dlg-x { position: absolute; top: 8px; right: 10px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 22px; line-height: 32px; cursor: pointer; z-index: 2; }
+  .dlg-x:hover { background: var(--border); color: inherit; }
+  dialog > h3:first-of-type, dialog > h2:first-of-type { padding-right: 34px; }
   /* ===== Thư viện file (26/09/2026) ===== */
   .lib-grid { display: grid; grid-template-columns: 270px 1fr; gap: 12px; align-items: start; }
   @media (max-width: 860px) { .lib-grid { grid-template-columns: 1fr; } }
@@ -364,6 +368,41 @@ export const INDEX_HTML = `<!doctype html>
   }
   // Đăng nhập bằng cookie httpOnly (phiên web) — không còn giữ token trong localStorage.
   var state = { me: null, agents: [], sessionId: null };
+
+  // ===== Nút × cho MỌI popup: gắn khi popup mở; đóng giống nút Hủy / Đóng sẵn có =====
+  // Popup không cho đóng (vd bắt buộc đổi mật khẩu) đặt dlg.dataset.noX = "1".
+  function closeDialogByX(d, x) {
+    var ev = new Event("cancel", { cancelable: true });
+    if (!d.dispatchEvent(ev)) return; // popup tự xử lý (modal() đóng ngay, hoặc không cho đóng)
+    var btns = Array.prototype.filter.call(d.querySelectorAll("button"), function (b) {
+      return b !== x && !b.disabled && /^(Hủy|Đóng|Close|Cancel)$/i.test((b.textContent || "").trim());
+    });
+    if (btns.length) { btns[btns.length - 1].click(); if (!d.open) return; }
+    if (d.open) d.close();
+    if (d.parentNode === document.body) d.remove();
+  }
+  (function () {
+    if (!window.HTMLDialogElement || HTMLDialogElement.prototype.__penaiX) return;
+    var orig = HTMLDialogElement.prototype.showModal;
+    HTMLDialogElement.prototype.__penaiX = true;
+    function addX(d) {
+      if (d.dataset.noX === "1" || d.querySelector(":scope > .dlg-x")) return;
+      var x = document.createElement("button");
+      x.type = "button"; x.className = "dlg-x"; x.title = "Đóng (Esc)"; x.setAttribute("aria-label", "Đóng"); x.textContent = "×";
+      x.onclick = function (e) { e.preventDefault(); closeDialogByX(d, x); };
+      d.insertBefore(x, d.firstChild);
+    }
+    HTMLDialogElement.prototype.showModal = function () {
+      var d = this;
+      addX(d);
+      // Popup vẽ lại nội dung (innerHTML) sau khi mở → gắn lại nút ×
+      if (!d.__penaiXObs && window.MutationObserver) {
+        d.__penaiXObs = new MutationObserver(function () { if (d.open) addX(d); });
+        d.__penaiXObs.observe(d, { childList: true });
+      }
+      return orig.apply(d, arguments);
+    };
+  })();
   try { localStorage.removeItem("penai_key"); } catch (e) {}
 
   function api(path, opts) {
@@ -4619,7 +4658,7 @@ ${CHAT_UI}
       '<label>Nhập lại mật khẩu mới</label><input id="cpNew2" type="password" style="width:100%" autocomplete="new-password">' +
       '<div class="dialog-actions">' + (forced ? '<button class="ghost" id="cpLogout">Đăng xuất</button>' : '<button class="ghost" id="cpCancel">Hủy</button>') + '<button id="cpSave">Đổi mật khẩu</button></div><div id="cpMsg" style="margin-top:8px"></div>';
     document.body.appendChild(dlg);
-    if (forced) { dlg.addEventListener("cancel", function (e) { e.preventDefault(); }); $("#cpLogout", dlg).onclick = function () { dlg.close(); dlg.remove(); doLogout(); }; }
+    if (forced) { dlg.dataset.noX = "1"; dlg.addEventListener("cancel", function (e) { e.preventDefault(); }); $("#cpLogout", dlg).onclick = function () { dlg.close(); dlg.remove(); doLogout(); }; }
     else $("#cpCancel", dlg).onclick = function () { dlg.close(); dlg.remove(); };
     $("#cpSave", dlg).onclick = function () {
       var cur = $("#cpCur", dlg).value, nw = $("#cpNew", dlg).value, nw2 = $("#cpNew2", dlg).value;

@@ -4,6 +4,12 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.20.5 — 2026-11-08
+
+- **Mọi popup của Dashboard có nút × ở góc phải trên** để đóng nhanh (giống nút Hủy / Đóng của popup đó; phím Esc vẫn dùng được). Popup bắt buộc đổi mật khẩu lần đầu không có nút ×.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.20.4 — 2026-11-08
 
 - **Fanpage / Instagram — tên khách trong Inbox**: app Facebook mới (chưa có tính năng đọc hồ sơ khách của Meta) giờ vẫn lấy được tên khách qua hội thoại của Trang, thay vì hiện mã số.
