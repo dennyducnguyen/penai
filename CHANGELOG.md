@@ -4,6 +4,13 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.20.6 — 2026-11-08
+
+- **Fanpage / Instagram qua hub**: khi kết nối (hoặc bấm Đăng ký lại), PenAI tự đăng ký Trang gửi sự kiện cho app của hub — trước đây nếu hub quên bước này thì Meta không gửi tin nào, AI không trả lời.
+- Hộp **Kết nối Trang** hiện trạng thái phía hub: Trang đang bật hay **tắt trên hub** (hub không chuyển tin), hub có đang gửi tin về đúng địa chỉ của kênh không, lỗi đăng ký Trang (nếu có).
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.20.5 — 2026-11-08
 
 - **Mọi popup của Dashboard có nút × ở góc phải trên** để đóng nhanh (giống nút Hủy / Đóng của popup đó; phím Esc vẫn dùng được). Popup bắt buộc đổi mật khẩu lần đầu không có nút ×.
