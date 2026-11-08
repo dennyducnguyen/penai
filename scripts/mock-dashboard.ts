@@ -320,10 +320,14 @@ const ibxThreads = Array.from({ length: 14 }, (_, i) => ({
   contactAlias: null, avatar: null, lastMessage: ["Em gửi báo giá giúp chị nhé", "Đơn 2411A3 giao chưa?", "Ok em cảm ơn", "Mai anh qua lấy hàng"][i % 4], lastMessageAt: iso(i * 47), unreadCount: i % 3 === 0 ? i % 5 + 1 : 0, aiMode: "auto", pausedUntil: null, isContact: true,
 }));
 function ibxMsgs(tid: string) {
-  return Array.from({ length: 30 }, (_, k) => ({ id: Number(tid) * 100 + k, msgId: "m" + k, direction: k % 3 === 0 ? "out" : "in", source: k % 3 === 0 ? (k % 2 ? "agent" : "web") : "zalo", webUserName: "Quản trị", senderName: "Lan", contentType: "text", text: k % 3 === 0 ? "Dạ shop gửi chị báo giá ạ, chị xem giúp em nhé. Mẫu số " + k : "Chị hỏi chút về đơn hàng số " + k + ", còn hàng không em?", sentAt: iso(300 - k * 9), reactions: k === 4 ? [{ icon: "/-heart", reactorId: "me", reactorName: "Tôi", source: "web" }] : [], canReact: true, meta: {} }));
+  return Array.from({ length: 30 }, (_, k) => k === 29 ? ({ id: Number(tid) * 100 + k, msgId: "m" + k, direction: "out", source: "app", senderName: "Trang", contentType: "text", text: "Chị chờ em kiểm kho nhé (trả lời trên Meta Business Suite)", sentAt: iso(10), reactions: [], canReact: false, meta: { via: "Meta Business Suite / hộp thư Trang" } }) : ({ id: Number(tid) * 100 + k, msgId: "m" + k, direction: k % 3 === 0 ? "out" : "in", source: k % 3 === 0 ? (k % 2 ? "agent" : "web") : "zalo", webUserName: "Quản trị", senderName: "Lan", contentType: "text", text: k % 3 === 0 ? "Dạ shop gửi chị báo giá ạ, chị xem giúp em nhé. Mẫu số " + k : "Chị hỏi chút về đơn hàng số " + k + ", còn hàng không em?", sentAt: iso(300 - k * 9), reactions: k === 4 ? [{ icon: "/-heart", reactorId: "me", reactorName: "Tôi", source: "web" }] : [], canReact: true, meta: {} }));
 }
 async function inboxMock(path: string, method: string, json: (b: unknown, s?: number) => unknown) {
-  if (path === "/v1/inbox/channels") return json({ channels: [{ id: "c1", name: "Zalo bán hàng", platform: "Zalo", kind: "zalo_personal", connected: true, account: { id: "me", name: "Nguyễn Minh Đức" }, inbox: true, pauseMinutes: 30, autoReaction: "heart" }], canManage: true });
+  if (path === "/v1/inbox/channels") return json({ channels: [
+    { id: "c1", name: "Zalo bán hàng", platform: "Zalo", kind: "zalo_personal", connected: true, account: { id: "me", name: "Nguyễn Minh Đức" }, inbox: true, pauseMinutes: 30, autoReaction: "heart" },
+    { id: "fb1", name: "Thời Trang KOS", platform: "Facebook", kind: "facebook", connected: true, account: { id: "1065", name: "Thời Trang KOS" }, inbox: true, pauseMinutes: 30, autoReaction: null, photoAck: "ai",
+      capabilities: { groups: false, phoneLookup: false, syncContacts: false, reactions: false, newConversation: false, mcp: false, files: true, photoAi: true } },
+  ], canManage: true });
   if (/\/threads$/.test(path)) return json({ threads: ibxThreads });
   const mm = /\/threads\/([^/]+)\/messages$/.exec(path);
   if (mm) return json({ messages: ibxMsgs(mm[1]!), thread: ibxThreads.find((t) => t.threadId === mm[1]) });
@@ -391,6 +395,15 @@ createServer(async (req, res) => {
   if (path.startsWith("/v1/db/")) return dbMock(path, method, url, req, json, res);
   if (path.startsWith("/v1/sessions") || path === "/v1/chat") return chatMock(path, method, req, res, json);
   if (path.startsWith("/v1/inbox/")) return inboxMock(path, method, json);
+  // ----- Kênh Facebook/Instagram qua hub (giả) -----
+  if (path === "/v1/channels/meta/hub") return json({ hubUrl: "https://chat.hoiai.vn", connectUrl: "https://chat.hoiai.vn/facebook/penai-connect", manageUrl: "https://chat.hoiai.vn/facebook", publicUrl: "http://127.0.0.1:" + port, ready: true });
+  if (path === "/v1/channels/meta/connect") return json({ error: "Máy chủ giả: không kết nối thật" }, 400);
+  if (/^\/v1\/channels\/[^/]+\/meta$/.test(path)) return json({ kind: "facebook", page: { id: "1065", name: "Thời Trang KOS", avatar: "", igAccountId: "", igUsername: "" }, hubUrl: "https://chat.hoiai.vn", webhookUrl: "http://127.0.0.1:" + port + "/webhooks/meta/fb1", registeredUrl: "", registeredAt: new Date().toISOString(), registerError: null, status: { running: true, connected: true, error: null, authError: null, lastWebhookAt: null, account: null } });
+  if (path === "/v1/channels" && method === "GET") return json({ channels: [
+    { id: "fb1", kind: "facebook", name: "Thời Trang KOS", agentId: "a1", agentKey: "tro-ly", agentName: "Trợ lý", enabled: true, requirePairing: false, config: { pageId: "1065", pageName: "Thời Trang KOS" } },
+    { id: "c1", kind: "zalo_personal", name: "Zalo bán hàng", agentId: "a1", agentKey: "tro-ly", agentName: "Trợ lý", enabled: true, requirePairing: true, config: {} },
+  ], supportedKinds: ["telegram", "discord", "slack", "whatsapp", "zalo", "zalo_personal", "whatsapp_personal", "feishu", "msteams", "facebook", "instagram"] });
+  if (path === "/v1/channel-pairings/pending") return json({ pending: [] });
   if (path === "/v1/usage") return json({ monthTokens: 1234567, cap: null });
   // ----- Cron -----
   if (path === "/v1/cron" && method === "GET") return json(cronView());

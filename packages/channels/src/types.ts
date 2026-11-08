@@ -157,6 +157,13 @@ export interface ChannelDeps {
   stateDir?: string;
   /** Lưu file nhận được vào thư mục Inbox của kênh → trả đường dẫn tuyệt đối (để Inbox hiển thị lại). */
   saveInboxFile?: (buf: Buffer, ext: string) => Promise<string>;
+  /** Kênh Trang Meta — tên + ảnh đại diện của khách vừa tra được (cập nhật hội thoại trong Inbox, không báo "đồng bộ"). */
+  onPeerProfile?: (p: { threadId: string; name: string; avatar?: string }) => void;
+  /**
+   * Tạo link công khai có hạn cho 1 file trên máy chủ (cần PENAI_PUBLIC_URL) — kênh chỉ nhận
+   * đính kèm bằng URL (Instagram) dùng để gửi ảnh/video. Không có = kênh báo không gửi được file.
+   */
+  publishFile?: (absPath: string, fileName: string, ttlSeconds: number) => Promise<string | null>;
 }
 
 /** Một lượt thả/gỡ cảm xúc vào tin nhắn. icon rỗng = gỡ. */

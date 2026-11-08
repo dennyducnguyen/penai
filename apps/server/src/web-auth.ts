@@ -8,7 +8,7 @@
  * Role `member`: chỉ chat với agent được gán; mọi route khác bị chặn ở đây
  * (allowlist fail-closed) — không phụ thuộc vào việc UI có ẩn menu hay không.
  */
-import { isPersonalChannelKind } from "@penai/channels";
+import { isInboxChannelKind } from "@penai/channels";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   ROLE_LABELS,
@@ -378,7 +378,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
         zaloChannelIds: zaloMembers.filter((m) => m.userId === u.id).map((m) => m.channelId),
       })),
       agents: agents.map((a) => ({ id: a.id, key: a.key, name: a.name })),
-      zaloChannels: channels.filter((c) => isPersonalChannelKind(c.kind)).map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
+      zaloChannels: channels.filter((c) => isInboxChannelKind(c.kind)).map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
       roles: WORKSPACE_ROLES.map((r) => ({ id: r, label: ROLE_LABELS[r] })),
     };
   });

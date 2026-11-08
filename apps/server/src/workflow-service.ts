@@ -84,7 +84,7 @@ import {
   type WorkflowOp,
 } from "@penai/core";
 import { createDefaultToolRegistry, isUrlAllowed, slugify, type ToolContext } from "@penai/tools";
-import { isPersonalChannelKind } from "@penai/channels";
+import { isInboxChannelKind, isPersonalChannelKind } from "@penai/channels";
 import { agentOpts, buildLoopDeps, buildWorkspaceRegistry, reasoningEffortOf, systemContext, type RuntimeDeps } from "./agent-runtime.js";
 import { channelHandlers, scheduleOnChannelQueue } from "./channels-runtime.js";
 import { execSandboxFor } from "./library-paths.js";
@@ -208,12 +208,13 @@ export class WorkflowService {
           .filter((r) => r.channelId === c.id)
           .slice(0, 30)
           .map((r) => ({ to: r.chatKey, title: r.title.replace(/^[a-z_]+:/, "") }));
-        if (isPersonalChannelKind(c.kind)) {
+        if (isInboxChannelKind(c.kind)) {
           try {
             const t = await listInboxThreads(this.db, ctx, c.id, { limit: 40, withMessagesOnly: true });
             const seen = new Set(chats.map((x) => x.to));
             for (const th of t.threads) {
-              const to = `${th.kind}:${th.threadId}`;
+              // Kênh cá nhân: "direct:<uid>" / "group:<id>"; Fanpage/Instagram: mã khách (PSID/IGSID)
+              const to = isPersonalChannelKind(c.kind) ? `${th.kind}:${th.threadId}` : th.threadId;
               if (!seen.has(to)) chats.push({ to, title: `${th.kind === "group" ? "👥 " : ""}${th.contactAlias || th.name || th.threadId}` });
             }
           } catch {
@@ -233,6 +234,8 @@ export class WorkflowService {
             ? '"direct:<uid>" (người) hoặc "group:<id nhóm>"'
             : c.kind === "telegram"
               ? "chat id Telegram (số; nhóm là số âm)"
+              : c.kind === "facebook" || c.kind === "instagram"
+                ? "mã khách (PSID/IGSID) trong Inbox — Meta chỉ cho nhắn trong 24 giờ kể từ tin cuối của khách"
               : "chatKey của cuộc trò chuyện (xem danh sách chats)",
         });
       }

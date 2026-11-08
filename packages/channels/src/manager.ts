@@ -9,6 +9,7 @@ import { ZaloPersonalChannel } from "./zalo-personal.js";
 import { WhatsappPersonalChannel } from "./whatsapp-personal.js";
 import { FeishuChannel } from "./feishu.js";
 import { TeamsChannel } from "./teams.js";
+import { MetaPageChannel } from "./meta-page.js";
 
 export type ChannelFactory = (deps: ChannelDeps) => Channel;
 
@@ -23,6 +24,8 @@ const FACTORIES: Record<string, ChannelFactory> = {
   whatsapp_personal: (d) => new WhatsappPersonalChannel(d),
   feishu: (d) => new FeishuChannel(d),
   msteams: (d) => new TeamsChannel(d),
+  facebook: (d) => new MetaPageChannel("facebook", d),
+  instagram: (d) => new MetaPageChannel("instagram", d),
 };
 
 export function isChannelKindSupported(kind: string): boolean {
