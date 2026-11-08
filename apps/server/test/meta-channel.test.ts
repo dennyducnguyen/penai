@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,7 +55,8 @@ beforeAll(async () => {
   fx = await createTestFixtures();
   dbh = createDb(TEST_APP_URL);
   dir = await mkdtemp(join(tmpdir(), "penai-meta-server-"));
-  process.env.PENAI_PUBLIC_URL = "https://penai.test";
+  vi.stubEnv("PENAI_MASTER_KEY", randomBytes(32).toString("base64"));
+  vi.stubEnv("PENAI_PUBLIC_URL", "https://penai.test");
   delete process.env.PENAI_META_HUB_URL;
   vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
@@ -91,6 +92,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   await manager.stopAll();
   await app.close();
   await dbh.close();

@@ -204,6 +204,7 @@ describe("MetaPageChannel", () => {
     await ch.start();
     expect(ch.handleWebhook(raw, { signature: "sha256=abc" }).status).toBe(401);
     expect(ch.handleWebhook(raw, { signature: sign(raw) }).status).toBe(200);
+    await ch.idle();
   });
 
   it("nhận tin → ghi Inbox, AI trả lời chữ trơn, ghi tin AI; gửi trùng mid không xử lý lại", async () => {
