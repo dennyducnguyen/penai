@@ -4,6 +4,18 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.15.0 — 2026-11-08
+
+Thư viện file (Dashboard → 📁 Thư viện file) dùng thoải mái hơn (đem từ bản Helix về bản chính thức):
+
+- **Xem và sửa file Markdown ngay trên web** bằng trình soạn tách đôi: bên trái là mã (số dòng, gập mục, tìm kiếm, Ctrl+S), bên phải là bản xem đã dàn trang (bảng, danh sách việc, liên kết), cuộn song song. File văn bản khác (txt, csv, json, yaml…) sửa bằng ô chữ. Nút **＋ File Markdown** để tạo file mới.
+- **Không ghi đè nhau**: hai người (hoặc người và agent) cùng sửa một file → khi lưu hiện hai bản cạnh nhau để chọn.
+- **🕘 Lịch sử** từng file: bản trước khi sửa / bị ghi đè nằm trong thùng rác 30 ngày, xem lại và dùng lại được.
+- **Tải cả thư mục** (gồm thư mục con) thành `.zip`; **tải lên cả thư mục** (nút hoặc kéo-thả thư mục) giữ nguyên cấu trúc; **🗜 Giải nén** file `.zip` ngay trong thư viện.
+- **Xem trước Word, Excel, PowerPoint** (phần chữ — đúng phần agent đọc được), PDF mở trong trình duyệt.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm. Trình soạn đóng gói sẵn, không cần mạng ngoài.
+
 ## 1.14.0 — 2026-11-08
 
 Trình duyệt của agent thao tác tốt hơn (đem từ bản cài legal.penai.vn về bản chính thức):

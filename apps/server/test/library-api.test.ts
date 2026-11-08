@@ -255,3 +255,66 @@ describe("Quyền ghi của agent vào thư viện", () => {
     expect(Number(uploads[0]!.n)).toBeGreaterThan(0);
   });
 });
+
+describe("Thư viện file: xem/sửa văn bản, lịch sử, zip, giải nén, xem trước (1.15.0)", () => {
+  const S = () => fx.agentA;
+  const text = (key: string, path: string) =>
+    app.inject({ method: "GET", url: `/v1/library/${S()}/text?path=${encodeURIComponent(path)}`, headers: H(key) });
+  const save = (key: string, body: Record<string, unknown>) =>
+    app.inject({ method: "PUT", url: `/v1/library/${S()}/text`, headers: H(key), payload: body });
+
+  it("tạo file Markdown, đọc, sửa → bản cũ vào lịch sử; sửa chồng bản cũ → 409 kèm bản mới", async () => {
+    const c = await save(fx.keys.aOperator, { path: "ghi chú/Quy trình bán hàng.md", content: "# Bản 1\n", create: true });
+    expect(c.statusCode).toBe(200);
+    const path = c.json().path as string;
+    expect(path).toBe("ghi-chu/quy-trinh-ban-hang.md");
+    const r1 = (await text(fx.keys.aOperator, path)).json() as { content: string; sha256: string };
+    expect(r1.content).toBe("# Bản 1\n");
+    const s2 = await save(fx.keys.aOperator, { path, content: "# Bản 2\n", baseSha256: r1.sha256 });
+    expect(s2.statusCode).toBe(200);
+    // Người thứ hai vẫn cầm sha của bản 1 → xung đột, nhận nội dung mới để gộp
+    const s3 = await save(fx.keys.aOperator, { path, content: "# Bản của người khác\n", baseSha256: r1.sha256 });
+    expect(s3.statusCode).toBe(409);
+    expect(s3.json()).toMatchObject({ conflict: true, content: "# Bản 2\n" });
+    const h = (await app.inject({ method: "GET", url: `/v1/library/${S()}/history?path=${encodeURIComponent(path)}`, headers: H(fx.keys.aOperator) })).json() as { items: Array<{ id: string; reason: string }> };
+    expect(h.items).toHaveLength(1);
+    expect(h.items[0]!.reason).toMatch(/trước khi sửa/);
+    const old = await app.inject({ method: "GET", url: `/v1/library/${S()}/trash/${h.items[0]!.id}/text`, headers: H(fx.keys.aOperator) });
+    expect(old.json().content).toBe("# Bản 1\n");
+    // Danh sách thư mục không lộ file tạm
+    const ls = (await app.inject({ method: "GET", url: `/v1/library/${S()}/list?path=ghi-chu`, headers: H(fx.keys.aOperator) })).json() as { entries: Array<{ name: string }> };
+    expect(ls.entries.map((e) => e.name)).toEqual(["quy-trinh-ban-hang.md"]);
+  });
+
+  it("chỉ sửa được file văn bản; viewer bị chặn; đường dẫn ngược bị chặn", async () => {
+    expect((await save(fx.keys.aOperator, { path: "anh.png", content: "x", create: true })).statusCode).toBe(415);
+    expect((await save(fx.keys.aViewer, { path: "a.md", content: "x", create: true })).statusCode).toBe(403);
+    expect((await text(fx.keys.aOperator, "../../etc/passwd.md")).statusCode).toBe(400);
+  });
+
+  it("tải thư mục thành .zip rồi giải nén lại đúng cấu trúc", async () => {
+    await put(fx.keys.aOperator, S(), "goi/mot.txt", "1");
+    await put(fx.keys.aOperator, S(), "goi/con/hai.txt", "22");
+    const z = await app.inject({ method: "GET", url: `/v1/library/${S()}/zip?path=goi`, headers: H(fx.keys.aOperator) });
+    expect(z.statusCode).toBe(200);
+    expect(z.headers["content-type"]).toBe("application/zip");
+    const up = await put(fx.keys.aOperator, S(), "nen/Goi Tai Ve.zip", z.rawPayload);
+    expect(up.statusCode).toBe(200);
+    const ex = await app.inject({ method: "POST", url: `/v1/library/${S()}/extract`, headers: H(fx.keys.aOperator), payload: { path: up.json().path } });
+    expect(ex.statusCode).toBe(200);
+    expect(ex.json()).toMatchObject({ into: "nen/goi-tai-ve", files: 2 });
+    const back = await app.inject({ method: "GET", url: `/v1/library/${S()}/file?path=${encodeURIComponent("nen/goi-tai-ve/con/hai.txt")}`, headers: H(fx.keys.aOperator) });
+    expect(back.body).toBe("22");
+  });
+
+  it("xem trước chỉ nhận PDF/Word/Excel/PowerPoint", async () => {
+    await put(fx.keys.aOperator, S(), "x.txt", "chu");
+    expect((await app.inject({ method: "GET", url: `/v1/library/${S()}/preview?path=x.txt`, headers: H(fx.keys.aOperator) })).statusCode).toBe(415);
+  });
+
+  it("trình soạn đóng gói sẵn phục vụ được, không cần đăng nhập", async () => {
+    const r = await app.inject({ method: "GET", url: "/static/vendor/penai-editor.js" });
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toContain("PenaiEditor");
+  });
+});

@@ -1,5 +1,6 @@
 import { mkdir, readFile as fsReadFile, readdir, stat, writeFile as fsWriteFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { basename, join, relative, resolve, sep } from "node:path";
 import Fastify, {
   type FastifyInstance,
@@ -664,6 +665,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       path === "/" ||
       path === "/healthz" ||
       path.startsWith("/brand/") || // logo/favicon trang đăng nhập
+      path.startsWith("/static/vendor/") || // trình soạn Markdown đóng gói sẵn (không chứa dữ liệu)
       path === "/ws" ||
       path === "/auth/login" || // đăng nhập email + mật khẩu
       path === "/auth/logout" || // tự đọc cookie, luôn cho phép
@@ -745,6 +747,24 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // CSP chặn script trong file SVG khi ai đó mở thẳng link logo (cùng origin Dashboard).
   const LOGO_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
   // Đọc config lúc gọi để đổi thương hiệu trong file cấu hình có hiệu lực ngay (hot-reload).
+  // Trình soạn Markdown tách đôi (CodeMirror 6 + markdown-it, đóng gói sẵn trong git —
+  // scripts/build-editor-vendor.mjs). Không dùng CDN để bản cài không phụ thuộc mạng ngoài.
+  let editorJs: Buffer | null = null;
+  app.get("/static/vendor/penai-editor.js", async (_req, reply) => {
+    if (!editorJs) {
+      try {
+        editorJs = await fsReadFile(fileURLToPath(new URL("../static/vendor/penai-editor.js", import.meta.url)));
+      } catch {
+        return reply.code(404).send({ error: "Thiếu trình soạn — chạy node scripts/build-editor-vendor.mjs" });
+      }
+    }
+    return reply
+      .type("application/javascript; charset=utf-8")
+      .header("cache-control", "public, max-age=3600")
+      .header("x-content-type-options", "nosniff")
+      .send(editorJs);
+  });
+
   app.get("/brand/logo.svg", async (_req, reply) => {
     return reply
       .type("image/svg+xml; charset=utf-8")

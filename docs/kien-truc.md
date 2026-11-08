@@ -44,6 +44,7 @@ Monorepo pnpm (nhiều gói trong một kho mã), TypeScript strict, ESM.
 | `apps/server/src/channels-runtime.ts` | Nhận tin từ kênh: ghép nối (pairing), lưu file đính kèm, xếp hàng, chạy agent, gửi trả lời/file |
 | `apps/server/src/web-auth.ts`, `web-chat.ts` | Đăng nhập Dashboard (email + mật khẩu, cookie), trang Chat web có gửi/nhận file |
 | `apps/server/src/api/` | API tương thích OpenAI: `/v1/chat/completions`, `/v1/models`, `/v1/images/generations` |
+| `apps/server/editor/penai-editor.src.js` → `apps/server/static/vendor/penai-editor.js`, `ui-library-editor.ts`, `md-linemap.ts` | Trình soạn Markdown tách đôi của Thư viện file (CodeMirror 6 + markdown-it, MIT). Bản đóng gói nằm sẵn trong git, phục vụ ở `/static/vendor/penai-editor.js`; sửa nguồn thì chạy `pnpm build:editor` rồi commit cả hai |
 | `apps/server/src/library*.ts`, `vault-*.ts` | Thư viện file theo agent; kho tri thức (chia đoạn, tạo vector, tìm kiếm) |
 | `apps/server/src/cron-runner.ts`, `cron-tools.ts` | Chạy agent theo lịch và gửi kết quả về cuộc trò chuyện đã đặt lịch; phần runtime của tool `cron_*` (agent tự đặt lịch khi chat — [lich-hen.md](lich-hen.md)) |
 | `apps/server/src/workflow-service.ts`, `workflow-routes.ts`, `workflow-tools.ts`, `mcp-workflow-tools.ts`, `ui-workflows.ts` | Quy trình tự động: tạo/sửa/phiên bản, bộ chạy theo lịch, chạy thay mặt người sở hữu (nối engine với kênh chat, tool, MCP, agent), API `/v1/workflows` + webhook `/webhooks/workflow/:id/:token`, tool `workflow_*` cho agent và MCP server, trang Dashboard ⚙️ Quy trình — [quy-trinh.md](quy-trinh.md) |

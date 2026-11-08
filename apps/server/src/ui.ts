@@ -1,4 +1,5 @@
 import { WORKFLOWS_UI } from "./ui-workflows.js";
+import { LIBRARY_EDITOR_UI } from "./ui-library-editor.js";
 
 /**
  * Web UI PenAI — Dashboard SPA (vanilla, inline, không cần build step).
@@ -3559,6 +3560,7 @@ export const INDEX_HTML = `<!doctype html>
     openLibSave(b.getAttribute("data-p"), b.getAttribute("data-name"));
   });
 
+${LIBRARY_EDITOR_UI}
   PAGES.library = function () {
     var m = page("Thư viện file", "File mẫu, tài liệu tham khảo cho agent. Agent thấy thư viện của mình qua đường dẫn thu-vien/ (mặc định chỉ đọc), thư mục chung qua shared/. System prompt của agent tự hướng dẫn khi nào tra cứu.");
     var q = {};
@@ -3638,14 +3640,21 @@ export const INDEX_HTML = `<!doctype html>
       var ro = j.readonly;
       var tb = el("div", { "class": "row", style: "margin:10px 0 8px;gap:6px;flex-wrap:wrap;align-items:center" });
       tb.innerHTML = (ro ? '<span class="pill">Chỉ xem — do hệ thống Skill quản lý</span>'
-        : '<button id="libUp" class="sm">⬆ Tải file lên</button><button id="libMk" class="ghost sm">＋ Thư mục</button>') +
+        : '<button id="libUp" class="sm">⬆ Tải file lên</button><button id="libUpDir" class="ghost sm" title="Tải lên cả thư mục (giữ thư mục con)">⬆ Tải thư mục lên</button><button id="libMk" class="ghost sm">＋ Thư mục</button><button id="libMd" class="ghost sm">＋ File Markdown</button>') +
+        '<button id="libZip" class="ghost sm" title="Đóng gói thư mục đang mở (gồm thư mục con) thành .zip">⬇ Tải thư mục (.zip)</button>' +
         '<button id="libTrash" class="ghost sm">🗑 Thùng rác</button><span id="libMsg" class="muted" style="font-size:.82rem"></span>';
       var fin = el("input", { type: "file", multiple: "multiple", style: "display:none" });
       tb.appendChild(fin);
+      var din = el("input", { type: "file", multiple: "multiple", style: "display:none" });
+      din.setAttribute("webkitdirectory", ""); din.setAttribute("directory", "");
+      tb.appendChild(din);
       right.appendChild(tb);
       if (!ro) {
         $("#libUp", tb).onclick = function () { fin.click(); };
         fin.onchange = function () { uploadFiles(fin.files); fin.value = ""; };
+        $("#libUpDir", tb).onclick = function () { din.click(); };
+        din.onchange = function () { uploadFiles(Array.prototype.map.call(din.files, function (f) { return { file: f, rel: f.webkitRelativePath || f.name }; })); din.value = ""; };
+        $("#libMd", tb).onclick = function () { libNewMarkdown(cur.scope, cur.path, function () { loadDir(); loadScopes(); }); };
         $("#libMk", tb).onclick = function () {
           var n = prompt("Tên thư mục mới (tự chuyển thành không dấu):"); if (!n || !n.trim()) return;
           api(libApi(cur.scope, "/mkdir"), { method: "POST", body: { path: cur.path, name: n.trim() } })
@@ -3653,6 +3662,7 @@ export const INDEX_HTML = `<!doctype html>
         };
       }
       $("#libTrash", tb).onclick = function () { cur.view = "trash"; loadTrash(); };
+      $("#libZip", tb).onclick = function () { window.location.href = libApi(cur.scope, "/zip?path=" + encodeURIComponent(cur.path)); };
       var zone = el("div", { "class": "lib-zone" });
       if (!j.entries.length) {
         zone.innerHTML = '<div class="muted" style="padding:26px;text-align:center">' + (ro ? "(trống)" : "Thư mục trống — bấm «Tải file lên» hoặc kéo-thả file vào đây") + "</div>";
@@ -3662,11 +3672,11 @@ export const INDEX_HTML = `<!doctype html>
       if (!ro) {
         zone.addEventListener("dragover", function (ev) { ev.preventDefault(); zone.classList.add("drop"); });
         zone.addEventListener("dragleave", function () { zone.classList.remove("drop"); });
-        zone.addEventListener("drop", function (ev) { ev.preventDefault(); zone.classList.remove("drop"); uploadFiles((ev.dataTransfer && ev.dataTransfer.files) || []); });
+        zone.addEventListener("drop", function (ev) { ev.preventDefault(); zone.classList.remove("drop"); libCollectDrop(ev.dataTransfer).then(uploadFiles); });
       }
       right.appendChild(zone);
       right.appendChild(el("div", { "class": "muted", style: "font-size:.76rem;margin-top:8px" },
-        "Tên file/thư mục được chuyển thành dạng không dấu để agent gõ đường dẫn chính xác. Xóa hoặc ghi đè thì bản cũ vào thùng rác 30 ngày. Bấm 📋 để chép đường dẫn dán vào system prompt."));
+        "Tên file/thư mục được chuyển thành dạng không dấu để agent gõ đường dẫn chính xác. Kéo-thả được cả thư mục. Bấm tên file Markdown/văn bản để xem và sửa (trình soạn tách đôi), PDF/Word/Excel để xem trước. Xóa, ghi đè hay sửa thì bản cũ vào thùng rác 30 ngày (🕘 Lịch sử). Bấm 📋 để chép đường dẫn dán vào system prompt."));
     }
     function entryRow(j, e) {
       var rel = j.path ? j.path + "/" + e.name : e.name;
@@ -3678,8 +3688,18 @@ export const INDEX_HTML = `<!doctype html>
         '<td class="muted" style="font-size:.8rem">' + esc(String(e.mtime || "").slice(0, 16).replace("T", " ")) + "</td>";
       var td = el("td", { "class": "lib-acts" });
       function btn(label, title, fn) { var b = el("button", { "class": "ghost sm", title: title }, label); b.onclick = fn; td.appendChild(b); }
-      tr.querySelector(".lib-name").onclick = function () { if (e.type === "dir") { cur.path = rel; loadDir(); } else preview(j.scope, rel, e); };
+      var ro2 = !!(e.readonly || j.readonly);
+      tr.querySelector(".lib-name").onclick = function () { if (e.type === "dir") { cur.path = rel; loadDir(); } else preview(j.scope, rel, e, ro2); };
       if (e.type === "file") btn("⬇", "Tải về", function () { window.open(libFileUrl(j.scope.id, rel, true), "_blank"); });
+      if (e.type === "dir") btn("⬇", "Tải thư mục (.zip)", function () { window.location.href = libApi(j.scope.id, "/zip?path=" + encodeURIComponent(rel)); });
+      if (e.type === "file" && libIsEditable(e.name) && e.size <= 2 * 1024 * 1024) btn(ro2 ? "👁" : "✏️", ro2 ? "Xem" : "Sửa (trình soạn)", function () { libOpenText(j.scope.id, rel, e.name, ro2, function () { loadDir(); }); });
+      if (e.type === "file") btn("🕘", "Lịch sử (bản cũ khi sửa / ghi đè)", function () { libHistory(j.scope.id, rel, e.name, ro2, function () { loadDir(); }); });
+      if (e.type === "file" && !ro2 && libExt(e.name) === "zip") btn("🗜", "Giải nén vào thư mục cùng tên", function () {
+        if (!confirm("Giải nén «" + e.name + "» vào thư mục cùng tên bên cạnh?")) return;
+        api(libApi(j.scope.id, "/extract"), { method: "POST", body: { path: rel } })
+          .then(function (r) { toast("Đã giải nén " + r.files + " file vào " + r.into + (r.skipped.length ? " (bỏ qua " + r.skipped.length + " mục ẩn/không hợp lệ)" : "")); loadDir(); loadScopes(); })
+          .catch(function (er) { toast(er.message, 1); });
+      });
       btn("📋", "Chép đường dẫn cho agent", function () { copyText(agentPath); });
       if (!e.readonly && !j.readonly) {
         btn("✎", "Đổi tên / di chuyển", function () { renameEntry(rel, e); });
@@ -3717,8 +3737,10 @@ export const INDEX_HTML = `<!doctype html>
           .catch(function (er) { $("#lcOk", dlg).disabled = false; $("#lcMsg", dlg).innerHTML = '<span class="err">' + esc(er.message) + "</span>"; });
       };
     }
-    function preview(scope, rel, e) {
+    function preview(scope, rel, e, ro) {
       var ext = extOf(e.name), url = libFileUrl(scope.id, rel, false);
+      if (libIsEditable(e.name) && e.size <= 2 * 1024 * 1024) { libOpenText(scope.id, rel, e.name, !!ro, function () { loadDir(); }); return; }
+      if (LIB_DOC_PREVIEW.indexOf(ext) >= 0) { libDocPreview(scope.id, rel, libFileUrl(scope.id, rel, true)); return; }
       if (LIB_IMG.indexOf(ext) >= 0) {
         var d = el("dialog", { style: "padding:12px;max-width:92vw" });
         d.innerHTML = '<div class="row" style="justify-content:space-between;margin-bottom:8px"><b>' + esc(e.name) + '</b><button class="ghost sm" id="pvX">Đóng</button></div><img src="' + url + '" alt="" style="max-width:86vw;max-height:78vh;display:block;border-radius:8px">';
@@ -3738,7 +3760,7 @@ export const INDEX_HTML = `<!doctype html>
       window.open(libFileUrl(scope.id, rel, true), "_blank");
     }
     function uploadFiles(files) {
-      var list = Array.prototype.slice.call(files || []); if (!list.length) return;
+      var list = Array.prototype.slice.call(files || []).map(function (x) { return x && x.file ? x : { file: x, rel: x.name }; }); if (!list.length) return;
       var i = 0, ok = 0, scopeAtStart = cur.scope, pathAtStart = cur.path;
       function next(overwrite) {
         if (i >= list.length) {
@@ -3746,10 +3768,10 @@ export const INDEX_HTML = `<!doctype html>
           loadScopes().then(function () { if (cur.scope === scopeAtStart && cur.view === "files") loadDir(); }, function () {});
           return;
         }
-        var f = list[i];
+        var f = list[i].file;
         if (info && f.size > info.maxFileBytes) { toast(f.name + ": vượt " + fmtSize(info.maxFileBytes) + "/file", 1); i++; return next(false); }
-        msg("Đang tải " + (i + 1) + "/" + list.length + ": " + f.name + "…");
-        var path = (pathAtStart ? pathAtStart + "/" : "") + f.name;
+        msg("Đang tải " + (i + 1) + "/" + list.length + ": " + list[i].rel + "…");
+        var path = (pathAtStart ? pathAtStart + "/" : "") + list[i].rel;
         fetch(libApi(scopeAtStart, "/file?path=" + encodeURIComponent(path) + (overwrite ? "&overwrite=1" : "")), { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: f })
           .then(function (r) { return r.text().then(function (t) { var jj = {}; try { jj = JSON.parse(t); } catch (e2) {} return { r: r, j: jj }; }); })
           .then(function (x) {

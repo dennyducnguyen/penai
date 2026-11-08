@@ -15,14 +15,15 @@
  * gõ đường dẫn chính xác. Xóa = chuyển vào thùng rác 30 ngày; ghi đè = bản cũ
  * vào thùng rác. Mọi thay đổi ghi audit_log (action "library.*").
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { hasRole, logger, type WorkspaceContext } from "@penai/shared";
 import { getAgentById, listAgents, recordAudit, type Db } from "@penai/db";
-import { assertRealPathInside } from "@penai/tools";
+import AdmZip from "adm-zip";
+import { assertRealPathInside, extractDocumentText } from "@penai/tools";
 import { agentLibraryDir, libraryWorkspaceRoot, sharedDirFor } from "./library-paths.js";
 import {
   dirSize,
@@ -36,6 +37,15 @@ import {
 import { resolveDownload, sendDownload, webDirs } from "./web-chat.js";
 
 const MB = 1024 * 1024;
+/** File văn bản xem/sửa trên web tối đa 2 MB. */
+const TEXT_MAX_BYTES = 2 * MB;
+const ZIP_MAX_ENTRIES = 2000;
+const ZIP_MAX_BYTES = 500 * MB;
+const TEXT_EXT = new Set(["md", "markdown", "txt", "csv", "tsv", "json", "yaml", "yml", "log", "xml", "html", "htm", "css", "js", "ts", "py", "sql", "sh", "ini", "toml"]);
+const PREVIEW_EXT = new Set(["pdf", "docx", "xlsx", "xls", "pptx"]);
+const extOfName = (name: string) => (name.includes(".") ? name.slice(name.lastIndexOf(".") + 1).toLowerCase() : "");
+export const isTextName = (name: string) => TEXT_EXT.has(extOfName(name));
+const sha256Hex = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function libraryLimits(): { maxFileBytes: number; quotaBytes: number } {
@@ -607,6 +617,259 @@ export function registerLibraryRoutes(app: FastifyInstance, deps: { db: Db; data
         size: st.size,
       });
       return { ok: true, path, toScope: to.id, name: basename(target) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  // ===== Xem / sửa văn bản (Markdown, txt, csv, json…) — trình soạn tách đôi trên Dashboard =====
+  const textPath = async (req: FastifyRequest, rel: string) => {
+    const scope = await resolveScope(db, req.authCtx, dataDir, (req.params as { scope: string }).scope);
+    if (!rel) throw new HttpError(400, "Thiếu đường dẫn file");
+    if (!isTextName(rel)) throw new HttpError(415, "Chỉ sửa được file văn bản (md, txt, csv, json, yaml…)");
+    await mkdir(scope.root, { recursive: true });
+    return { scope, abs: await absIn(scope.root, rel) };
+  };
+
+  app.get("/v1/library/:scope/text", async (req, reply) => {
+    if (!guard(req, reply)) return;
+    try {
+      const rel = cleanRel((req.query as { path?: string }).path);
+      const { scope, abs } = await textPath(req, rel);
+      const st = await stat(abs).catch(() => null);
+      if (!st?.isFile()) throw new HttpError(404, "File không tồn tại");
+      if (st.size > TEXT_MAX_BYTES) throw new HttpError(413, `File quá ${TEXT_MAX_BYTES / MB} MB — tải về để xem`);
+      const buf = await readFile(abs);
+      return {
+        path: rel,
+        content: buf.toString("utf8"),
+        sha256: sha256Hex(buf),
+        size: st.size,
+        mtime: st.mtime.toISOString(),
+        readonly: isProtected(scope, rel),
+      };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  const TextBody = z.object({
+    path: z.string().min(1).max(1000),
+    content: z.string().max(TEXT_MAX_BYTES),
+    /** sha256 của bản đã mở — khác bản trên đĩa = người khác vừa sửa → 409 kèm bản mới để gộp. */
+    baseSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
+    /** Tạo file mới (lỗi nếu đã có). */
+    create: z.boolean().optional(),
+  });
+
+  app.put("/v1/library/:scope/text", async (req, reply) => {
+    if (!guard(req, reply)) return;
+    try {
+      const ctx = req.authCtx;
+      const b = TextBody.safeParse(req.body);
+      if (!b.success) throw new HttpError(400, b.error.issues.map((i) => i.message).join("; "));
+      const scope0 = await resolveScope(db, ctx, dataDir, (req.params as { scope: string }).scope);
+      await mkdir(scope0.root, { recursive: true });
+      const raw = cleanRel(b.data.path);
+      let rel = raw;
+      if (b.data.create) {
+        const dirRel = raw.includes("/") ? await targetDir(scope0.root, raw.slice(0, raw.lastIndexOf("/"))) : "";
+        rel = (dirRel ? `${dirRel}/` : "") + safeLibName(raw.split("/").pop() ?? "");
+      }
+      const { scope, abs } = await textPath(req, rel);
+      assertMutable(scope, rel);
+      const data = Buffer.from(b.data.content, "utf8");
+      const existing = await stat(abs).catch(() => null);
+      if (existing?.isDirectory()) throw new HttpError(409, "Đường dẫn là thư mục");
+      if (b.data.create && existing) throw new HttpError(409, `File "${basename(rel)}" đã có`, { exists: true });
+      if (existing) {
+        const cur = await readFile(abs);
+        const curSha = sha256Hex(cur);
+        if (curSha === sha256Hex(data)) return { ok: true, path: rel, sha256: curSha, size: cur.length, unchanged: true };
+        if (b.data.baseSha256 && b.data.baseSha256 !== curSha) {
+          throw new HttpError(409, "File vừa được sửa ở nơi khác (agent hoặc người khác) — xem phần khác nhau rồi lưu lại", {
+            conflict: true,
+            content: cur.length <= TEXT_MAX_BYTES ? cur.toString("utf8") : null,
+            sha256: curSha,
+          });
+        }
+      }
+      await assertQuota(dataDir, ctx, data.length - (existing?.size ?? 0));
+      const dirAbs = await absIn(scope.root, rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "");
+      await mkdir(dirAbs, { recursive: true });
+      // Bản cũ vào thùng rác (= lịch sử sửa, khôi phục được trong 30 ngày)
+      if (existing) {
+        const keep = join(dirAbs, `.ban-cu-${randomBytes(6).toString("hex")}`);
+        await cp(abs, keep);
+        await moveToTrash(dataDir, ctx, scope, rel, keep, "Bản trước khi sửa trên web");
+      }
+      const tmp = join(dirAbs, `.upload-${randomBytes(6).toString("hex")}`);
+      await writeFile(tmp, data);
+      await rename(tmp, abs);
+      await recordAudit(db, ctx, existing ? "library.edit" : "library.create", { scope: scope.id, agentKey: scope.agentKey, path: rel, size: data.length });
+      return { ok: true, path: rel, sha256: sha256Hex(data), size: data.length, created: !existing };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  // Lịch sử một file = các bản cũ của đúng đường dẫn đó trong thùng rác (bị sửa / ghi đè / xóa)
+  app.get("/v1/library/:scope/history", async (req, reply) => {
+    if (!guard(req, reply)) return;
+    try {
+      const scope = await resolveScope(db, req.authCtx, dataDir, (req.params as { scope: string }).scope);
+      const rel = cleanRel((req.query as { path?: string }).path);
+      const items = (await listTrash(dataDir, req.authCtx.workspaceId, scope.id)).filter((t) => t.path === rel && t.type === "file");
+      return { items, keepDays: TRASH_DAYS };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  // Nội dung một bản cũ trong thùng rác (xem trước khi khôi phục)
+  app.get("/v1/library/:scope/trash/:id/text", async (req, reply) => {
+    if (!guard(req, reply)) return;
+    try {
+      const ctx = req.authCtx;
+      const p = req.params as { scope: string; id: string };
+      const scope = await resolveScope(db, ctx, dataDir, p.scope);
+      const dir = trashItemDir(ctx, scope, p.id);
+      const meta = JSON.parse(await readFile(join(dir, "meta.json"), "utf8").catch(() => {
+        throw new HttpError(404, "Không có mục này trong thùng rác");
+      })) as TrashMeta;
+      if (meta.type !== "file" || !isTextName(meta.path)) throw new HttpError(415, "Bản này không phải file văn bản");
+      if (meta.size > TEXT_MAX_BYTES) throw new HttpError(413, "Bản này quá lớn để xem");
+      return { path: meta.path, content: await readFile(join(dir, "item"), "utf8"), deletedAt: meta.deletedAt, reason: meta.reason };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  // Xem trước nội dung PDF / Word / Excel / PowerPoint (trích chữ, không tải về)
+  app.get("/v1/library/:scope/preview", async (req, reply) => {
+    if (!guard(req, reply)) return;
+    try {
+      const scope = await resolveScope(db, req.authCtx, dataDir, (req.params as { scope: string }).scope);
+      const rel = cleanRel((req.query as { path?: string }).path);
+      if (!rel) throw new HttpError(400, "Thiếu đường dẫn file");
+      const abs = await absIn(scope.root, rel);
+      const st = await stat(abs).catch(() => null);
+      if (!st?.isFile()) throw new HttpError(404, "File không tồn tại");
+      if (!PREVIEW_EXT.has(extOfName(rel))) throw new HttpError(415, "Chỉ xem trước PDF, Word, Excel, PowerPoint");
+      if (st.size > 25 * MB) throw new HttpError(413, "File quá 25 MB — tải về để xem");
+      let text: string;
+      try {
+        text = await extractDocumentText(basename(rel), await readFile(abs));
+      } catch (e) {
+        throw new HttpError(422, `Không đọc được nội dung: ${(e as Error).message}`);
+      }
+      const max = 200_000;
+      return { path: rel, text: text.slice(0, max), truncated: text.length > max, totalChars: text.length };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  // Tải cả thư mục (gồm thư mục con) thành .zip
+  app.get("/v1/library/:scope/zip", async (req, reply) => {
+    if (!guard(req, reply)) return;
+    try {
+      const scope = await resolveScope(db, req.authCtx, dataDir, (req.params as { scope: string }).scope);
+      await mkdir(scope.root, { recursive: true });
+      const rel = cleanRel((req.query as { path?: string }).path);
+      const abs = await absIn(scope.root, rel);
+      const st = await stat(abs).catch(() => null);
+      if (!st?.isDirectory()) throw new HttpError(404, "Thư mục không tồn tại");
+      const zip = new AdmZip();
+      let files = 0;
+      let total = 0;
+      const walk = async (dirAbs: string, prefix: string): Promise<void> => {
+        for (const e of await readdir(dirAbs, { withFileTypes: true })) {
+          if (e.name.startsWith(".")) continue;
+          const childAbs = join(dirAbs, e.name);
+          const childRel = prefix ? `${prefix}/${e.name}` : e.name;
+          if (e.isDirectory()) {
+            zip.addFile(`${childRel}/`, Buffer.alloc(0));
+            await walk(childAbs, childRel);
+          } else if (e.isFile()) {
+            const s = await stat(childAbs);
+            files++;
+            total += s.size;
+            if (files > ZIP_MAX_ENTRIES) throw new HttpError(413, `Thư mục quá ${ZIP_MAX_ENTRIES} file — tải từng phần`);
+            if (total > ZIP_MAX_BYTES) throw new HttpError(413, `Thư mục quá ${ZIP_MAX_BYTES / MB} MB — tải từng phần`);
+            zip.addFile(childRel, await readFile(childAbs));
+          }
+        }
+      };
+      await walk(abs, "");
+      const base = rel ? basename(rel) : scope.kind === "shared" ? "shared" : scope.agentKey || "thu-vien";
+      const name = `${safeLibName(base, true)}.zip`;
+      await recordAudit(db, req.authCtx, "library.zip", { scope: scope.id, agentKey: scope.agentKey, path: rel, files });
+      return reply
+        .header("content-type", "application/zip")
+        .header("content-disposition", `attachment; filename="${name}"`)
+        .header("cache-control", "no-store")
+        .send(zip.toBuffer());
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  // Giải nén file .zip vào thư mục cùng tên bên cạnh (tên chuẩn hóa không dấu, bỏ mục ẩn / đường dẫn lạ)
+  app.post("/v1/library/:scope/extract", async (req, reply) => {
+    if (!guard(req, reply)) return;
+    try {
+      const ctx = req.authCtx;
+      const scope = await resolveScope(db, ctx, dataDir, (req.params as { scope: string }).scope);
+      const rel = cleanRel((req.body as { path?: string } | null)?.path);
+      if (!/\.zip$/i.test(rel)) throw new HttpError(400, "Chỉ giải nén file .zip");
+      const abs = await absIn(scope.root, rel);
+      const st = await stat(abs).catch(() => null);
+      if (!st?.isFile()) throw new HttpError(404, "File không tồn tại");
+      const parentRel = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
+      assertMutable(scope, parentRel ? `${parentRel}/x` : "x");
+      let zip: AdmZip;
+      try {
+        zip = new AdmZip(abs);
+      } catch {
+        throw new HttpError(422, "File .zip hỏng hoặc không đọc được");
+      }
+      const entries = zip.getEntries();
+      if (entries.length > ZIP_MAX_ENTRIES) throw new HttpError(413, `File nén có quá ${ZIP_MAX_ENTRIES} mục`);
+      const total = entries.reduce((n, e) => n + (e.header.size || 0), 0);
+      if (total > ZIP_MAX_BYTES) throw new HttpError(413, `Nội dung giải nén quá ${ZIP_MAX_BYTES / MB} MB`);
+      await assertQuota(dataDir, ctx, total);
+      const parentAbs = await absIn(scope.root, parentRel);
+      const intoAbs = await uniqueTarget(parentAbs, safeLibName(basename(rel).replace(/\.zip$/i, ""), true), true);
+      await absIn(scope.root, relOf(scope.root, intoAbs));
+      await mkdir(intoAbs, { recursive: true });
+      let files = 0;
+      let dirs = 0;
+      const skipped: string[] = [];
+      for (const e of entries) {
+        const segs = e.entryName.replaceAll("\\", "/").split("/").filter(Boolean);
+        if (!segs.length || segs.some((x) => x === ".." || x.startsWith(".") || x === "__MACOSX")) {
+          skipped.push(e.entryName);
+          continue;
+        }
+        const safe = segs.map((x, i) => safeLibName(x, e.isDirectory || i < segs.length - 1));
+        const target = resolve(intoAbs, ...safe);
+        if (!inside(intoAbs, target)) {
+          skipped.push(e.entryName);
+          continue;
+        }
+        if (e.isDirectory) {
+          await mkdir(target, { recursive: true });
+          dirs++;
+          continue;
+        }
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, e.getData());
+        files++;
+      }
+      const into = relOf(scope.root, intoAbs);
+      await recordAudit(db, ctx, "library.extract", { scope: scope.id, agentKey: scope.agentKey, path: rel, into, files });
+      return { ok: true, into, files, dirs, skipped };
     } catch (err) {
       return fail(reply, err);
     }
