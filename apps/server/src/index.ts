@@ -23,6 +23,8 @@ try {
 const config = loadConfig();
 const db = createDb(config.databaseUrl);
 const providers = createProviderRegistry(config.providers);
+import { loadExtensions, startExtensions } from "./extensions.js";
+const extensions = await loadExtensions();
 const tools = createDefaultToolRegistry();
 
 // Tran dong thoi theo provider, DUNG CHUNG cho moi loi vao (API cong khai,
@@ -105,6 +107,7 @@ const workflows = getWorkflowService({ db, providers, tools, config, mcp, gate: 
 await workflows.startScheduler();
 const wsdb = getWsdbService({ db, providers, tools, config, mcp, gate: providerGate });
 wsdb.start();
+if (extensions.length) await startExtensions({ db, providers, tools, config, mcp, gate: providerGate });
 
 // Memory worker: tự tóm tắt session đã nguội thành memory episodic
 const memoryWorker = new MemoryWorker({ db, providers, tools, config, mcp, gate: providerGate });

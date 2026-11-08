@@ -60,6 +60,7 @@ load_conf() {
   CONF_FILE="/etc/$INSTANCE/penai-install.conf"
   REPO_URL=""; CHANNEL="stable"; DOMAIN=""; PUBLIC_URL=""; PORT="18800"; DB_NAME="penai"; DB_PORT="5432"
   APP_USER="$INSTANCE"; MEMORY_MAX=""; CLI_TOTAL="1"; NODE_DIR="/opt/node24"; PNPM_BIN="/opt/pnpm11/bin/pnpm"
+  REPO_SSH_KEY=""; TAG_RE=""
   local line key val
   while IFS= read -r line || [[ -n $line ]]; do
     [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
@@ -67,7 +68,7 @@ load_conf() {
     key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
     val="${val%\"}"; val="${val#\"}"
     case "$key" in
-      REPO_URL|CHANNEL|DOMAIN|PUBLIC_URL|PORT|DB_NAME|DB_PORT|APP_USER|MEMORY_MAX|CLI_TOTAL|NODE_DIR|PNPM_BIN) printf -v "$key" '%s' "$val" ;;
+      REPO_URL|CHANNEL|DOMAIN|PUBLIC_URL|PORT|DB_NAME|DB_PORT|APP_USER|MEMORY_MAX|CLI_TOTAL|NODE_DIR|PNPM_BIN|REPO_SSH_KEY|TAG_RE) printf -v "$key" '%s' "$val" ;;
     esac
   done < "$CONF_FILE"
   BASE_DIR="/opt/$INSTANCE"; APP_DIR="$BASE_DIR/app"; RELEASES="$BASE_DIR/releases"; REPO_DIR="$BASE_DIR/repo.git"
@@ -83,7 +84,12 @@ set_conf() { # set_conf KEY VALUE — ghi/đổi một dòng trong file cấu h�
   install -m 0640 -o root -g "$APP_USER" "$tmp" "$CONF_FILE"; rm -f "$tmp"
 }
 
-git_repo() { git --git-dir="$REPO_DIR" "$@"; }
+# Kho riêng tư (bản fork nội bộ): REPO_SSH_KEY = khóa SSH chỉ đọc (deploy key) trong penai-install.conf
+git_repo() {
+  if [[ -n ${REPO_SSH_KEY:-} ]]; then
+    GIT_SSH_COMMAND="ssh -i $REPO_SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/etc/$INSTANCE/known_hosts" git --git-dir="$REPO_DIR" "$@"
+  else git --git-dir="$REPO_DIR" "$@"; fi
+}
 as_app() { sudo -u "$APP_USER" env -u NODE_ENV HOME="$DATA_HOME" PATH="$NODE_BIN:$(dirname "$PNPM_BIN"):/usr/local/bin:/usr/bin:/bin" "$@"; }
 as_pg() { # chạy lệnh Node với quyền postgres (chủ database) — migration, tạo tài khoản
   sudo -u postgres env HOME=/tmp PATH="$NODE_BIN:/usr/bin:/bin" PGHOST=/var/run/postgresql PGPORT="$DB_PORT" \
@@ -96,7 +102,8 @@ release_field() { # release_field <thư mục> <khóa> — đọc release.json
   "$NODE_BIN/node" -e 'try{const r=require(process.argv[1]);process.stdout.write(String(r[process.argv[2]]??""))}catch{}' "$f" "$2"
 }
 
-latest_tag() { git_repo tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true; }
+# TAG_RE: mẫu tag phát hành (bản fork dùng vd ^v[0-9]+\.[0-9]+\.[0-9]+-img\.[0-9]+$)
+latest_tag() { git_repo tag -l 'v*' --sort=-v:refname | grep -E "${TAG_RE:-^v[0-9]+\.[0-9]+\.[0-9]+$}" | head -n1 || true; }
 
 resolve_target() { # in: $REF / $CHANNEL → out: TARGET_NAME, TARGET_SHA
   if [[ -n ${REF:-} ]]; then TARGET_NAME="$REF"
@@ -207,7 +214,8 @@ Cách dùng: sudo penai [--instance <tên>] <lệnh> [tùy chọn]
   cli-concurrency [số]        Xem/đổi số tiến trình Claude chạy cùng lúc (vd 2)
   install-browser [--force]   Cài/nâng cấp Chromium cho tool trình duyệt của agent
   auto-update on|off [--channel stable|main] [--every 5min]
-  set-repo <url>              Đổi kho mã nguồn (vd bản fork của bạn)
+  set-repo <url> [--key <khóa-ssh>] [--tags <mẫu>]
+                              Đổi kho mã nguồn (vd bản fork của bạn; kho riêng tư: khóa SSH chỉ đọc)
   version                     In phiên bản lệnh và ứng dụng
 EOF
 }
@@ -601,11 +609,17 @@ cmd_auto_update() {
 
 cmd_set_repo() {
   need_root set-repo
-  local url="${1:-}"; [[ -n $url ]] || die "Cách dùng: sudo penai set-repo <url-kho-git>"
+  local url="${1:-}"; [[ -n $url ]] || die "Cách dùng: sudo penai set-repo <url-kho-git> [--key /etc/<bản-cài>/repo_key] [--tags '<mẫu tag>']"
+  shift || true
+  local key="" tags="" opt
+  while [[ $# -gt 0 ]]; do opt="$1"; shift; case "$opt" in --key) key="${1:-}"; shift || true ;; --tags) tags="${1:-}"; shift || true ;; *) die "Tùy chọn không hiểu: $opt" ;; esac; done
   load_conf
+  if [[ -n $key ]]; then [[ -f $key ]] || die "Không thấy khóa $key"; chmod 0600 "$key"; REPO_SSH_KEY="$key"; fi
   git_repo remote set-url origin "$url"
-  git_repo fetch --quiet --prune origin || die "Không tải được từ $url"
+  git_repo fetch --quiet --prune --tags origin || die "Không tải được từ $url (kho riêng tư: thêm --key <khóa SSH đã gắn làm deploy key>)"
   set_conf REPO_URL "$url"
+  [[ -n $key ]] && set_conf REPO_SSH_KEY "$key"
+  [[ -n $tags ]] && set_conf TAG_RE "$tags"
   ok "Đã đổi nguồn mã sang $url — cập nhật: sudo penai update"
 }
 

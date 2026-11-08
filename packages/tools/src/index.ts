@@ -1,3 +1,4 @@
+import type { ToolHandler } from "./registry.js";
 export * from "./registry.js";
 export * from "./workspace-paths.js";
 export * from "./exec-sandbox.js";
@@ -98,9 +99,15 @@ import { cronCreateTool, cronListTool, cronUpdateTool, cronDeleteTool } from "./
 import { dbSchemaTool, dbQueryTool } from "./builtin/database.js";
 import { workflowListTool, workflowGetTool, workflowCatalogTool, workflowCreateTool, workflowUpdateTool, workflowTestTool, workflowRunTool, workflowRunsTool, workflowDeleteTool } from "./builtin/workflow.js";
 
+const extraTools: ToolHandler<never>[] = [];
+/** Thêm tool vào mọi registry tạo về sau (extension của bản fork). */
+export function registerExtraTool(t: ToolHandler<never>): void {
+  if (!extraTools.some((x) => x.name === t.name)) extraTools.push(t);
+}
+
 /** Registry với toàn bộ tool built-in mặc định. */
 export function createDefaultToolRegistry(): ToolRegistry {
-  return new ToolRegistry()
+  const reg = new ToolRegistry()
     .register(currentTimeTool)
     .register(readFileTool)
     .register(listFilesTool)
@@ -154,4 +161,6 @@ export function createDefaultToolRegistry(): ToolRegistry {
     .register(dbSchemaTool)
     .register(dbQueryTool)
     .register(cronDeleteTool);
+  for (const t of extraTools) if (!reg.has(t.name)) reg.register(t as never);
+  return reg;
 }

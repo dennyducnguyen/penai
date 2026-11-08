@@ -67,7 +67,7 @@ Báo người dùng: phiên bản cũ → mới và danh sách "Thay đổi" mà
 | Quay về bản trước | `sudo penai rollback --yes` |
 | Khôi phục dữ liệu | `sudo penai restore /var/backups/<bản-cài>/<thời-điểm> --yes` — CHỈ khi người dùng yêu cầu rõ |
 | Tự cập nhật hằng ngày | `sudo penai auto-update on --every 1d` |
-| Dùng bản fork của họ | `sudo penai set-repo https://github.com/<họ>/penai.git` rồi `sudo penai update --channel main --yes` |
+| Dùng bản fork của họ (kể cả fork riêng tư có tính năng nội bộ) | `sudo penai set-repo <url> [--key <khóa SSH chỉ đọc>] [--tags '<mẫu tag>']` rồi `sudo penai update --yes`. Tính năng riêng đặt trong `apps/server/src/extensions/` để gộp bản mới không xung đột. Chi tiết: [docs/mo-rong.md](docs/mo-rong.md) |
 | Đổi tên miền | Trỏ DNS tên mới → `sudo certbot --nginx -d <tên-mới>` → sửa `PENAI_PUBLIC_URL` trong `/etc/<bản-cài>/penai.env` và `PUBLIC_URL` trong `/etc/<bản-cài>/penai-install.conf` → `sudo penai restart` |
 
 ### Nhiều bản trên một máy
