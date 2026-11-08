@@ -4,6 +4,12 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.20.2 — 2026-11-08
+
+- **App Facebook riêng — chọn quyền trước khi đăng nhập**: bấm Đăng nhập Facebook hiện hộp chọn tính năng, **mặc định chỉ Messenger** (nhắn tin, Inbox). Tick thêm Bình luận / Đăng bài / Số liệu / Instagram thì mới xin thêm quyền tương ứng. Hết lỗi "Invalid Scopes" khi app chưa thêm đủ quyền; app chỉ Messenger cũng dễ được Meta duyệt hơn. Trang chỉ đăng ký nhận bình luận (`feed`) khi đã được cấp quyền đọc bài.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.20.1 — 2026-11-08
 
 - Trang Channels: mục **Meta Apps** (app Facebook riêng) nằm ngay dưới Danh sách kênh, dễ thấy khi thêm Fanpage / Instagram.

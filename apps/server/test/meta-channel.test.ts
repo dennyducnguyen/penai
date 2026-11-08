@@ -169,7 +169,8 @@ describe("Kênh Facebook qua hub", () => {
     expect((await post(echo)).statusCode).toBe(200);
     const got = await until(async () => {
       const m = await messages();
-      return m.messages.some((x) => x.source === "app") ? m : null;
+      // Hội thoại và tin đọc bằng 2 truy vấn song song → chờ cả hai thấy lượt ghi
+      return m.messages.some((x) => x.source === "app") && m.thread?.pausedUntil ? m : null;
     });
     const human = got.messages.filter((x) => x.source === "app");
     expect(human).toHaveLength(1);

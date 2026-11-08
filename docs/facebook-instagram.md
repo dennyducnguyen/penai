@@ -133,9 +133,20 @@ Dùng khi muốn tự chủ (không phụ thuộc hub) hoặc cần quyền mà 
 4. PenAI → **Channels** → mục **Meta Apps** → **＋ Thêm app** → dán App ID, App Secret → Lưu. Hộp thoại hiện 3 giá trị kèm nút Sao chép:
    - **Valid OAuth Redirect URI** → dán vào Facebook Login → Settings.
    - **Webhook Callback URL** + **Verify Token** → Webhooks → chọn **Page** → Subscribe, tick `messages`, `messaging_postbacks`, `message_echoes`, `feed`. Instagram: chọn **Instagram** → tick `messages`, `comments`.
-5. App dùng Facebook Login for Business có **Configuration** thì dán Configuration ID; không thì để trống (PenAI tự xin các quyền: Trang, tin nhắn, bình luận, đăng bài, số liệu, Instagram).
+5. App dùng Facebook Login for Business có **Configuration** thì dán Configuration ID; không thì để trống.
+6. **Quyền trong app**: chỉ cần nhắn tin thì app chỉ thêm `pages_messaging`, `pages_manage_metadata`, `pages_show_list` — đơn giản và dễ được Meta duyệt nhất. Cần thêm tính năng thì thêm quyền tương ứng vào app:
 
-**Nối Trang:** mục Meta Apps → **Đăng nhập Facebook** → cấp quyền, tick các Trang → quay về PenAI, hộp **Chọn Trang** tự mở → chọn agent → **＋ Kênh Facebook** / **＋ Kênh Instagram**. PenAI tự đăng ký Trang gửi sự kiện cho app.
+   | Tính năng (tick khi bấm Đăng nhập Facebook) | Quyền app cần có |
+   |---|---|
+   | Messenger (luôn có) | `pages_show_list`, `pages_manage_metadata`, `pages_messaging` |
+   | Bình luận bài viết | `pages_read_engagement`, `pages_read_user_content`, `pages_manage_engagement` (Instagram: `instagram_manage_comments`) |
+   | Đăng bài | `pages_read_engagement`, `pages_manage_posts` (Instagram: `instagram_content_publish`) |
+   | Số liệu Trang | `pages_read_engagement`, `read_insights` (Instagram: `instagram_manage_insights`) |
+   | Instagram | `instagram_basic`, `instagram_manage_messages` |
+
+   Tick mục mà app chưa có quyền thì Facebook báo **Invalid Scopes** — bỏ tick mục đó hoặc thêm quyền vào app rồi đăng nhập lại.
+
+**Nối Trang:** mục Meta Apps → **Đăng nhập Facebook** → chọn tính năng (mặc định chỉ Messenger) → **Tiếp tục sang Facebook** → cấp quyền, tick các Trang → quay về PenAI, hộp **Chọn Trang** tự mở → chọn agent → **＋ Kênh Facebook** / **＋ Kênh Instagram**. PenAI tự đăng ký Trang gửi sự kiện cho app.
 
 - Token Trang lấy theo cách này không tự hết hạn (trừ khi đổi mật khẩu hoặc gỡ quyền). Token người dùng của app hết hạn sau ~60 ngày: chỉ cần khi chọn thêm Trang — bấm **Đăng nhập lại**, token các kênh tự cập nhật.
 - Token hỏng (Graph API báo lỗi 190): kênh báo "Đăng nhập Facebook lại" ở Channels → Kết nối Trang và Inbox.

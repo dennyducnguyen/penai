@@ -90,7 +90,13 @@ describe("App Meta riêng", () => {
     const u = new URL(login.json().url);
     expect(u.searchParams.get("client_id")).toBe("1234567890");
     expect(u.searchParams.get("redirect_uri")).toBe("https://penai.test/oauth/meta/callback");
-    expect(u.searchParams.get("scope")).toContain("pages_messaging");
+    // Mặc định chỉ Messenger; tick thêm nhóm nào mới xin quyền nhóm đó
+    expect(u.searchParams.get("scope")!.split(",").sort()).toEqual(["pages_manage_metadata", "pages_messaging", "pages_show_list"]);
+    const more = await app.inject({ method: "POST", url: `/v1/meta-apps/${a.id}/login`, headers: auth(), payload: { groups: ["comments", "instagram", "lạ"] } });
+    const scopes = new URL(more.json().url).searchParams.get("scope")!.split(",");
+    expect(scopes).toEqual(expect.arrayContaining(["pages_read_user_content", "pages_manage_engagement", "instagram_manage_messages", "instagram_manage_comments"]));
+    expect(scopes).not.toContain("pages_manage_posts");
+    expect(scopes).not.toContain("instagram_content_publish");
     // state lạ → quay về Dashboard báo lỗi, không cần đăng nhập
     const cb = await app.inject({ method: "GET", url: "/oauth/meta/callback?code=x&state=khong-co" });
     expect(cb.statusCode).toBe(302);
