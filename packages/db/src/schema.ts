@@ -1217,6 +1217,12 @@ export const workspaceSecrets = pgTable(
     createdBy: uuid("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** 0037: quy trình được ghi đè / xóa khóa này (bước secret). */
+    workflowWritable: boolean("workflow_writable").notNull().default(false),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    version: integer("version").notNull().default(1),
+    updatedVia: text("updated_via").notNull().default("dashboard"),
+    updatedByWorkflow: uuid("updated_by_workflow"),
   },
   (t) => [uniqueIndex("workspace_secrets_workspace_id_name_key").on(t.workspaceId, t.name)],
 );
@@ -1226,4 +1232,46 @@ export const workflowWebhookNonces = pgTable("workflow_webhook_nonces", {
   workflowId: uuid("workflow_id").notNull(),
   nonce: text("nonce").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Khóa (mutex) giữa các lần chạy quy trình (0037). */
+export const workflowLocks = pgTable("workflow_locks", {
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  runId: uuid("run_id").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Nhật ký lệnh ghi / đổi cấu trúc trên CSDL của workspace (0037). */
+export const wsdbAudit = pgTable("wsdb_audit", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  kind: text("kind").notNull(),
+  via: text("via").notNull(),
+  actorUserId: uuid("actor_user_id"),
+  actorAgentId: uuid("actor_agent_id"),
+  workflowId: uuid("workflow_id"),
+  statement: text("statement").notNull(),
+  rowCount: integer("row_count"),
+  destructive: boolean("destructive").notNull().default(false),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
+/** Bản chụp CSDL của workspace (0037). */
+export const wsdbSnapshots = pgTable("wsdb_snapshots", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id").notNull(),
+  takenAt: timestamp("taken_at", { withTimezone: true }).notNull().defaultNow(),
+  manual: boolean("manual").notNull().default(false),
+  tables: jsonb("tables").notNull().default([]),
+  data: bytea("data").notNull(),
+  sizeBytes: integer("size_bytes").notNull().default(0),
 });

@@ -173,6 +173,14 @@ export interface ToolContext {
     runs(input: { id: string; runId?: string; status?: string; limit: number }): Promise<string>;
     remove(id: string): Promise<string>;
   };
+  /**
+   * CSDL riêng của workspace (tool db_*). Runtime kiểm quyền người đang chat + bộ kiểm SQL;
+   * trả chuỗi kết quả, ném lỗi dễ hiểu khi không làm được. Không có → ngữ cảnh không hỗ trợ.
+   */
+  database?: {
+    schema(): Promise<string>;
+    query(input: { sql: string; params?: unknown[]; confirm: boolean; dryRun: boolean }): Promise<string>;
+  };
   /** Landing page HTML cong khai do agent tao/sua. */
   landingPages?: {
     save(input: { slug: string; title: string; html: string }): Promise<string>;

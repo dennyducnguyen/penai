@@ -89,6 +89,7 @@ import type { McpAccess, McpManager } from "./mcp-manager.js";
 import { makeCronToolApi } from "./cron-tools.js";
 import { makeWorkflowToolApi } from "./workflow-tools.js";
 import { getWorkflowService } from "./workflow-service.js";
+import { allowForRole, getWsdbService, makeDbToolApi } from "./wsdb-service.js";
 import { browserForRun } from "./browser-runtime.js";
 import { makeHookDispatcher } from "./hooks.js";
 import { agentLibraryDir, execSandboxFor } from "./library-paths.js";
@@ -618,6 +619,15 @@ export async function buildLoopDeps(
             "người dùng",
         })
       : undefined;
+  // CSDL của workspace (tool db_*): chỉ người có vai trò (viewer trở lên) chat trên trang
+  // Chat của Dashboard — khách qua Zalo/Telegram không đọc được dữ liệu (dùng quy trình
+  // có bước db + "Cho chạy từ chat" nếu muốn cho khách tra cứu có kiểm soát).
+  const dbRole = opts.cronOrigin?.kind === "web" ? (effectiveRole ?? null) : null;
+  const database =
+    agentId && depth === 0 && dbRole && allowForRole(dbRole) && rt.config.workspaceDb.enabled
+      ? makeDbToolApi(getWsdbService(rt), ctx, { role: dbRole, agentId })
+      : undefined;
+  if (!database) for (const t of tools.list()) if (t.name.startsWith("db_")) tools.remove(t.name);
   {
     // Không dùng được thì gỡ tool khỏi danh sách gửi mô hình (đỡ tốn token)
     const manage = opts.cronOrigin?.kind === "web" && !!effectiveRole && hasRole(effectiveRole, "operator");
@@ -791,6 +801,7 @@ return res.text || "(agent không trả về nội dung)";
     timezone: rt.config.timezone,
     ...(cron ? { cron } : {}),
     ...(workflows ? { workflows } : {}),
+    ...(database ? { database } : {}),
     ...(browser ? { browser } : {}),
     mcpGuard,
     requestApproval: async () => opts.autoApproveExec === true,

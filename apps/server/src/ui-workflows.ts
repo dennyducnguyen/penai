@@ -66,7 +66,8 @@ export const WORKFLOWS_UI = String.raw`
     parallel: ["⏸️", "Chạy song song", "control"], "break": ["⏏️", "Thoát vòng lặp", "control"], stop: ["⛔", "Dừng", "control"],
     wait: ["⏳", "Chờ", "control"], set: ["📌", "Đặt biến", "data"], send: ["✉️", "Gửi tin", "output"], tool: ["🛠️", "Gọi tool", "data"],
     mcp: ["🧩", "Gọi MCP", "data"], agent: ["🤖", "Nhờ agent", "ai"], respond: ["↩️", "Trả kết quả webhook", "output"],
-    subworkflow: ["🔗", "Gọi quy trình khác", "control"], file: ["📁", "File", "data"], shell: ["💻", "Lệnh shell", "data"]
+    subworkflow: ["🔗", "Gọi quy trình khác", "control"], file: ["📁", "File", "data"], shell: ["💻", "Lệnh shell", "data"],
+    db: ["🗃️", "Cơ sở dữ liệu", "data"], secret: ["🔐", "Khóa bí mật", "data"]
   };
   var WF_SUMMARY = {
     http: "Gọi một địa chỉ HTTP (GET/POST…), nhận JSON/text về.", code: "Mã JavaScript tính toán, biến đổi dữ liệu (có return).",
@@ -76,7 +77,9 @@ export const WORKFLOWS_UI = String.raw`
     send: "Gửi tin nhắn/file tới một cuộc trò chuyện (Zalo, Telegram…).", tool: "Gọi tool có sẵn hoặc custom tool của PenAI, không qua AI.",
     mcp: "Gọi tool của MCP server đã gắn vào PenAI, không qua AI.", agent: "Giao việc cho một agent AI (đủ tool của nó); nhận câu trả lời, có thể gửi thẳng vào chat.",
     respond: "Trả status/body cho bên gọi webhook.", subworkflow: "Chạy một quy trình khác và nhận kết quả.", file: "Đọc/ghi/liệt kê file trong thư mục của quy trình.",
-    shell: "Chạy lệnh trong sandbox (máy chủ phải bật workflows.allowShell)."
+    shell: "Chạy lệnh trong sandbox (máy chủ phải bật workflows.allowShell).",
+    db: "Đọc/ghi bảng trong CSDL của workspace: chọn thao tác (thêm, sửa, tìm, đếm…) hoặc viết SQL.",
+    secret: "Lưu token / xem hạn / khóa chờ lượt khi làm mới token (giá trị mã hóa, tự che trong nhật ký)."
   };
   var WF_STATUS = { success: ["ok", "✓ xong"], failed: ["bad", "✗ lỗi"], stopped: ["warn", "■ dừng"], timeout: ["bad", "⌛ quá giờ"], cancelled: ["warn", "✕ hủy"], running: ["run", "… đang chạy"], dry_run: ["run", "◌ thử"], skipped: ["", "– bỏ qua"] };
   function wfPill(s) { var x = WF_STATUS[s] || ["", s || ""]; return '<span class="pill ' + x[0] + '">' + esc(x[1]) + "</span>"; }
@@ -199,25 +202,38 @@ export const WORKFLOWS_UI = String.raw`
     };
   }
   function wfSecrets() {
-    var d = wfDlg(680, "<h3 style='margin:0 0 4px'>🔑 Khóa bí mật</h3><div class='muted' style='margin-bottom:8px'>Dùng trong quy trình bằng <code>{{ secrets.TEN }}</code> — chỉ ở bước http (url/headers/query/body), mcp/tool args, shell env. Giá trị mã hóa, không bao giờ hiện lại, tự che *** trong nhật ký.</div>" +
+    var d = wfDlg(820, "<h3 style='margin:0 0 4px'>🔑 Khóa bí mật</h3><div class='muted' style='margin-bottom:8px;font-size:.84rem;line-height:1.55'>Dùng trong quy trình bằng <code>{{ secrets.TEN }}</code> — chỉ ở bước http (url/headers/query/body), mcp/tool args, shell env. Giá trị mã hóa, không bao giờ hiện lại, tự che *** trong nhật ký. " +
+      "Quy trình tự lưu token (bước 🔐 Khóa bí mật → Lưu): khóa do quy trình tạo thì quy trình ghi được; khóa nhập tay cần tick <b>Quy trình được ghi</b> (vd REFRESH_TOKEN đổi sau mỗi lần làm mới).</div>" +
       "<div id='sl'></div><h4 style='margin:14px 0 4px'>Thêm / đổi giá trị</h4><div class='row'><input id='sn' placeholder='TEN_KHOA (viết hoa)' style='flex:1'>" + pwField("sv") + "</div><input id='so' placeholder='Ghi chú (tùy chọn)' style='width:100%;margin-top:6px'>" +
+      "<label style='display:flex;gap:6px;align-items:center;margin-top:8px;opacity:1'><input type='checkbox' id='sw'> Quy trình được ghi đè / xóa khóa này (bước 🔐 Khóa bí mật)</label>" +
       "<div class='dialog-actions'><span id='sm' class='muted' style='flex:1'></span><button class='ghost' id='sc'>Đóng</button><button id='ss'>Lưu</button></div>");
     bindPwToggles(d);
     $("#sc", d).onclick = d.closeNow;
+    var VIA = { workflow: "⚙️ quy trình", api: "🔑 API", dashboard: "👤 Dashboard" };
     function load() {
       api("/v1/secrets").then(function (j) {
         var box = $("#sl", d); box.innerHTML = "";
-        box.appendChild(table(["Tên", "Ghi chú", "Cập nhật", ""], j.secrets, function (s) {
-          var tr = el("tr"); tr.innerHTML = "<td><code>" + esc(s.name) + "</code></td><td class='muted'>" + esc(s.note || "") + "</td><td class='muted' style='font-size:.76rem'>" + esc(fmtTime(s.updatedAt)) + "</td>";
-          var td = el("td"); var b = el("button", { "class": "ghost sm" }, "Xóa");
+        box.appendChild(table(["Tên", "Ghi chú", "Hạn dùng", "Quy trình ghi", "Cập nhật", ""], j.secrets, function (s) {
+          var tr = el("tr");
+          var exp = "";
+          if (s.expiresAt) {
+            var left = (new Date(s.expiresAt).getTime() - Date.now()) / 1000;
+            exp = left <= 0 ? "<span class='pill bad'>đã hết hạn</span>" : "<span class='" + (left < 3600 ? "pill warn" : "muted") + "' style='font-size:.76rem'>" + esc(fmtTime(s.expiresAt)) + "</span>";
+          }
+          tr.innerHTML = "<td><code>" + esc(s.name) + "</code>" + (s.version > 1 ? " <span class='muted' style='font-size:.7rem'>v" + s.version + "</span>" : "") + "</td><td class='muted' style='font-size:.8rem'>" + esc(s.note || "") + "</td><td>" + exp + "</td>";
+          var tw = el("td"); var cb = el("input", { type: "checkbox" }); cb.checked = !!s.workflowWritable;
+          cb.onchange = function () { api("/v1/secrets", { method: "POST", body: { name: s.name, workflowWritable: cb.checked } }).then(function () { toast(cb.checked ? "Quy trình được ghi " + s.name : "Đã khóa ghi " + s.name); }).catch(function (e) { cb.checked = !cb.checked; toast(e.message, 1); }); };
+          tw.appendChild(cb); tr.appendChild(tw);
+          tr.appendChild(el("td", { "class": "muted", style: "font-size:.74rem" }, esc(fmtTime(s.updatedAt)) + (s.updatedVia ? "<br>" + esc(VIA[s.updatedVia] || s.updatedVia) : "")));
+          var td = el("td", { style: "white-space:nowrap" }); var b = el("button", { "class": "ghost sm" }, "Xóa");
           b.onclick = function () { if (confirm("Xóa khóa " + s.name + "? Quy trình đang dùng sẽ lỗi.")) api("/v1/secrets/" + encodeURIComponent(s.name), { method: "DELETE" }).then(load).catch(function (e) { toast(e.message, 1); }); };
-          var e2 = el("button", { "class": "ghost sm" }, "Đổi"); e2.onclick = function () { $("#sn", d).value = s.name; $("#so", d).value = s.note || ""; $("#sv", d).focus(); };
+          var e2 = el("button", { "class": "ghost sm" }, "Đổi"); e2.onclick = function () { $("#sn", d).value = s.name; $("#so", d).value = s.note || ""; $("#sw", d).checked = !!s.workflowWritable; $("#sv", d).focus(); };
           td.appendChild(e2); td.appendChild(document.createTextNode(" ")); td.appendChild(b); tr.appendChild(td); return tr;
         }));
       }).catch(function (e) { $("#sl", d).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
     }
     $("#ss", d).onclick = function () {
-      var body = { name: $("#sn", d).value.trim().toUpperCase(), note: $("#so", d).value };
+      var body = { name: $("#sn", d).value.trim().toUpperCase(), note: $("#so", d).value, workflowWritable: $("#sw", d).checked };
       if ($("#sv", d).value) body.value = $("#sv", d).value;
       api("/v1/secrets", { method: "POST", body: body }).then(function () { $("#sv", d).value = ""; $("#sm", d).innerHTML = '<span class="ok">Đã lưu ' + esc(body.name) + "</span>"; load(); })
         .catch(function (e) { $("#sm", d).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
@@ -411,6 +427,8 @@ export const WORKFLOWS_UI = String.raw`
       if (type === "subworkflow") { s.workflow = ""; s.inputs = {}; }
       if (type === "file") { s.action = "write"; s.path = "ket-qua.txt"; s.content = ""; }
       if (type === "shell") { s.command = "echo xin chao"; }
+      if (type === "db") { s.op = "find"; s.table = ((S.cat.database || {}).tables || [])[0] ? S.cat.database.tables[0].name : ""; s.limit = 100; }
+      if (type === "secret") { s.op = "info"; s.name = ""; }
       return s;
     }
     function pickType(cb) {
@@ -440,6 +458,8 @@ export const WORKFLOWS_UI = String.raw`
         case "subworkflow": return s.workflow || "";
         case "file": return (s.action || "") + " " + (s.path || "");
         case "shell": return s.command || "";
+        case "db": return s.sql ? String(s.sql).replace(/\s+/g, " ") : ({ find: "tìm", count: "đếm", aggregate: "tính", insert: "thêm vào", upsert: "thêm/cập nhật", update: "sửa", "delete": "xóa khỏi" }[s.op] || s.op || "") + " " + (s.table || "?") + (s.where && s.where.length ? " khi " + s.where.map(function (w) { return w.col + " " + (w.op || "eq"); }).join(" và ") : "");
+        case "secret": return ({ set: "lưu", info: "xem hạn", lock: "khóa chờ", unlock: "nhả khóa", "delete": "xóa" }[s.op || "set"] || s.op) + " " + (s.name || "?");
         case "stop": return s.reason || "";
         default: return "";
       }
@@ -578,9 +598,14 @@ export const WORKFLOWS_UI = String.raw`
           ctxInfo.parents.forEach(function (p) { if (p.type === "loop") loopVars.push(p.as || "item"); if (p.type === "loop" || p.type === "while") loopVars.push("index", "loop.first", "loop.last"); });
           if (loopVars.length) groups.push(["Vòng lặp", loopVars]);
           var prev = ctxInfo.before.filter(function (s) { return s.id; });
-          if (prev.length) groups.push(["Bước phía trên", prev.map(function (s) {
-            var lr = S.last[s.id]; return { v: "steps." + s.id + ".output", hint: lr && lr.output != null ? wfShort(lr.output, 50) : (WF_TYPES[s.type] || [""])[1] };
-          })]);
+          if (prev.length) {
+            var pv = [];
+            prev.forEach(function (s) {
+              var lr = S.last[s.id]; pv.push({ v: "steps." + s.id + ".output", hint: lr && lr.output != null ? wfShort(lr.output, 50) : (WF_TYPES[s.type] || [""])[1] });
+              if (s.type === "db") { pv.push({ v: "steps." + s.id + ".output.rows", hint: "danh sách dòng" }); pv.push({ v: "steps." + s.id + ".output.row", hint: "dòng đầu" }); pv.push({ v: "steps." + s.id + ".output.count", hint: "số dòng" }); }
+            });
+            groups.push(["Bước phía trên", pv]);
+          }
         }
         var setv = []; allSteps(S.draft.steps).forEach(function (x) { if (x.step.type === "set") Object.keys(x.step.values || {}).forEach(function (k) { setv.push("vars." + k); }); });
         if (setv.length) groups.push(["Biến", setv]);
@@ -819,6 +844,26 @@ export const WORKFLOWS_UI = String.raw`
           field(b, "✔ Cho phép chạy (quản trị viên duyệt lệnh này)", s, "approved", { kind: "check" });
           b.appendChild(el("div", { "class": "muted", style: "font-size:.76rem" }, "Cần máy chủ bật <code>workflows.allowShell: true</code>. Lệnh chạy trong sandbox, thư mục làm việc là thư mục của quy trình."));
           break;
+        case "db":
+          renderDbStep(b, s, info);
+          break;
+        case "secret": {
+          field(b, "Thao tác", s, "op", { kind: "select", options: [["set", "Lưu giá trị (token…)"], ["info", "Xem hạn (không lộ giá trị)"], ["lock", "Khóa chờ lượt (trước khi làm mới token)"], ["unlock", "Nhả khóa"], ["delete", "Xóa khóa"]], onChange: function () { renderRight(); } });
+          var sop = s.op || "set";
+          field(b, sop === "lock" || sop === "unlock" ? "Tên khóa chờ (thường trùng tên token)" : "Tên khóa (VIẾT_HOA)", s, "name", { list: (S.cat.secrets || []).map(function (x) { return [x.name, x.note || ""]; }), placeholder: "SHOPEE_ACCESS_TOKEN" });
+          if (sop === "set") {
+            field(b, "Giá trị", s, "value", { vars: "tpl", ctx: info, placeholder: "{{ steps.lam_moi.output.body.access_token }}" });
+            field(b, "Hết hạn sau", s, "expiresIn", { vars: "tpl", ctx: info, dropEmpty: true, placeholder: "3600 (giây), 2h, 30d hoặc {{ steps.lam_moi.output.body.expires_in }}" });
+            field(b, "Ghi chú", s, "note", { dropEmpty: true });
+            b.appendChild(el("div", { "class": "muted", style: "font-size:.76rem;margin-top:4px;line-height:1.6" }, "Giá trị được mã hóa, tự che <code>***</code> trong nhật ký (kể cả ở bước gọi API vừa trả token). Khóa do người nhập tay chỉ ghi được khi bật <b>Quy trình được ghi</b> ở 🔑 Khóa bí mật. Bước sau dùng <code>{{ secrets." + esc(s.name || "TEN") + " }}</code> (trong http, tool/mcp args)."));
+          } else if (sop === "info") {
+            b.appendChild(el("div", { "class": "muted", style: "font-size:.76rem;margin-top:4px" }, "Kết quả: <code>steps." + esc(s.id) + ".output.exists</code>, <code>.expiresInSec</code> (số giây còn lại), <code>.expired</code>, <code>.expiresAt</code>. Vd điều kiện làm mới: <code>steps." + esc(s.id) + ".output.expiresInSec &lt; 600</code>."));
+          } else if (sop === "lock") {
+            field(b, "Chờ tối đa", s, "wait", { placeholder: "60s", dropEmpty: true });
+            b.appendChild(el("div", { "class": "muted", style: "font-size:.76rem;margin-top:4px" }, "Chỉ một lần chạy giữ khóa tại một thời điểm — lần chạy khác tới đây sẽ chờ. Lấy được khóa thì nạp lại giá trị khóa bí mật mới nhất. Tự nhả khi lần chạy kết thúc."));
+          }
+          break;
+        }
       }
       // chung
       b.appendChild(el("h4", { style: "margin:14px 0 0;font-size:.85rem" }, "Khi lỗi"));
@@ -841,6 +886,191 @@ export const WORKFLOWS_UI = String.raw`
       }
     }
 
+    // ----- bước 🗃️ Cơ sở dữ liệu -----
+    var DB_OP_LABEL = [["find", "Tìm (lấy dòng)"], ["count", "Đếm"], ["aggregate", "Tính tổng / trung bình…"], ["insert", "Thêm dòng"], ["upsert", "Thêm hoặc cập nhật (theo khóa)"], ["update", "Sửa dòng"], ["delete", "Xóa dòng"]];
+    var DB_WHERE_LABEL = [["eq", "="], ["ne", "khác"], ["gt", ">"], ["gte", "≥"], ["lt", "<"], ["lte", "≤"], ["contains", "chứa"], ["starts", "bắt đầu bằng"], ["in", "thuộc (a,b,c)"], ["null", "trống"], ["notnull", "không trống"], ["sameday", "cùng ngày với"]];
+    var DB_FORM_KEYS = ["op", "table", "values", "match", "onConflict", "where", "columns", "agg", "groupBy", "orderBy", "limit", "offset", "returning"];
+    function dbTables() { return ((S.cat.database || {}).tables || []); }
+    function dbTable(name) { return dbTables().filter(function (t) { return t.name === name; })[0]; }
+    function dbRefreshCat(cb) {
+      api("/v1/workflows/catalog?kind=database").then(function (j) { S.cat.database = j.database || { tables: [] }; if (cb) cb(); }).catch(function () { if (cb) cb(); });
+    }
+    function dbFormOf(s) { var f = {}; DB_FORM_KEYS.forEach(function (k) { if (s[k] !== undefined) f[k] = s[k]; }); return f; }
+    function renderDbStep(b, s, info) {
+      var sqlMode = typeof s.sql === "string";
+      var sw = el("div", { "class": "db-tabs", style: "margin-top:10px" });
+      var bChon = el("button", { "class": "ghost" + (sqlMode ? "" : " on"), type: "button" }, "Chọn (không cần SQL)");
+      var bSql = el("button", { "class": "ghost" + (sqlMode ? " on" : ""), type: "button" }, "Viết SQL");
+      bChon.disabled = bSql.disabled = !editable;
+      bSql.onclick = function () {
+        if (sqlMode) return;
+        var f = dbFormOf(s);
+        var to = function (sql, params) { DB_FORM_KEYS.forEach(function (k) { delete s[k]; }); s.sql = sql; if (params && params.length) s.params = params; else delete s.params; changed(); renderRight(); };
+        if (!f.table) { to("SELECT * FROM ten_bang WHERE cot = $1", ["{{ inputs.x }}"]); return; }
+        api("/v1/db/build", { method: "POST", body: f }).then(function (r) { to(r.sql, r.params); }).catch(function (e) { toast(e.message, 1); });
+      };
+      bChon.onclick = function () {
+        if (!sqlMode) return;
+        if (s.sql && s.sql.trim() && !confirm("Chuyển sang dạng chọn sẽ bỏ câu SQL đang viết. Tiếp tục?")) return;
+        delete s.sql; delete s.params; s.op = "find"; s.table = (dbTables()[0] || {}).name || ""; s.limit = 100; changed(); renderRight();
+      };
+      sw.appendChild(bChon); sw.appendChild(bSql); b.appendChild(sw);
+
+      var tables = dbTables();
+      if (S.cat.database && S.cat.database.error) b.appendChild(el("div", { "class": "err", style: "font-size:.8rem" }, esc(S.cat.database.error)));
+
+      if (sqlMode) {
+        field(b, "Câu SQL (giá trị dùng $1, $2… — KHÔNG chèn {{ }} vào câu lệnh)", s, "sql", { kind: "code", rows: 8, placeholder: "SELECT * FROM don_hang WHERE ngay_dat::date = $1::date" });
+        field(b, "Tham số $1, $2… (mảng JSON, dùng {{ }} được)", s, "params", { kind: "json", rows: 2, vars: "tpl", ctx: info, dropEmpty: true, placeholder: "[\"{{ inputs.ngay }}\", 100]" });
+        if (tables.length) {
+          var hint = el("div", { "class": "muted", style: "font-size:.76rem;margin-top:6px;line-height:1.7" });
+          hint.innerHTML = "Bảng: " + tables.map(function (t) { return "<a href='javascript:void 0' data-t='" + esc(t.name) + "'><code>" + esc(t.name) + "</code></a> <span style='opacity:.7'>(" + t.columns.map(function (c) { return esc(c.name); }).join(", ") + ")</span>"; }).join("<br>");
+          Array.prototype.forEach.call(hint.querySelectorAll("[data-t]"), function (a) { a.onclick = function () { s.sql = (s.sql || "") + (s.sql ? " " : "") + a.getAttribute("data-t"); setDirty(true); renderRight(); }; });
+          b.appendChild(hint);
+        }
+      } else {
+        if (!s.op) s.op = "find";
+        field(b, "Thao tác", s, "op", { kind: "select", options: DB_OP_LABEL, onChange: function () { renderRight(); } });
+        var tsel = el("div", { "class": "wf-inline" });
+        var lb = el("label", null, "Bảng"); b.appendChild(lb);
+        var sel = el("select"); sel.appendChild(el("option", { value: "" }, "(chọn bảng)"));
+        tables.forEach(function (t) { var o = el("option", { value: t.name }, esc(t.name) + (t.comment ? " — " + esc(wfShort(t.comment, 40)) : "")); if (t.name === s.table) o.selected = true; sel.appendChild(o); });
+        if (s.table && !dbTable(s.table)) { var ox = el("option", { value: s.table }, esc(s.table) + " (chưa có)"); ox.selected = true; sel.appendChild(ox); }
+        sel.disabled = !editable;
+        sel.onchange = function () { s.table = sel.value; delete s.values; delete s.match; delete s.where; delete s.agg; delete s.groupBy; delete s.orderBy; changed(); renderRight(); };
+        tsel.appendChild(sel);
+        if (editable) {
+          var nb = el("button", { "class": "ghost sm", type: "button" }, "＋ Tạo bảng mới…");
+          nb.onclick = function () { dbNewTableFromStep(s, info); };
+          tsel.appendChild(nb);
+          var rf = el("button", { "class": "ghost sm", type: "button", title: "Tải lại danh sách bảng" }, "↻"); rf.onclick = function () { dbRefreshCat(renderRight); }; tsel.appendChild(rf);
+        }
+        b.appendChild(tsel);
+        if (!tables.length) b.appendChild(el("div", { "class": "muted", style: "font-size:.78rem;margin-top:4px" }, "CSDL chưa có bảng nào — bấm ＋ Tạo bảng mới (có thể lấy cột từ kết quả chạy thử của bước trước), hoặc vào 🗃️ Dữ liệu."));
+        var t = dbTable(s.table);
+        var cols = t ? t.columns : [];
+        var op = s.op;
+        if (t && (op === "insert" || op === "upsert" || op === "update")) {
+          b.appendChild(el("h4", { style: "margin:12px 0 0;font-size:.85rem" }, op === "update" ? "Giá trị mới" : "Giá trị từng cột"));
+          b.appendChild(el("div", { "class": "muted", style: "font-size:.74rem" }, "Bỏ trống = không ghi cột đó (cột tự tăng / có mặc định tự điền). Bấm { } để chèn kết quả bước trước."));
+          s.values = s.values && typeof s.values === "object" ? s.values : {};
+          if (op === "upsert") { if (!Array.isArray(s.match) || !s.match.length) s.match = t.primaryKey && t.primaryKey.length ? t.primaryKey.slice() : []; }
+          cols.forEach(function (c) {
+            var row = el("div", { style: "margin-top:4px" });
+            var lab = el("div", { style: "font-size:.78rem;display:flex;gap:6px;align-items:center" }, "<code>" + esc(c.name) + "</code> <span class='muted'>" + esc(c.type) + (c.identity ? " · tự tăng" : "") + (c.notNull && !c.hasDefault && !c.identity ? " · bắt buộc" : "") + "</span>");
+            if (op === "upsert") {
+              var mk = el("label", { style: "display:flex;gap:3px;align-items:center;opacity:1;margin:0 0 0 auto;font-size:.74rem" });
+              var cb = el("input", { type: "checkbox" }); cb.checked = s.match.indexOf(c.name) >= 0; cb.disabled = !editable;
+              cb.onchange = function () { var i = s.match.indexOf(c.name); if (cb.checked && i < 0) s.match.push(c.name); if (!cb.checked && i >= 0) s.match.splice(i, 1); setDirty(true); };
+              mk.appendChild(cb); mk.appendChild(document.createTextNode("🔑 khóa so trùng")); lab.appendChild(mk);
+            }
+            row.appendChild(lab);
+            var holder = { v: s.values[c.name] === undefined ? "" : (typeof s.values[c.name] === "string" ? s.values[c.name] : JSON.stringify(s.values[c.name])) };
+            var inp = el("input", { placeholder: c.identity ? "(tự tăng)" : "" }); inp.value = holder.v; inp.disabled = !editable;
+            inp.oninput = function () {
+              var v = inp.value;
+              if (v === "") delete s.values[c.name];
+              else { var j = null; if (/^\s*\{\s*"\$inc"/.test(v)) { try { j = JSON.parse(v); } catch (e) { j = null; } } s.values[c.name] = j || v; }
+              setDirty(true); clearTimeout(S.rt); S.rt = setTimeout(renderLeft, 300);
+            };
+            var line = el("div", { "class": "wf-inline" }); line.appendChild(inp); if (editable) line.appendChild(varMenu(inp, "tpl", info));
+            row.appendChild(line); b.appendChild(row);
+          });
+          if (op === "upsert") field(b, "Trùng khóa thì", s, "onConflict", { kind: "select", options: [["", "Cập nhật các cột trên"], ["ignore", "Bỏ qua (giữ dòng cũ)"]], dropEmpty: true });
+          if (op === "update") b.appendChild(el("div", { "class": "muted", style: "font-size:.74rem;margin-top:4px" }, "Cộng dồn: gõ <code>{\"$inc\": 1}</code> vào ô của cột số."));
+        }
+        if (t && op !== "insert" && op !== "upsert") dbWhereEditor(b, s, cols, info);
+        if (t && op === "aggregate") {
+          b.appendChild(el("h4", { style: "margin:12px 0 0;font-size:.85rem" }, "Tính"));
+          s.agg = Array.isArray(s.agg) && s.agg.length ? s.agg : [{ fn: "count" }];
+          s.agg.forEach(function (a, i) {
+            var r = el("div", { "class": "wf-inline", style: "margin-top:4px" });
+            var fsel = el("select"); [["count", "Đếm"], ["sum", "Tổng"], ["avg", "Trung bình"], ["min", "Nhỏ nhất"], ["max", "Lớn nhất"]].forEach(function (x) { var o = el("option", { value: x[0] }, x[1]); if (x[0] === a.fn) o.selected = true; fsel.appendChild(o); });
+            var csel = el("select"); csel.appendChild(el("option", { value: "" }, a.fn === "count" ? "(mọi dòng)" : "(chọn cột)")); cols.forEach(function (c) { var o = el("option", { value: c.name }, esc(c.name)); if (c.name === a.col) o.selected = true; csel.appendChild(o); });
+            var as = el("input", { placeholder: "tên kết quả", style: "max-width:120px" }); as.value = a.as || "";
+            var x = el("button", { "class": "ghost sm" }, "✕");
+            fsel.disabled = csel.disabled = as.disabled = x.disabled = !editable;
+            fsel.onchange = function () { a.fn = fsel.value; setDirty(true); };
+            csel.onchange = function () { if (csel.value) a.col = csel.value; else delete a.col; setDirty(true); };
+            as.oninput = function () { if (as.value) a.as = as.value; else delete a.as; setDirty(true); };
+            x.onclick = function () { s.agg.splice(i, 1); changed(); renderRight(); };
+            [fsel, csel, as, x].forEach(function (z) { r.appendChild(z); }); b.appendChild(r);
+          });
+          if (editable) { var aa = el("button", { "class": "ghost sm", type: "button" }, "＋ thêm phép tính"); aa.onclick = function () { s.agg.push({ fn: "sum" }); changed(); renderRight(); }; b.appendChild(aa); }
+          var gb = { v: (s.groupBy || []).join(", ") };
+          field(b, "Gom nhóm theo cột (cách nhau dấu phẩy)", gb, "v", { placeholder: "trang_thai", onChange: function (v) { var arr = String(v || "").split(",").map(function (z) { return z.trim(); }).filter(Boolean); if (arr.length) s.groupBy = arr; else delete s.groupBy; } });
+        }
+        if (t && (op === "find" || op === "aggregate")) {
+          var ob = { v: typeof s.orderBy === "string" ? s.orderBy : "" };
+          field(b, "Sắp xếp (cột; thêm dấu - để giảm dần)", ob, "v", { placeholder: "-ngay_dat", list: cols.map(function (c) { return [c.name, "tăng dần"]; }).concat(cols.map(function (c) { return ["-" + c.name, "giảm dần"]; })), onChange: function (v) { if (v) s.orderBy = v; else delete s.orderBy; } });
+          field(b, "Lấy tối đa (dòng)", s, "limit", { kind: "number" });
+        }
+        if (editable && s.table) {
+          var pv = el("button", { "class": "ghost sm", type: "button", style: "margin-top:10px" }, "▸ Xem SQL sẽ chạy");
+          var pre = el("pre", { "class": "wf-pre", style: "display:none" });
+          pv.onclick = function () { api("/v1/db/build", { method: "POST", body: dbFormOf(s) }).then(function (r) { pre.style.display = ""; pre.textContent = r.sql + (r.params.length ? "\n\n-- tham số: " + r.params.map(function (p, i) { return "$" + (i + 1) + " = " + JSON.stringify(p); }).join(", ") : ""); }).catch(function (e) { pre.style.display = ""; pre.textContent = "Lỗi: " + e.message; }); };
+          b.appendChild(pv); b.appendChild(pre);
+        }
+      }
+      field(b, "Cho phép sửa/xóa MỌI dòng, DROP, TRUNCATE (đã hiểu rủi ro)", s, "confirm", { kind: "check" });
+      b.appendChild(el("div", { "class": "muted", style: "font-size:.76rem;margin-top:4px;line-height:1.6" }, "Kết quả: <code>steps." + esc(s.id) + ".output.rows</code> (danh sách dòng — đưa vào Lặp danh sách được), <code>.row</code> (dòng đầu, vd <code>.row.doanh_thu</code>), <code>.count</code>. Chạy thử: lệnh ghi chạy thật trong giao dịch rồi <b>hoàn tác</b> — biết trước số dòng mà không lưu."));
+    }
+    function dbWhereEditor(b, s, cols, info) {
+      b.appendChild(el("h4", { style: "margin:12px 0 0;font-size:.85rem" }, "Điều kiện (tất cả đều đúng)"));
+      s.where = Array.isArray(s.where) ? s.where : [];
+      s.where.forEach(function (w, i) {
+        var r = el("div", { "class": "wf-inline", style: "margin-top:4px" });
+        var c = el("select", { style: "max-width:140px" }); cols.forEach(function (x) { var o = el("option", { value: x.name }, esc(x.name)); if (x.name === w.col) o.selected = true; c.appendChild(o); });
+        var o2 = el("select", { style: "max-width:120px" }); DB_WHERE_LABEL.forEach(function (x) { var o = el("option", { value: x[0] }, esc(x[1])); if (x[0] === (w.op || "eq")) o.selected = true; o2.appendChild(o); });
+        var v = el("input", { placeholder: "giá trị / {{ … }}" }); v.value = w.value === undefined || w.value === null ? "" : (typeof w.value === "string" ? w.value : JSON.stringify(w.value));
+        var x = el("button", { "class": "ghost sm" }, "✕");
+        c.disabled = o2.disabled = v.disabled = x.disabled = !editable;
+        c.onchange = function () { w.col = c.value; setDirty(true); };
+        o2.onchange = function () { w.op = o2.value; setDirty(true); renderRight(); };
+        v.oninput = function () { w.value = v.value; setDirty(true); clearTimeout(S.rt); S.rt = setTimeout(renderLeft, 300); };
+        x.onclick = function () { s.where.splice(i, 1); if (!s.where.length) delete s.where; changed(); renderRight(); };
+        r.appendChild(c); r.appendChild(o2);
+        if (w.op !== "null" && w.op !== "notnull") { r.appendChild(v); if (editable) r.appendChild(varMenu(v, "tpl", info)); }
+        r.appendChild(x); b.appendChild(r);
+      });
+      if (editable) { var a = el("button", { "class": "ghost sm", type: "button", style: "margin-top:4px" }, "＋ thêm điều kiện"); a.onclick = function () { s.where = s.where || []; s.where.push({ col: (cols[0] || {}).name || "", op: "eq", value: "" }); changed(); renderRight(); }; b.appendChild(a); }
+      if (!s.where.length && (s.op === "update" || s.op === "delete")) b.appendChild(el("div", { "class": "err", style: "font-size:.76rem;margin-top:4px" }, "Không có điều kiện → " + (s.op === "delete" ? "xóa" : "sửa") + " MỌI dòng. Thêm điều kiện, hoặc tick ô cho phép bên dưới nếu đúng ý."));
+    }
+    // Tạo bảng mới từ form bước: chọn lấy cột từ kết quả chạy thử của một bước phía trên (nếu có)
+    function dbNewTableFromStep(s, info) {
+      var cands = [];
+      (info.before || []).forEach(function (p) {
+        var lr = (S.runMarks && S.runMarks[p.id]) || S.last[p.id];
+        if (!lr || lr.output == null) return;
+        var out = lr.output;
+        var pick = function (label, v) { if (v && typeof v === "object") { var row = Array.isArray(v) ? v[0] : v; if (row && typeof row === "object" && !Array.isArray(row)) cands.push({ label: label, sample: v }); } };
+        pick("steps." + p.id + ".output", out);
+        if (out && typeof out === "object" && !Array.isArray(out)) Object.keys(out).forEach(function (k) {
+          pick("steps." + p.id + ".output." + k, out[k]);
+          if (out[k] && typeof out[k] === "object" && !Array.isArray(out[k])) Object.keys(out[k]).forEach(function (k2) { if (Array.isArray(out[k][k2])) pick("steps." + p.id + ".output." + k + "." + k2, out[k][k2]); });
+        });
+      });
+      var done = function (name, cols) {
+        dbRefreshCat(function () {
+          s.table = name;
+          if (s.op === "insert" || s.op === "upsert") {
+            s.values = s.values || {};
+            var asVar = null; (info.parents || []).forEach(function (p) { if (p.type === "loop") asVar = p.as || "item"; });
+            (cols || []).forEach(function (c) { if (c.source && asVar) s.values[c.name] = "{{ " + asVar + (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(c.source) ? "." + c.source : "[" + JSON.stringify(c.source) + "]") + " }}"; });
+          }
+          changed(); renderRight();
+        });
+      };
+      if (!cands.length) { dbCreateTableDialog({ onDone: done }); return; }
+      var d = wfDlg(620, "<h3 style='margin:0 0 6px'>＋ Tạo bảng mới</h3><div class='muted' style='font-size:.82rem;margin-bottom:8px'>Lấy sẵn tên cột + kiểu từ dữ liệu mẫu (kết quả chạy thử gần nhất), hay tự nhập?</div><div id='cl'></div><div class='dialog-actions'><button class='ghost' id='cx'>Hủy</button><button class='ghost' id='cm'>Tự nhập cột</button></div>");
+      $("#cx", d).onclick = d.closeNow;
+      $("#cm", d).onclick = function () { d.closeNow(); dbCreateTableDialog({ onDone: done }); };
+      cands.slice(0, 12).forEach(function (c) {
+        var bt = el("button", { "class": "ghost", style: "display:block;width:100%;text-align:left;margin-bottom:4px" }, "<code>" + esc(c.label) + "</code> <span class='muted' style='font-size:.74rem'>" + esc(wfShort(Array.isArray(c.sample) ? c.sample[0] : c.sample, 80)) + "</span>");
+        bt.onclick = function () { d.closeNow(); dbCreateTableDialog({ sample: c.sample, onDone: done }); };
+        $("#cl", d).appendChild(bt);
+      });
+    }
     function renderInputs(b) {
       b.innerHTML = "<h3>🧾 Tham số đầu vào (inputs)</h3><div class='muted' style='font-size:.8rem'>Webhook (query + body) và nút Chạy điền vào đây. Dùng <code>{{ inputs.ten }}</code>.</div>";
       var ins = S.draft.inputs = S.draft.inputs || {};

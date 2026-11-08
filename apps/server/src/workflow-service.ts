@@ -35,6 +35,8 @@ import {
   getWorkflowBySlug,
   getWorkflowRun,
   getWorkflowVersion,
+  getWorkspaceSecretMeta,
+  checkWsdbSql,
   listAgents,
   listChannels,
   listCustomTools,
@@ -47,9 +49,17 @@ import {
   pruneWorkflowData,
   recordAudit,
   recordTraceSafe,
+  releaseRunLocks,
+  releaseWorkflowLock,
   saveWorkflowVersion,
+  scrubWorkflowRunSteps,
+  SecretNotWritableError,
   setWorkflowNextRun,
+  tryAcquireWorkflowLock,
   updateWorkflowMeta,
+  workflowDeleteSecret,
+  workflowWriteSecret,
+  wsdbSchemaName,
   type WorkflowChangeVia,
   type WorkflowRow,
 } from "@penai/db";
@@ -57,6 +67,7 @@ import {
   applyOps,
   diffDefinitions,
   formatIssues,
+  maskSecrets,
   nextRun,
   runAgentText,
   runWorkflow,
@@ -78,6 +89,7 @@ import { agentOpts, buildLoopDeps, buildWorkspaceRegistry, reasoningEffortOf, sy
 import { channelHandlers, scheduleOnChannelQueue } from "./channels-runtime.js";
 import { execSandboxFor } from "./library-paths.js";
 import { createOutboundCollector } from "./web-chat.js";
+import { allowForRole, getWsdbService } from "./wsdb-service.js";
 
 const MEDIA_RE = /\[\[media:([^\]]+)\]\]/g;
 const HTTP_MAX_BYTES = 5 * 1024 * 1024;
@@ -234,7 +246,7 @@ export class WorkflowService {
       out.tools = [
         ...reg
           .definitions()
-          .filter((t) => !hidden.has(t.name) && !t.name.startsWith("team_") && !t.name.startsWith("workflow_"))
+          .filter((t) => !hidden.has(t.name) && !t.name.startsWith("team_") && !t.name.startsWith("workflow_") && !t.name.startsWith("db_"))
           .map((t) => ({ name: t.name, description: t.description.slice(0, 300), parameters: t.parameters, custom: false, requiresApproval: t.name === "exec" })),
         ...customs
           .filter((c) => c.enabled)
@@ -252,6 +264,23 @@ export class WorkflowService {
     }
     if (want("secrets")) out.secrets = (await listWorkspaceSecrets(this.db, ctx)).map((s) => ({ name: s.name, note: s.note }));
     if (want("steps")) out.stepTypes = STEP_INFO;
+    if (want("database") && this.rt.config.workspaceDb.enabled) {
+      try {
+        const sch = await getWsdbService(this.rt).schema(ctx);
+        out.database = {
+          tables: sch.tables.map((t) => ({
+            name: t.name,
+            kind: t.kind,
+            comment: t.comment,
+            rows: t.rowsEstimate,
+            primaryKey: t.primaryKey,
+            columns: t.columns.map((c) => ({ name: c.name, type: c.type, primaryKey: c.primaryKey, unique: c.unique, identity: c.identity, notNull: c.notNull, hasDefault: c.default !== null })),
+          })),
+        };
+      } catch (e) {
+        out.database = { tables: [], error: (e as Error).message };
+      }
+    }
     return out;
   }
 
@@ -264,6 +293,7 @@ export class WorkflowService {
       agents: Array<{ key: string }>;
       workflows: Array<{ id: string; slug: string }>;
       secrets: Array<{ name: string }>;
+      database?: { tables: Array<{ name: string }>; error?: string };
     };
     return {
       channels: c.channels,
@@ -273,6 +303,7 @@ export class WorkflowService {
       agents: c.agents.map((a) => a.key),
       workflows: c.workflows,
       secrets: c.secrets.map((s) => s.name),
+      ...(c.database && !c.database.error ? { tables: c.database.tables.map((t) => t.name) } : {}),
     };
   }
 
@@ -285,6 +316,27 @@ export class WorkflowService {
   async validate(ctx: WorkspaceContext, input: unknown, opts: { lenientRefs?: boolean } = {}) {
     const catalog = await this.validatorCatalog(ctx);
     const res = await validateDefinition(input, { limits: this.limits(), catalog, timezone: this.rt.config.timezone });
+    // Bước db viết SQL: kiểm bằng bộ phân tích SQL thật (cú pháp + lệnh bị chặn) ngay lúc lưu
+    {
+      const schema = wsdbSchemaName(ctx.workspaceId);
+      const jobs: Array<{ label: string; sql: string; confirm: boolean }> = [];
+      walkSteps(res.definition.steps ?? [], (st, path) => {
+        if (st && st.type === "db" && typeof st.sql === "string" && st.sql.trim() && !st.sql.includes("{{")) {
+          jobs.push({ label: `${path} (${st.id})`, sql: st.sql, confirm: st.confirm === true });
+        }
+      });
+      for (const j of jobs) {
+        try {
+          const chk = await checkWsdbSql(j.sql, schema);
+          if (chk.destructive && !j.confirm) {
+            res.errors.push({ path: `${j.label}.sql`, message: "Câu lệnh có thể xóa nhiều dữ liệu (DROP, TRUNCATE, DELETE/UPDATE không WHERE, xóa cột) — thêm WHERE, hoặc đặt \"confirm\": true nếu đúng ý" });
+          }
+        } catch (e) {
+          res.errors.push({ path: `${j.label}.sql`, message: (e as Error).message });
+        }
+      }
+      res.ok = res.errors.length === 0;
+    }
     if (opts.lenientRefs) {
       const REF = /^(Kênh ".*" không tồn tại|Tool ".*" không có|MCP server ".*" không có|MCP ".*" không có tool|Agent ".*" không có|Quy trình ".*" không có|Khóa bí mật secrets\.)/;
       const keep: ValidationIssue[] = [];
@@ -646,12 +698,22 @@ export class WorkflowService {
   ): Promise<RunResult> {
     const def = row.definition as unknown as WorkflowDefinition;
     const secrets = await this.secretsFor(ctx);
+    // Giá trị bí mật mới do bước secret lưu giữa chừng (token vừa làm mới): che trong
+    // nhật ký chưa ghi + sửa nhật ký đã ghi khi lần chạy xong.
+    const newSecretValues: string[] = [];
     let seq = 0;
     let buffer: Parameters<typeof addWorkflowRunSteps>[3] = [];
     let flushing: Promise<void> = Promise.resolve();
     const flush = () => {
       if (!buffer.length) return flushing;
-      const batch = buffer;
+      const batch = newSecretValues.length
+        ? buffer.map((l) => ({
+            ...l,
+            input: maskSecrets(l.input, newSecretValues),
+            output: maskSecrets(l.output, newSecretValues),
+            error: l.error ? String(maskSecrets(l.error, newSecretValues)) : null,
+          }))
+        : buffer;
       buffer = [];
       flushing = flushing.then(() => addWorkflowRunSteps(this.db, ctx, runId, batch).catch((e) => logger.warn(`Quy trình: ghi nhật ký bước lỗi — ${(e as Error).message}`)));
       return flushing;
@@ -661,7 +723,9 @@ export class WorkflowService {
       if (buffer.length >= 25) void flush();
     };
     const host = this.makeHost(row, runId, ctx, ownerRole, req, Object.values(secrets));
-    const result = await runWorkflow({
+    let result: RunResult;
+    try {
+    result = await runWorkflow({
       definition: def,
       host,
       inputs: req.inputs ?? {},
@@ -675,9 +739,16 @@ export class WorkflowService {
       allowShell: this.cfg.allowShell,
       signal,
       onStep,
+      onSecretValue: (v) => {
+        newSecretValues.push(v);
+      },
       ...(req.onRespond ? { onRespond: req.onRespond } : {}),
     });
     await flush();
+    if (newSecretValues.length) await scrubWorkflowRunSteps(this.db, ctx, runId, newSecretValues).catch((e) => logger.warn(`Quy trình: che khóa trong nhật ký lỗi — ${(e as Error).message}`));
+    } finally {
+      await releaseRunLocks(this.db, runId).catch(() => {});
+    }
     await finishWorkflowRun(this.db, ctx, runId, {
       status: result.status,
       error: result.error,
@@ -1034,6 +1105,73 @@ export class WorkflowService {
         else await writeFile(abs, x.content ?? "", "utf8");
         const st = await stat(abs);
         return { path: x.path, absPath: abs, size: st.size };
+      },
+
+      db: async (x) => {
+        const allow = allowForRole(ownerRole) ?? "read";
+        return getWsdbService(rt).query(
+          { ctx, allow, actor: { via: "workflow", workflowId: row.id, userId: ctx.userId } },
+          { sql: x.sql, params: x.params, confirm: x.confirm, dryRun: x.dryRun },
+        );
+      },
+
+      secret: async (x) => {
+        const sleepMs = (ms: number) => new Promise<void>((r, j) => {
+          const t = setTimeout(r, ms);
+          x.signal.addEventListener("abort", () => { clearTimeout(t); j(x.signal.reason ?? new Error("Đã hủy")); }, { once: true });
+        });
+        try {
+          switch (x.op) {
+            case "set": {
+              const meta = await workflowWriteSecret(this.db, ctx, {
+                name: x.name,
+                valueEncrypted: encryptSecret(x.value ?? ""),
+                expiresAt: x.expiresAt ? new Date(x.expiresAt) : null,
+                ...(x.note !== undefined ? { note: x.note } : {}),
+                workflowId: row.id,
+              });
+              return { output: { saved: true, name: meta.name, version: meta.version, expiresAt: meta.expiresAt?.toISOString() ?? null } };
+            }
+            case "info": {
+              const m = await getWorkspaceSecretMeta(this.db, ctx, x.name);
+              if (!m) return { output: { name: x.name, exists: false, expired: true, expiresAt: null, expiresInSec: null } };
+              const left = m.expiresAt ? Math.round((m.expiresAt.getTime() - Date.now()) / 1000) : null;
+              return {
+                output: {
+                  name: m.name,
+                  exists: true,
+                  expiresAt: m.expiresAt?.toISOString() ?? null,
+                  expiresInSec: left,
+                  expired: left !== null && left <= 0,
+                  version: m.version,
+                  updatedAt: m.updatedAt.toISOString(),
+                  updatedVia: m.updatedVia,
+                  writable: m.workflowWritable,
+                },
+              };
+            }
+            case "delete":
+              return { output: { name: x.name, deleted: await workflowDeleteSecret(this.db, ctx, x.name) } };
+            case "lock": {
+              const t0 = Date.now();
+              const wait = Math.max(0, x.waitMs ?? 60_000);
+              const ttl = Math.max(5_000, x.ttlMs ?? 120_000);
+              for (;;) {
+                if (await tryAcquireWorkflowLock(this.db, ctx, x.name, runId, ttl)) break;
+                if (Date.now() - t0 >= wait) throw new Error(`Đang có lần chạy khác giữ khóa "${x.name}" quá ${Math.round(wait / 1000)}s — thử lại sau`);
+                await sleepMs(1000);
+              }
+              // Lần chạy giữ khóa trước có thể vừa làm mới token → nạp lại giá trị mới nhất
+              return { output: { locked: true, name: x.name, waitedMs: Date.now() - t0 }, secrets: await this.secretsFor(ctx) };
+            }
+            case "unlock":
+              return { output: { name: x.name, released: await releaseWorkflowLock(this.db, ctx, x.name, runId) } };
+          }
+        } catch (err) {
+          if (err instanceof SecretNotWritableError) throw new Error(err.message);
+          throw err;
+        }
+        throw new Error(`Thao tác "${String(x.op)}" không có`);
       },
 
       shell: async (x) => {

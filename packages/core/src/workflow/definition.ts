@@ -7,6 +7,7 @@
  *   "steps[2].then[0] (bao_kho).channel: kênh 'zalo:nhom-kd' không tồn tại; kênh có: …"
  */
 import { checkSyntax, stripBraces, templateExprs } from "./expr.js";
+import { DB_OPS, DB_WHERE_OPS } from "./db-query.js";
 import { minIntervalMs, normalizeSchedule, validateSchedule } from "../cron.js";
 
 export const STEP_TYPES = [
@@ -29,6 +30,8 @@ export const STEP_TYPES = [
   "subworkflow",
   "file",
   "shell",
+  "db",
+  "secret",
 ] as const;
 export type StepType = (typeof STEP_TYPES)[number];
 
@@ -53,6 +56,8 @@ export const STEP_INFO: Record<StepType, { label: string; group: "data" | "contr
   subworkflow: { label: "Gọi quy trình khác", group: "control", summary: "Chạy một quy trình khác và nhận kết quả." },
   file: { label: "File", group: "data", summary: "Đọc/ghi/liệt kê file trong thư mục của quy trình." },
   shell: { label: "Lệnh shell", group: "data", summary: "Chạy lệnh trong sandbox (cần bật workflows.allowShell)." },
+  db: { label: "Cơ sở dữ liệu", group: "data", summary: "Đọc/ghi bảng trong CSDL của workspace: chọn thao tác (thêm, sửa, tìm, đếm…) hoặc viết SQL với $1, $2." },
+  secret: { label: "Khóa bí mật", group: "data", summary: "Lưu / xem hạn / xóa khóa bí mật (token…), hoặc khóa để chỉ một lần chạy làm mới token." },
 };
 
 export interface WorkflowInput {
@@ -132,6 +137,8 @@ export interface WorkflowCatalog {
   agents?: string[];
   workflows?: Array<{ id: string; slug: string }>;
   secrets?: string[];
+  /** Bảng trong CSDL của workspace (chỉ cảnh báo khi không thấy — bảng có thể do bước trước tạo). */
+  tables?: string[];
 }
 
 const ID_RE = /^[a-z0-9_]{1,40}$/;
@@ -622,6 +629,60 @@ export async function validateDefinition(
         if (!limits.allowShell) warn(label, "Bước shell đang bị tắt trên máy chủ này (cấu hình workflows.allowShell) — chạy sẽ báo lỗi");
         if (s.env !== undefined && !isObj(s.env)) err(`${label}.env`, "env là object");
         break;
+      case "db": {
+        const hasSql = isStr(s.sql) && s.sql.trim() !== "";
+        if (hasSql) {
+          if ((s.sql as string).includes("{{")) {
+            err(`${label}.sql`, "Không chèn {{ }} vào câu SQL (tránh lỗi chèn mã độc) — viết $1, $2… trong SQL và đặt giá trị vào params, vd params: [\"{{ inputs.ma }}\"]");
+          }
+          if (s.params !== undefined && !Array.isArray(s.params) && !isStr(s.params)) err(`${label}.params`, 'params là mảng giá trị cho $1, $2…, vd ["{{ inputs.ma }}", 100]');
+        } else {
+          if (s.op === undefined) {
+            err(label, 'Bước db cần "sql" (câu SQL, tham số $1, $2… lấy từ params) hoặc "op" + "table" (thao tác dạng chọn)');
+            break;
+          }
+          if (!DB_OPS.includes(s.op as never)) err(`${label}.op`, `op là: ${DB_OPS.join(", ")}`);
+          need("table", "tên bảng trong CSDL của workspace");
+          const tl = opts.catalog?.tables;
+          if (tl && isStr(s.table) && !s.table.includes("{{") && !tl.includes(s.table)) {
+            warn(`${label}.table`, `Bảng "${s.table}" chưa có trong CSDL của workspace (có: ${suggest(s.table, tl)}) — nếu bước trước tạo bảng thì bỏ qua cảnh báo này`);
+          }
+          if (["insert", "upsert", "update"].includes(String(s.op)) && (!isObj(s.values) || !Object.keys(s.values).length)) {
+            err(`${label}.values`, 'values là object { "cột": "{{ giá trị }}" }');
+          }
+          if (s.op === "upsert" && (!Array.isArray(s.match) || !s.match.length)) {
+            err(`${label}.match`, 'upsert cần match: ["cột khóa"] (khóa chính hoặc cột duy nhất) để nhận ra dòng đã có');
+          }
+          if (s.where !== undefined) {
+            if (!Array.isArray(s.where)) err(`${label}.where`, 'where là mảng [{ "col": "cột", "op": "eq", "value": "{{ … }}" }]');
+            else
+              (s.where as unknown[]).forEach((w, i) => {
+                if (!isObj(w) || !isStr(w.col)) err(`${label}.where[${i}]`, '{ "col": "cột", "op": "eq|ne|gt|gte|lt|lte|contains|starts|in|null|notnull|sameday", "value": … }');
+                else if (w.op !== undefined && !(String(w.op) in DB_WHERE_OPS)) err(`${label}.where[${i}].op`, `op là: ${Object.keys(DB_WHERE_OPS).join(", ")}`);
+              });
+          }
+          if (s.op === "aggregate" && (!Array.isArray(s.agg) || !s.agg.length)) err(`${label}.agg`, 'aggregate cần agg: [{ "fn": "sum", "col": "tong_tien" }]');
+          if ((s.op === "update" || s.op === "delete") && (!Array.isArray(s.where) || !s.where.length) && s.confirm !== true) {
+            err(`${label}.where`, `${s.op === "delete" ? "Xóa" : "Sửa"} mà không có điều kiện sẽ đụng MỌI dòng — thêm where, hoặc đặt "confirm": true nếu đúng ý`);
+          }
+        }
+        break;
+      }
+      case "secret": {
+        const op = String(s.op ?? "set");
+        if (!["set", "info", "delete", "lock", "unlock"].includes(op)) err(`${label}.op`, 'op là "set" (lưu), "info" (xem hạn, không lộ giá trị), "delete", "lock" (chờ tới lượt), "unlock"');
+        need("name", op === "lock" || op === "unlock" ? "tên khóa chờ, vd SHOPEE_TOKEN" : "tên khóa bí mật VIẾT_HOA, vd SHOPEE_ACCESS_TOKEN");
+        if (isStr(s.name) && !s.name.includes("{{")) {
+          const re = op === "lock" || op === "unlock" ? /^[A-Za-z0-9_:.-]{1,80}$/ : /^[A-Z][A-Z0-9_]{0,63}$/;
+          if (!re.test(s.name)) err(`${label}.name`, op === "lock" || op === "unlock" ? "Tên khóa chờ: chữ, số, _ : . -" : "Tên khóa VIẾT HOA, số, dấu _ (vd SHOPEE_REFRESH_TOKEN)");
+        }
+        if (op === "set") {
+          if (s.value === undefined || s.value === "") err(`${label}.value`, 'Thiếu value, vd "{{ steps.lam_moi.output.body.access_token }}"');
+          if (s.expiresIn !== undefined && !isStr(s.expiresIn) && typeof s.expiresIn !== "number") err(`${label}.expiresIn`, 'expiresIn là số giây hoặc "2h", "30d", hoặc "{{ … }}"');
+        }
+        if (op === "lock" && s.wait !== undefined && parseDuration(s.wait) === null && !String(s.wait).includes("{{")) err(`${label}.wait`, 'wait dạng "30s", "2m"');
+        break;
+      }
       case "stop":
       case "break":
         break;
@@ -631,6 +692,7 @@ export async function validateDefinition(
     const allowSecrets = SECRET_FIELDS[s.type] ?? [];
     for (const [k, v] of Object.entries(s)) {
       if (["id", "type", "then", "else", "body", "branches", "cases", "default", "code", "cond", "over", "value"].includes(k)) continue;
+      if (s.type === "db" && k === "sql") continue;
       const tpls: Array<{ path: string; expr: string }> = [];
       collectTemplates(v, `${label}.${k}`, tpls);
       for (const t of tpls) syntaxJobs.push({ path: t.path, code: t.expr, kind: "expr" });

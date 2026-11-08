@@ -46,7 +46,7 @@ export const workflowGetTool: ToolHandler<typeof getSchema> = {
 
 const catalogSchema = z.object({
   kind: z
-    .enum(["guide", "channels", "tools", "mcp", "agents", "workflows", "secrets", "steps", "templates"])
+    .enum(["guide", "channels", "tools", "mcp", "agents", "workflows", "secrets", "database", "steps", "templates"])
     .optional()
     .describe("guide = hướng dẫn cú pháp JSON quy trình (đọc trước khi tạo lần đầu). Nhóm khác = danh mục tương ứng. Bỏ trống = mọi danh mục (dài)."),
 });

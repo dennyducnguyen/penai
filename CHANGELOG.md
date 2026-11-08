@@ -4,6 +4,18 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.16.0 — 2026-11-08
+
+- **🗃️ CSDL riêng của mỗi workspace** — bảng PostgreSQL thật ngay trong PenAI, không cần Supabase hay Google Sheets. Quy trình, agent, API và AI bên ngoài (MCP) dùng chung:
+  - Dashboard → **🗃️ Dữ liệu**: tạo bảng như Excel (kiểu cột dễ hiểu, khóa, mặc định), xem/lọc/sắp xếp, bấm đúp sửa ô, thêm/xóa dòng, nhập/xuất CSV, ô chạy SQL, **lịch sử thay đổi** (ai, từ đâu, câu lệnh), **sao lưu tự động mỗi ngày** + khôi phục từng bảng, "Dùng bởi" (quy trình nào đọc/ghi bảng nào).
+  - Bước mới **🗃️ Cơ sở dữ liệu** trong quy trình: chọn thao tác (tìm, đếm, tính tổng, thêm, thêm-hoặc-cập-nhật, sửa, xóa) không cần biết SQL, hoặc viết SQL với tham số `$1, $2`. **＋ Tạo bảng mới** lấy sẵn cột từ kết quả chạy thử của bước trước. Chạy thử = chạy thật rồi hoàn tác.
+  - Agent khi chat trên trang Chat có tool `db_schema`, `db_query` (viewer chỉ đọc, operator ghi + tạo bảng). Khách qua Zalo/Telegram không truy cập trực tiếp.
+  - API `/v1/db/*` (khóa `psk_`) và quyền MCP mới `db:read`, `db:write`.
+  - An toàn: mỗi workspace một schema + role riêng, không đọc được bảng của PenAI hay workspace khác; câu lệnh qua bộ phân tích cú pháp thật của PostgreSQL (chặn đổi quyền, hàm hệ thống…); lệnh xóa nhiều dữ liệu cần xác nhận; hạn mức 500 MB, 15 giây, 1000 dòng mỗi lệnh (đổi ở khóa `workspaceDb`).
+- **🔐 Quy trình tự lưu token**: bước mới **Khóa bí mật** — lưu token / refresh token (mã hóa, tự che `***` trong nhật ký kể cả bước vừa nhận token), xem hạn dùng, **khóa chờ lượt** để hai lần chạy không cùng làm mới token. 🔑 Khóa bí mật hiện hạn dùng, nguồn cập nhật và tick **Quy trình được ghi**. Mẫu mới: **Làm mới token OAuth**, **Đồng bộ đơn hàng vào CSDL**.
+
+Cập nhật: `sudo penai update`. Có migration (0037, chỉ thêm bảng/cột), không phải làm gì thêm. Hướng dẫn: [docs/co-so-du-lieu.md](docs/co-so-du-lieu.md).
+
 ## 1.15.1 — 2026-11-08
 
 - **Sửa lỗi "📋 Từ mẫu" của trang Quy trình không tạo được quy trình** (báo kênh "telegram:Bot" không tồn tại). Mẫu và quy trình nhập JSON được tạo ở trạng thái tắt: tên kênh, agent, tool, MCP chưa đúng chỉ hiện cảnh báo để bạn sửa. Khi bấm **Bật** mới kiểm chặt — còn sai thì không bật và chỉ rõ chỗ cần sửa.

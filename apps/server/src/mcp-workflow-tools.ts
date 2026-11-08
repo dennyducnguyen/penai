@@ -94,7 +94,7 @@ export function addWorkflowMcpTools(server: McpServer, p: McpPrincipal, svc: Wor
     "Danh mục để dựng bước",
     "Kênh chat + cuộc trò chuyện gần đây, tool, MCP server + tool, agent, quy trình khác, tên khóa bí mật, loại bước, mẫu có sẵn — để điền đúng tên.",
     "workflow:manage",
-    { kind: z.enum(["channels", "tools", "mcp", "agents", "workflows", "secrets", "steps", "templates"]).optional() },
+    { kind: z.enum(["channels", "tools", "mcp", "agents", "workflows", "secrets", "database", "steps", "templates"]).optional() },
     true,
     (a) => api.catalog(a.kind),
   );

@@ -71,6 +71,8 @@ Mỗi bước có `id` (chữ thường, số, `_`; duy nhất trong cả quy tr
 | `subworkflow` | `workflow` (id/slug), `inputs`, `wait` | `{ runId, status, output }` |
 | `file` | `action` (`read`/`write`/`append`/`list`/`delete`), `path`, `content` | tùy thao tác |
 | `shell` | `command`, `env` — cần `workflows.allowShell: true` và quản trị viên tick "Cho phép chạy" | `{ output }` |
+| `db` | `sql` + `params` (`$1, $2…`), hoặc `op` (`find`/`count`/`aggregate`/`insert`/`upsert`/`update`/`delete`) + `table`, `values`, `match`, `where`… — xem [co-so-du-lieu.md](co-so-du-lieu.md) | `{ rows, row, count, fields }` |
+| `secret` | `op` (`set`/`info`/`lock`/`unlock`/`delete`), `name`, `value`, `expiresIn` — quy trình tự lưu token | `set`: `{ saved, version }` · `info`: `{ exists, expiresInSec, expired }` |
 
 **`to` của bước `send`**: Telegram = chat id (nhóm là số âm); Zalo/WhatsApp cá nhân = `direct:<uid>` hoặc `group:<id nhóm>`. Ô "Gửi tới" trên Dashboard gợi ý sẵn các cuộc trò chuyện gần đây. Tin gửi đi được ghi vào hội thoại đó, nên khi người dùng nhắn lại, agent biết vừa có tin gì.
 
@@ -85,7 +87,7 @@ Mỗi bước có `id` (chữ thường, số, `_`; duy nhất trong cả quy tr
 
 ### Khóa bí mật
 
-Quy trình → 🔑 Khóa bí mật. Khóa được mã hóa bằng `PENAI_MASTER_KEY`, không bao giờ hiện lại, và tự che `***` trong nhật ký. Dùng bằng `{{ secrets.TEN }}`, **chỉ** trong bước http (url/headers/query/body), `mcp.args`, `tool.args` và `shell.env`. Đặt ở chỗ khác thì validator (bộ kiểm tra định nghĩa) báo lỗi.
+Quy trình → 🔑 Khóa bí mật. Khóa được mã hóa bằng `PENAI_MASTER_KEY`, không bao giờ hiện lại, và tự che `***` trong nhật ký. Quy trình tự lưu/làm mới token bằng bước `secret` (khóa nhập tay cần tick **Quy trình được ghi**). Dùng bằng `{{ secrets.TEN }}`, **chỉ** trong bước http (url/headers/query/body), `mcp.args`, `tool.args` và `shell.env`. Đặt ở chỗ khác thì validator (bộ kiểm tra định nghĩa) báo lỗi.
 
 ## 3. Kích hoạt
 

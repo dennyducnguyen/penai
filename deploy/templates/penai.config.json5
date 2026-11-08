@@ -88,4 +88,10 @@
     maxRunSeconds: 600,
     allowShell: false,
   },
+
+  // CSDL riêng của workspace (Dashboard → 🗃️ Dữ liệu, bước Cơ sở dữ liệu). Bỏ trống = mặc định.
+  workspaceDb: {
+    quotaMb: 500,
+    timeoutSeconds: 15,
+  },
 }

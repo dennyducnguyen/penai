@@ -8,6 +8,7 @@ import type { WorkspaceContext } from "@penai/shared";
 import type { Db } from "./client.js";
 import { withWorkspace } from "./context.js";
 import {
+  workflowLocks,
   workflowRuns,
   workflowRunSteps,
   workflows,
@@ -386,21 +387,37 @@ export async function countRunningWorkflowRuns(db: Db, ctx: WorkspaceContext, wo
 
 // ---------------- khóa bí mật ----------------
 
-export type WorkspaceSecretMeta = { id: string; name: string; note: string; createdAt: Date; updatedAt: Date };
+export type WorkspaceSecretMeta = {
+  id: string;
+  name: string;
+  note: string;
+  createdAt: Date;
+  updatedAt: Date;
+  workflowWritable: boolean;
+  expiresAt: Date | null;
+  version: number;
+  updatedVia: string;
+};
+
+const secretMetaCols = {
+  id: workspaceSecrets.id,
+  name: workspaceSecrets.name,
+  note: workspaceSecrets.note,
+  createdAt: workspaceSecrets.createdAt,
+  updatedAt: workspaceSecrets.updatedAt,
+  workflowWritable: workspaceSecrets.workflowWritable,
+  expiresAt: workspaceSecrets.expiresAt,
+  version: workspaceSecrets.version,
+  updatedVia: workspaceSecrets.updatedVia,
+};
 
 export async function listWorkspaceSecrets(db: Db, ctx: WorkspaceContext): Promise<WorkspaceSecretMeta[]> {
-  return withWorkspace(db, ctx, (tx) =>
-    tx
-      .select({
-        id: workspaceSecrets.id,
-        name: workspaceSecrets.name,
-        note: workspaceSecrets.note,
-        createdAt: workspaceSecrets.createdAt,
-        updatedAt: workspaceSecrets.updatedAt,
-      })
-      .from(workspaceSecrets)
-      .orderBy(asc(workspaceSecrets.name)),
-  );
+  return withWorkspace(db, ctx, (tx) => tx.select(secretMetaCols).from(workspaceSecrets).orderBy(asc(workspaceSecrets.name)));
+}
+
+export async function getWorkspaceSecretMeta(db: Db, ctx: WorkspaceContext, name: string): Promise<WorkspaceSecretMeta | null> {
+  const r = await withWorkspace(db, ctx, (tx) => tx.select(secretMetaCols).from(workspaceSecrets).where(eq(workspaceSecrets.name, name)).limit(1));
+  return r[0] ?? null;
 }
 
 /** Giá trị đã mã hóa của mọi khóa (bộ chạy giải mã khi cần). */
@@ -413,22 +430,24 @@ export async function listWorkspaceSecretValues(db: Db, ctx: WorkspaceContext): 
 export async function upsertWorkspaceSecret(
   db: Db,
   ctx: WorkspaceContext,
-  input: { name: string; valueEncrypted?: string; note?: string },
+  input: { name: string; valueEncrypted?: string; note?: string; workflowWritable?: boolean; expiresAt?: Date | null; via?: string },
 ): Promise<WorkspaceSecretMeta> {
   return withWorkspace(db, ctx, async (tx) => {
     const cur = await tx.select().from(workspaceSecrets).where(eq(workspaceSecrets.name, input.name)).limit(1);
     if (cur[0]) {
+      const changedValue = input.valueEncrypted !== undefined;
       const rows = await tx
         .update(workspaceSecrets)
         .set({
-          ...(input.valueEncrypted !== undefined ? { valueEncrypted: input.valueEncrypted } : {}),
+          ...(changedValue ? { valueEncrypted: input.valueEncrypted, version: cur[0].version + 1, updatedVia: input.via ?? "dashboard", updatedByWorkflow: null } : {}),
           ...(input.note !== undefined ? { note: input.note } : {}),
+          ...(input.workflowWritable !== undefined ? { workflowWritable: input.workflowWritable } : {}),
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
           updatedAt: new Date(),
         })
         .where(eq(workspaceSecrets.id, cur[0].id))
-        .returning();
-      const r = rows[0]!;
-      return { id: r.id, name: r.name, note: r.note, createdAt: r.createdAt, updatedAt: r.updatedAt };
+        .returning(secretMetaCols);
+      return rows[0]!;
     }
     if (input.valueEncrypted === undefined) throw new Error("Khóa mới cần giá trị");
     const rows = await tx
@@ -439,10 +458,117 @@ export async function upsertWorkspaceSecret(
         valueEncrypted: input.valueEncrypted,
         note: input.note ?? "",
         createdBy: ctx.userId === ctx.workspaceId ? null : ctx.userId,
+        workflowWritable: input.workflowWritable ?? false,
+        expiresAt: input.expiresAt ?? null,
+        updatedVia: input.via ?? "dashboard",
       })
-      .returning();
-    const r = rows[0]!;
-    return { id: r.id, name: r.name, note: r.note, createdAt: r.createdAt, updatedAt: r.updatedAt };
+      .returning(secretMetaCols);
+    return rows[0]!;
+  });
+}
+
+export class SecretNotWritableError extends Error {}
+
+/**
+ * Quy trình ghi khóa (bước secret op=set). Khóa có sẵn mà chưa bật "Quy trình được
+ * ghi" → từ chối; khóa mới do quy trình tạo thì quy trình được ghi về sau.
+ */
+export async function workflowWriteSecret(
+  db: Db,
+  ctx: WorkspaceContext,
+  input: { name: string; valueEncrypted: string; expiresAt: Date | null; note?: string; workflowId: string },
+): Promise<WorkspaceSecretMeta> {
+  return withWorkspace(db, ctx, async (tx) => {
+    const cur = await tx.select().from(workspaceSecrets).where(eq(workspaceSecrets.name, input.name)).limit(1).for("update");
+    if (cur[0]) {
+      if (!cur[0].workflowWritable) {
+        throw new SecretNotWritableError(
+          "Khóa " + input.name + " do người nhập tay, quy trình không được ghi đè. Bật \"Quy trình được ghi\" cho khóa này ở Dashboard → Quy trình → 🔑 Khóa bí mật, hoặc dùng tên khóa khác.",
+        );
+      }
+      const rows = await tx
+        .update(workspaceSecrets)
+        .set({
+          valueEncrypted: input.valueEncrypted,
+          expiresAt: input.expiresAt,
+          version: cur[0].version + 1,
+          updatedVia: "workflow",
+          updatedByWorkflow: input.workflowId,
+          updatedAt: new Date(),
+          ...(input.note !== undefined ? { note: input.note } : {}),
+        })
+        .where(eq(workspaceSecrets.id, cur[0].id))
+        .returning(secretMetaCols);
+      return rows[0]!;
+    }
+    const rows = await tx
+      .insert(workspaceSecrets)
+      .values({
+        workspaceId: ctx.workspaceId,
+        name: input.name,
+        valueEncrypted: input.valueEncrypted,
+        note: input.note ?? "Do quy trình tạo",
+        workflowWritable: true,
+        expiresAt: input.expiresAt,
+        updatedVia: "workflow",
+        updatedByWorkflow: input.workflowId,
+      })
+      .returning(secretMetaCols);
+    return rows[0]!;
+  });
+}
+
+export async function workflowDeleteSecret(db: Db, ctx: WorkspaceContext, name: string): Promise<boolean> {
+  return withWorkspace(db, ctx, async (tx) => {
+    const cur = await tx.select().from(workspaceSecrets).where(eq(workspaceSecrets.name, name)).limit(1);
+    if (!cur[0]) return false;
+    if (!cur[0].workflowWritable) throw new SecretNotWritableError("Khóa " + name + " do người nhập tay, quy trình không được xóa.");
+    await tx.delete(workspaceSecrets).where(eq(workspaceSecrets.id, cur[0].id));
+    return true;
+  });
+}
+
+// ---------------- khóa giữa các lần chạy ----------------
+
+/** Thử lấy khóa (không chờ). true = lần chạy này đang giữ khóa. */
+export async function tryAcquireWorkflowLock(db: Db, ctx: WorkspaceContext, name: string, runId: string, ttlMs: number): Promise<boolean> {
+  const exp = new Date(Date.now() + ttlMs);
+  return withWorkspace(db, ctx, async (tx) => {
+    const r = await tx.execute(sql`
+      INSERT INTO workflow_locks (workspace_id, name, run_id, expires_at)
+      VALUES (${ctx.workspaceId}, ${name}, ${runId}, ${exp})
+      ON CONFLICT (workspace_id, name) DO UPDATE SET run_id = EXCLUDED.run_id, expires_at = EXCLUDED.expires_at, created_at = now()
+      WHERE workflow_locks.expires_at < now() OR workflow_locks.run_id = EXCLUDED.run_id
+      RETURNING run_id`);
+    return r.rows.length > 0;
+  });
+}
+
+export async function releaseWorkflowLock(db: Db, ctx: WorkspaceContext, name: string, runId: string): Promise<boolean> {
+  const r = await withWorkspace(db, ctx, (tx) =>
+    tx.delete(workflowLocks).where(and(eq(workflowLocks.name, name), eq(workflowLocks.runId, runId))).returning({ n: workflowLocks.name }),
+  );
+  return r.length > 0;
+}
+
+/** Nhả mọi khóa của lần chạy (kết thúc) + dọn khóa quá hạn của mọi workspace. */
+export async function releaseRunLocks(db: Db, runId: string): Promise<void> {
+  await db.execute(sql`SELECT release_workflow_locks(${runId}::uuid)`);
+}
+
+/** Che giá trị bí mật mới (quy trình vừa lưu token) trong nhật ký bước ĐÃ ghi của lần chạy. */
+export async function scrubWorkflowRunSteps(db: Db, ctx: WorkspaceContext, runId: string, values: string[]): Promise<void> {
+  const vals = values.filter((v) => v && v.length >= 4).map((v) => JSON.stringify(v).slice(1, -1));
+  if (!vals.length) return;
+  await withWorkspace(db, ctx, async (tx) => {
+    for (const v of vals) {
+      await tx.execute(sql`
+        UPDATE workflow_run_steps SET
+          input = CASE WHEN input IS NULL THEN NULL ELSE replace(input::text, ${v}, '***')::jsonb END,
+          output = CASE WHEN output IS NULL THEN NULL ELSE replace(output::text, ${v}, '***')::jsonb END,
+          error = replace(error, ${v}, '***')
+        WHERE run_id = ${runId} AND (strpos(COALESCE(input::text, ''), ${v}) > 0 OR strpos(COALESCE(output::text, ''), ${v}) > 0 OR strpos(COALESCE(error, ''), ${v}) > 0)`);
+    }
   });
 }
 

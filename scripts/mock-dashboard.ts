@@ -5,6 +5,7 @@
 //   Trang Cron (lịch agent tự tạo khi chat):     http://127.0.0.1:18899/#/cron
 //   Trang Trình duyệt (hồ sơ cookie):            http://127.0.0.1:18899/#/browser
 //   Trang Quy trình (engine thật, host giả):      http://127.0.0.1:18899/#/workflows
+//   Trang Dữ liệu (CSDL giả trong RAM):           http://127.0.0.1:18899/#/database
 import { createServer, type IncomingMessage } from "node:http";
 import { BrandingSchema } from "../packages/shared/src/index.js";
 import { composeSystemPrompt } from "../packages/core/src/agent-loop.js";
@@ -12,7 +13,7 @@ import { describeSchedule, formatInZone } from "../packages/core/src/cron.js";
 import { INDEX_HTML } from "../apps/server/src/ui.js";
 import { defaultLogoSvg, renderIndexHtml } from "../apps/server/src/branding.js";
 import { PERSON_LIMITS, renderPersonContext } from "../apps/server/src/person-context.js";
-import { runWorkflow, validateDefinition, WORKFLOW_TEMPLATES, type StepLog, type WorkflowDefinition } from "../packages/core/src/workflow/index.js";
+import { buildCreateTable, buildDbQuery, runWorkflow, suggestColumns, validateDefinition, WORKFLOW_TEMPLATES, type StepLog, type WorkflowDefinition } from "../packages/core/src/workflow/index.js";
 
 const port = Number(process.env.PORT ?? 18899);
 const branding = BrandingSchema.parse({});
@@ -137,6 +138,134 @@ const overview = (c: (typeof contacts)[number]) => ({
 const tagList = () =>
   tags.map((t) => ({ ...t, memberCount: Object.values(principalTags).filter((ids) => ids.includes(t.id)).length }));
 
+
+// ===== CSDL của workspace (giả: bảng trong RAM, không chạy SQL thật) =====
+type MockCol = { name: string; type: string; notNull: boolean; default: string | null; identity: boolean; primaryKey: boolean; unique: boolean; comment: string };
+type MockTable = { name: string; kind: "table"; comment: string; columns: MockCol[]; primaryKey: string[]; rows: Array<Record<string, unknown>>; seq: number };
+const mockTables: MockTable[] = [];
+const mockAudit: Array<Record<string, unknown>> = [];
+const mkCol = (name: string, type: string, extra: Partial<MockCol> = {}): MockCol => ({ name, type, notNull: false, default: null, identity: false, primaryKey: false, unique: false, comment: "", ...extra });
+mockTables.push({
+  name: "don_hang",
+  kind: "table",
+  comment: "Đơn Shopee, đồng bộ mỗi giờ bởi quy trình Đồng bộ đơn hàng",
+  primaryKey: ["ma_don"],
+  seq: 0,
+  columns: [
+    mkCol("ma_don", "text", { primaryKey: true, notNull: true, comment: "Mã đơn Shopee" }),
+    mkCol("ngay_dat", "timestamp with time zone", { notNull: true }),
+    mkCol("khach", "text"),
+    mkCol("tong_tien", "numeric", { notNull: true, default: "0" }),
+    mkCol("trang_thai", "text", { comment: "moi | dang_giao | da_giao | huy" }),
+  ],
+  rows: Array.from({ length: 64 }, (_, i) => ({
+    ma_don: "2411A" + String(i + 1).padStart(3, "0"),
+    ngay_dat: iso(i * 37),
+    khach: ["Lan", "Minh", "Hùng", "Thảo", "An"][i % 5],
+    tong_tien: String(120000 + ((i * 37000) % 900000)),
+    trang_thai: ["moi", "dang_giao", "da_giao", "huy"][i % 4],
+  })),
+});
+const mockTableView = (t: MockTable) => ({ name: t.name, kind: t.kind, comment: t.comment, rowsEstimate: t.rows.length, sizeBytes: JSON.stringify(t.rows).length * 2, columns: t.columns, primaryKey: t.primaryKey, constraints: [], indexes: [] });
+const mockSchema = () => ({ schema: "wsdb_mock", sizeBytes: mockTables.reduce((n, t) => n + JSON.stringify(t.rows).length * 2, 0), quotaBytes: 500 * 1048576, tables: mockTables.map(mockTableView) });
+function mockDbQuery(sql: string, params: unknown[], dryRun: boolean) {
+  const m = /from\s+"?([a-z_0-9]+)"?/i.exec(sql);
+  const t = m ? mockTables.find((x) => x.name === m[1]) : undefined;
+  const isRead = /^\s*select/i.test(sql);
+  if (isRead && t) {
+    if (/count\(\*\)/i.test(sql)) return { rows: [{ count: String(t.rows.length), so_don: t.rows.length, doanh_thu: t.rows.reduce((n, r) => n + Number(r.tong_tien), 0) }], row: { count: String(t.rows.length) }, count: 1, fields: ["count"], truncated: false, kind: "read", dryRun, statements: [{ command: "SELECT", rowCount: 1 }] };
+    const rows = t.rows.slice(0, 20);
+    return { rows, row: rows[0] ?? null, count: rows.length, fields: t.columns.map((c) => c.name), truncated: false, kind: "read", dryRun, statements: [{ command: "SELECT", rowCount: rows.length }] };
+  }
+  if (!dryRun && !isRead) mockAudit.unshift({ id: mockAudit.length + 1, createdAt: iso(0), via: "workflow", kind: /^\s*(create|alter|drop|comment)/i.test(sql) ? "ddl" : "write", statement: sql, rowCount: 1, destructive: false, error: null, params });
+  return { rows: [], row: null, count: 1, fields: [], truncated: false, kind: isRead ? "read" : "write", dryRun, statements: [{ command: (sql.trim().split(/\s+/)[0] ?? "").toUpperCase(), rowCount: 1 }] };
+}
+const DB_TYPE_PG: Record<string, string> = { text: "text", integer: "bigint", number: "numeric", money: "numeric(18,2)", date: "date", datetime: "timestamp with time zone", boolean: "boolean", json: "jsonb" };
+async function dbMock(path: string, method: string, url: URL, req: IncomingMessage, json: (b: unknown, s?: number) => unknown, res: import("node:http").ServerResponse) {
+  const tm = /^\/v1\/db\/tables\/([^/]+)(\/rows|\/columns(?:\/([^/]+))?|\/export\.csv|\/import)?$/.exec(path);
+  if (path === "/v1/db/schema") return json({ ...mockSchema(), usage: { don_hang: [{ workflowId: mockWfs[0]?.id ?? "x", name: "Đồng bộ đơn hàng vào CSDL", reads: true, writes: true }] }, canWrite: true, enabled: true });
+  if (path === "/v1/db/build") {
+    try { return json(buildDbQuery((await readBody(req)) as never)); } catch (e) { return json({ error: (e as Error).message }, 400); }
+  }
+  if (path === "/v1/db/suggest-columns") return json({ columns: suggestColumns((await readBody(req)).sample) });
+  if (path === "/v1/db/query") {
+    const b = await readBody(req);
+    if (/^\s*(drop|truncate)|^\s*delete\s+from\s+\S+\s*$/i.test(String(b.sql)) && !b.confirm) return json({ error: "Lệnh có thể xóa nhiều dữ liệu — hỏi lại người dùng, rồi gọi lại với confirm=true." }, 409);
+    return json(mockDbQuery(String(b.sql), (b.params as unknown[]) ?? [], b.dryRun === true));
+  }
+  if (path === "/v1/db/audit") return json({ entries: mockAudit });
+  if (path === "/v1/db/snapshots" && method === "GET") return json({ snapshots: [{ id: "snap1", takenAt: iso(300), manual: false, tables: mockTables.map((t) => ({ name: t.name, rows: t.rows.length })), sizeBytes: 18432 }], keep: 7, maxMb: 50 });
+  if (path === "/v1/db/snapshots") return json({ id: "snap2", tables: mockTables.length, sizeBytes: 20000 });
+  if (/^\/v1\/db\/snapshots\/[^/]+\/restore$/.test(path)) return json({ rows: 64, recreated: false });
+  if (path === "/v1/db/tables" && method === "POST") {
+    const b = (await readBody(req)) as { name: string; comment?: string; columns: Array<{ name: string; type: string; primaryKey?: boolean; unique?: boolean; notNull?: boolean; default?: unknown; comment?: string }>; timestamps?: boolean; preview?: boolean };
+    let sqlText: string;
+    try { sqlText = buildCreateTable(b as never); } catch (e) { return json({ error: (e as Error).message }, 400); }
+    if (b.preview) return json({ sql: sqlText });
+    if (mockTables.some((t) => t.name === b.name)) return json({ error: `relation "${b.name}" already exists` }, 400);
+    const cols: MockCol[] = [];
+    const pk = b.columns.filter((c) => c.primaryKey).map((c) => c.name);
+    if (!pk.length) cols.push(mkCol("id", "bigint", { identity: true, primaryKey: true, notNull: true }));
+    for (const c of b.columns) cols.push(mkCol(c.name, DB_TYPE_PG[c.type] ?? c.type, { primaryKey: !!c.primaryKey, unique: !!c.unique, notNull: !!c.notNull || !!c.primaryKey, default: c.default == null || c.default === "" ? null : String(c.default), comment: c.comment ?? "" }));
+    if (b.timestamps !== false) cols.push(mkCol("tao_luc", "timestamp with time zone", { notNull: true, default: "now()" }), mkCol("sua_luc", "timestamp with time zone", { notNull: true, default: "now()" }));
+    mockTables.push({ name: b.name, kind: "table", comment: b.comment ?? "", columns: cols, primaryKey: pk.length ? pk : ["id"], rows: [], seq: 0 });
+    mockAudit.unshift({ id: mockAudit.length + 1, createdAt: iso(0), via: "dashboard", kind: "ddl", statement: sqlText, rowCount: 0, destructive: false, error: null });
+    return json({ ok: true, sql: sqlText });
+  }
+  if (!tm) return json({ error: "không có" }, 404);
+  const t = mockTables.find((x) => x.name === decodeURIComponent(tm[1]!));
+  if (!t) return json({ error: "Không có bảng" }, 404);
+  const keyMatch = (r: Record<string, unknown>, key: Record<string, unknown>) => Object.entries(key).every(([k, v]) => String(r[k]) === String(v));
+  if (!tm[2]) {
+    if (method === "DELETE") { mockTables.splice(mockTables.indexOf(t), 1); return json({ ok: true }); }
+    const b = await readBody(req);
+    if (b.comment !== undefined) t.comment = String(b.comment);
+    if (b.name) t.name = String(b.name);
+    return json({ ok: true });
+  }
+  if (tm[2] === "/rows") {
+    if (method === "GET") {
+      const limit = Number(url.searchParams.get("limit") ?? 50), offset = Number(url.searchParams.get("offset") ?? 0);
+      let rows = t.rows.slice();
+      const q = url.searchParams.get("q"), col = url.searchParams.get("col");
+      if (q && col) rows = rows.filter((r) => String(r[col] ?? "").toLowerCase().includes(q.toLowerCase()));
+      const ord = url.searchParams.get("order");
+      if (ord) { const d = ord.startsWith("-") ? -1 : 1; const c = ord.replace(/^-/, ""); rows.sort((a, b) => (String(a[c]) > String(b[c]) ? d : -d)); }
+      return json({ rows: rows.slice(offset, offset + limit), fields: t.columns.map((c) => c.name), total: rows.length, limit, offset });
+    }
+    const b = (await readBody(req)) as { key?: Record<string, unknown>; values?: Record<string, unknown> };
+    if (method === "POST") {
+      const row: Record<string, unknown> = {};
+      for (const c of t.columns) row[c.name] = c.identity ? ++t.seq : c.default === "now()" ? iso(0) : null;
+      Object.assign(row, b.values);
+      t.rows.unshift(row);
+      return json({ row });
+    }
+    const r = t.rows.find((x) => keyMatch(x, b.key ?? {}));
+    if (!r) return json({ error: "Không tìm thấy dòng" }, 404);
+    if (method === "PATCH") { Object.assign(r, b.values); return json({ row: r }); }
+    t.rows.splice(t.rows.indexOf(r), 1);
+    return json({ deleted: 1 });
+  }
+  if (tm[2] === "/export.csv") {
+    res.writeHead(200, { "content-type": "text/csv; charset=utf-8" });
+    return res.end(t.columns.map((c) => c.name).join(",") + "\n" + t.rows.map((r) => t.columns.map((c) => String(r[c.name] ?? "")).join(",")).join("\n"));
+  }
+  if (tm[2] === "/import") return json({ inserted: 3 });
+  if (tm[2].startsWith("/columns")) {
+    const b = await readBody(req);
+    if (method === "POST") { t.columns.push(mkCol(String(b.name), DB_TYPE_PG[String(b.type)] ?? String(b.type), { comment: String(b.comment ?? "") })); return json({ ok: true }); }
+    const cn = decodeURIComponent(tm[3] ?? "");
+    const c = t.columns.find((x) => x.name === cn);
+    if (!c) return json({ error: "Không có cột" }, 404);
+    if (method === "DELETE") { t.columns.splice(t.columns.indexOf(c), 1); return json({ ok: true }); }
+    if (b.comment !== undefined) c.comment = String(b.comment);
+    if (b.name) c.name = String(b.name);
+    return json({ ok: true });
+  }
+  return json({ ok: true });
+}
+
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     let raw = "";
@@ -194,6 +323,7 @@ createServer(async (req, res) => {
 
   // ----- Quy trình (engine thật, host giả: không gửi tin, không gọi MCP/agent thật) -----
   if (path.startsWith("/v1/workflows") || path.startsWith("/v1/secrets")) return workflowMock(path, method, req, json);
+  if (path.startsWith("/v1/db/")) return dbMock(path, method, url, req, json, res);
   // ----- Cron -----
   if (path === "/v1/cron" && method === "GET") return json(cronView());
   const cronM = /^\/v1\/cron\/([^/]+)(\/runs)?$/.exec(path);
@@ -366,14 +496,16 @@ async function workflowMock(path: string, method: string, req: IncomingMessage, 
   if (path === "/v1/secrets" && method === "GET") return json({ secrets: mockSecrets });
   if (path === "/v1/secrets") {
     const b = await readBody(req);
-    mockSecrets.push({ id: "s" + Date.now(), name: String(b.name), note: String(b.note ?? ""), createdAt: iso(0), updatedAt: iso(0) });
+    const ex = mockSecrets.find((x) => x.name === String(b.name)) as Record<string, unknown> | undefined;
+    if (ex) { if (b.note !== undefined) ex.note = b.note; if (b.workflowWritable !== undefined) ex.workflowWritable = b.workflowWritable; ex.updatedAt = iso(0); }
+    else mockSecrets.push({ id: "s" + Date.now(), name: String(b.name), note: String(b.note ?? ""), createdAt: iso(0), updatedAt: iso(0), ...({ workflowWritable: b.workflowWritable === true, updatedVia: "dashboard", version: 1 } as object) } as never);
     return json({ secret: { name: b.name } });
   }
   if (path === "/v1/workflows" && method === "GET") {
     return json({ workflows: mockWfs.map((w) => ({ ...wfPresent(w), definition: undefined, stepCount: JSON.stringify(w.definition.steps).split('"id"').length - 1 })), running: 0, enabled: true });
   }
   if (path === "/v1/workflows/templates") return json({ templates: WORKFLOW_TEMPLATES });
-  if (path === "/v1/workflows/catalog") return json({ ...wfCatalog, stepTypes: {} });
+  if (path === "/v1/workflows/catalog") return json({ ...wfCatalog, stepTypes: {}, database: { tables: mockSchema().tables.map((t) => ({ name: t.name, kind: t.kind, comment: t.comment, rows: t.rowsEstimate, primaryKey: t.primaryKey, columns: t.columns.map((c) => ({ name: c.name, type: c.type, primaryKey: c.primaryKey, unique: c.unique, identity: c.identity, notNull: c.notNull, hasDefault: c.default !== null })) })) } });
   if (path === "/v1/workflows/validate") {
     const b = await readBody(req);
     const v = await validateDefinition(b.definition ?? b, { catalog: wfCat() });
@@ -449,6 +581,8 @@ async function workflowMock(path: string, method: string, req: IncomingMessage, 
         subworkflow: async () => ({ status: "success" }),
         file: async (x) => ({ path: x.path }),
         shell: async () => ({ output: "" }),
+        db: async (x) => mockDbQuery(x.sql, x.params, x.dryRun),
+        secret: async (x) => ({ output: { op: x.op, name: x.name, ok: true } }),
       },
     });
     const run = { id: runId, status: res.status, error: res.error, output: res.output, response: res.response, durationMs: res.durationMs, stepCount: res.stepCount, triggerType: sub === "test" ? "test" : "manual", isTest: sub === "test", dryRun: b.dryRun === true, startedAt: iso(0) };

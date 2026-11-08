@@ -28,7 +28,7 @@ describe("MCP server — OAuth helpers", () => {
   });
 
   it("scope: mặc định đủ bộ, bỏ scope lạ", () => {
-    const all = ["zalo:read", "zalo:send", "zalo:messages", "whatsapp:read", "whatsapp:send", "whatsapp:messages", "workflow:read", "workflow:run", "workflow:manage"];
+    const all = ["zalo:read", "zalo:send", "zalo:messages", "whatsapp:read", "whatsapp:send", "whatsapp:messages", "workflow:read", "workflow:run", "workflow:manage", "db:read", "db:write"];
     expect(parseScopes(undefined)).toEqual(all);
     expect(parseScopes("zalo:read offline_access")).toEqual(["zalo:read"]);
     expect(parseScopes("openid")).toEqual(all);

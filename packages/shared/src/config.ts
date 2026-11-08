@@ -200,6 +200,22 @@ export const WorkflowsConfigSchema = z.object({
 });
 export type WorkflowsConfig = z.infer<typeof WorkflowsConfigSchema>;
 
+/** CSDL riêng của workspace (bảng PostgreSQL thật cho quy trình, agent, API, MCP). */
+export const WorkspaceDbConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  /** Hạn mức dung lượng mỗi workspace (MB) — vượt thì chỉ còn đọc và xóa. */
+  quotaMb: z.number().int().min(1).max(1_000_000).default(500),
+  /** Số dòng trả về tối đa mỗi câu lệnh. */
+  maxRows: z.number().int().min(10).max(100_000).default(1000),
+  /** Trần thời gian một câu lệnh (giây). */
+  timeoutSeconds: z.number().int().min(1).max(600).default(15),
+  /** Bản chụp tự động giữ lại (mỗi ngày một bản). 0 = tắt chụp tự động. */
+  snapshotKeep: z.number().int().min(0).max(60).default(7),
+  /** Không chụp khi CSDL lớn hơn mức này (MB) — dùng sudo penai backup. */
+  snapshotMaxMb: z.number().int().min(1).max(10_000).default(50),
+});
+export type WorkspaceDbConfig = z.infer<typeof WorkspaceDbConfigSchema>;
+
 export const PenaiConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).default(18800),
   host: z.string().default("127.0.0.1"),
@@ -222,6 +238,7 @@ export const PenaiConfigSchema = z.object({
     .default(DEFAULT_TIMEZONE)
     .refine(isValidTimeZone, { message: 'múi giờ không hợp lệ — dùng tên IANA, vd "Asia/Ho_Chi_Minh"' }),
   workflows: WorkflowsConfigSchema.prefault({}),
+  workspaceDb: WorkspaceDbConfigSchema.prefault({}),
 })
   // Alias model chỉ được trỏ vào provider trong danh sách trắng — sai cấu hình
   // phải chết ngay lúc khởi động, đừng để tới lúc app gọi mới lỗi.

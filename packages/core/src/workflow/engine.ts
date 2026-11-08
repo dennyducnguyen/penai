@@ -8,6 +8,7 @@
  */
 import { ExprEnv, ExprError, stripBraces } from "./expr.js";
 import { allStepIds, parseDuration, type StepBase, type WorkflowDefinition, type WorkflowInput } from "./definition.js";
+import { buildDbQuery, type DbForm } from "./db-query.js";
 
 export type RunStatus = "running" | "success" | "failed" | "stopped" | "timeout" | "cancelled";
 export type StepStatus = "success" | "failed" | "skipped" | "dry_run";
@@ -52,6 +53,22 @@ export interface WorkflowHost {
   subworkflow(input: { workflow: string; inputs: Record<string, unknown>; wait: boolean; dryRun: boolean; signal: AbortSignal }): Promise<unknown>;
   file(input: { action: string; path: string; content?: string; signal: AbortSignal }): Promise<unknown>;
   shell(input: { command: string; env: Record<string, string>; timeoutMs: number; signal: AbortSignal }): Promise<unknown>;
+  /** CSDL của workspace: chạy SQL (đã có tham số). dryRun = chạy rồi hoàn tác. */
+  db(input: { sql: string; params: unknown[]; confirm: boolean; dryRun: boolean; signal: AbortSignal; timeoutMs: number }): Promise<unknown>;
+  /**
+   * Khóa bí mật: set / info / delete / lock / unlock. lock trả `secrets` (giá trị mới
+   * nhất của mọi khóa) để biểu thức {{ secrets.X }} ở bước sau dùng giá trị vừa làm mới.
+   */
+  secret(input: {
+    op: "set" | "info" | "delete" | "lock" | "unlock";
+    name: string;
+    value?: string;
+    expiresAt?: string | null;
+    note?: string;
+    waitMs?: number;
+    ttlMs?: number;
+    signal: AbortSignal;
+  }): Promise<{ output: unknown; secrets?: Record<string, string> }>;
 }
 
 export interface RunOptions {
@@ -76,6 +93,8 @@ export interface RunOptions {
   onRespond?: (res: { status: number; headers: Record<string, string>; body: unknown }) => void;
   /** Trần số dòng nhật ký bước mỗi lần chạy. */
   maxStepLogs?: number;
+  /** Bước secret vừa lưu một giá trị mới (máy chủ che giá trị này trong nhật ký đã ghi). */
+  onSecretValue?: (value: string) => void;
 }
 
 export interface RunResult {
@@ -229,8 +248,19 @@ export async function runWorkflow(opts: RunOptions): Promise<RunResult> {
   const def = opts.definition;
   const maxRunMs = Math.min(opts.maxRunMs ?? 600_000, (def.settings?.timeoutSec ?? Infinity) * 1000);
   const stepTimeoutDefault = opts.stepTimeoutMs ?? 30_000;
-  const secrets = opts.secrets ?? {};
-  const secretValues = Object.values(secrets);
+  const secrets: Record<string, string> = { ...(opts.secrets ?? {}) };
+  const secretValues: string[] = Object.values(secrets);
+  const addSecretValue = (name: string, v: string) => {
+    secrets[name] = v;
+    if (v && !secretValues.includes(v)) {
+      secretValues.push(v);
+      try {
+        opts.onSecretValue?.(v);
+      } catch {
+        // bỏ qua
+      }
+    }
+  };
   const dry = opts.dryRun === true;
   const maxLogs = opts.maxStepLogs ?? 2000;
   const runCtrl = new AbortController();
@@ -302,7 +332,7 @@ export async function runWorkflow(opts: RunOptions): Promise<RunResult> {
 
   /** Thay biểu thức; secrets chỉ nạp khi trường được phép. */
   const renderWith = (v: unknown, allowSecrets: boolean): unknown => {
-    if (!allowSecrets || !secretValues.length) return ex.render(v);
+    if (!allowSecrets || !Object.keys(secrets).length) return ex.render(v);
     ex.setGlobal("secrets", secrets);
     try {
       return ex.render(v);
@@ -331,7 +361,7 @@ export async function runWorkflow(opts: RunOptions): Promise<RunResult> {
     }
     const t0 = Date.now();
     const startedAt = new Date();
-    const timeoutMs = parseDuration(s.timeout) ?? (["agent", "mcp", "tool", "subworkflow", "shell"].includes(s.type) ? Math.max(stepTimeoutDefault, 120_000) : stepTimeoutDefault);
+    const timeoutMs = parseDuration(s.timeout) ?? (["agent", "mcp", "tool", "subworkflow", "shell", "secret"].includes(s.type) ? Math.max(stepTimeoutDefault, 120_000) : stepTimeoutDefault);
     const retries = s.retry?.times ?? 0;
     const retryDelay = parseDuration(s.retry?.delay) ?? 5000;
     let attempts = 0;
@@ -673,6 +703,83 @@ export async function runWorkflow(opts: RunOptions): Promise<RunResult> {
         setInput({ command, env: Object.keys(envVars) });
         if (dry) return { output: { dryRun: true, command }, dry: true };
         return { output: await withTimeout((sig) => opts.host.shell({ command, env: envVars, timeoutMs, signal: sig }), timeoutMs + 2000, signal, `Bước ${label}`) };
+      }
+      case "db": {
+        let sqlText: string;
+        let params: unknown[];
+        if (typeof s.sql === "string" && s.sql.trim()) {
+          sqlText = s.sql;
+          const pr = ex.render(s.params ?? []);
+          params = Array.isArray(pr) ? pr : pr === null || pr === undefined || pr === "" ? [] : [pr];
+        } else {
+          const form = ex.render({
+            op: s.op,
+            table: s.table,
+            values: s.values,
+            match: s.match,
+            onConflict: s.onConflict,
+            where: s.where,
+            columns: s.columns,
+            agg: s.agg,
+            groupBy: s.groupBy,
+            orderBy: s.orderBy,
+            limit: s.limit,
+            offset: s.offset,
+            returning: s.returning,
+          }) as DbForm;
+          const built = buildDbQuery(form);
+          sqlText = built.sql;
+          params = built.params;
+        }
+        setInput({ sql: sqlText.length > 4000 ? sqlText.slice(0, 4000) + "…" : sqlText, params: params.map((x) => (typeof x === "string" && x.length > 500 ? x.slice(0, 500) + "…" : x)) });
+        const out = await withTimeout(
+          (sig) => opts.host.db({ sql: sqlText, params, confirm: s.confirm === true, dryRun: dry, signal: sig, timeoutMs }),
+          timeoutMs + 2000,
+          signal,
+          `Bước ${label}`,
+        );
+        const isDry = dry && !!out && typeof out === "object" && (out as { dryRun?: boolean }).dryRun === true && (out as { kind?: string }).kind !== "read";
+        return { output: out, ...(isDry ? { dry: true } : {}) };
+      }
+      case "secret": {
+        const op = String(s.op ?? "set") as "set" | "info" | "delete" | "lock" | "unlock";
+        const name = toStr(ex.render(s.name)).trim();
+        if (!name) throw new Error("Thiếu tên khóa");
+        if (op === "set") {
+          const value = toStr(ex.render(s.value));
+          if (!value) throw new Error(`Giá trị để lưu vào ${name} đang trống — kiểm lại bước lấy token`);
+          let expiresAt: string | null = null;
+          if (s.expiresAt !== undefined && s.expiresAt !== "") {
+            const at = new Date(String(ex.render(s.expiresAt)));
+            if (Number.isNaN(at.getTime())) throw new Error("expiresAt không phải thời điểm hợp lệ");
+            expiresAt = at.toISOString();
+          } else if (s.expiresIn !== undefined && s.expiresIn !== "") {
+            const raw = ex.render(s.expiresIn);
+            const ms = typeof raw === "number" ? raw * 1000 : parseDuration(String(raw).trim());
+            if (ms === null || !Number.isFinite(ms) || ms <= 0) throw new Error(`expiresIn "${String(raw)}" không hợp lệ (số giây hoặc "2h", "30d")`);
+            expiresAt = new Date(Date.now() + ms).toISOString();
+          }
+          const note = s.note !== undefined ? toStr(ex.render(s.note)) : undefined;
+          // Che giá trị ngay từ bây giờ (kể cả nhật ký bước trước đã ghi — máy chủ xử lý)
+          addSecretValue(name, value);
+          setInput({ op, name, ...(expiresAt ? { expiresAt } : {}) });
+          if (dry) return { output: { dryRun: true, op, name, ...(expiresAt ? { expiresAt } : {}) }, dry: true };
+          const r = await withTimeout((sig) => opts.host.secret({ op, name, value, expiresAt, ...(note !== undefined ? { note } : {}), signal: sig }), timeoutMs, signal, `Bước ${label}`);
+          return { output: r.output };
+        }
+        if (op === "lock") {
+          const waitMs = parseDuration(ex.render(s.wait ?? "60s")) ?? 60_000;
+          const ttlMs = parseDuration(ex.render(s.ttl ?? "")) ?? Math.max(60_000, maxRunMs - (Date.now() - started));
+          setInput({ op, name, waitMs, ttlMs });
+          const r = await withTimeout((sig) => opts.host.secret({ op, name, waitMs, ttlMs, signal: sig }), waitMs + 15_000, signal, `Bước ${label}`);
+          for (const [k, v] of Object.entries(r.secrets ?? {})) addSecretValue(k, v);
+          return { output: r.output };
+        }
+        setInput({ op, name });
+        if (dry && op === "delete") return { output: { dryRun: true, op, name }, dry: true };
+        const r = await withTimeout((sig) => opts.host.secret({ op, name, signal: sig }), timeoutMs, signal, `Bước ${label}`);
+        if (op === "delete") delete secrets[name];
+        return { output: r.output };
       }
       default:
         throw new Error(`Loại bước "${s.type}" không có`);
