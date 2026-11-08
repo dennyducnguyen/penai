@@ -39,7 +39,7 @@ export type BrowserAction =
   | { action: "open"; url: string }
   | { action: "snapshot" }
   | { action: "text"; offset?: number }
-  | { action: "click"; ref: string }
+  | { action: "click"; ref: string; expectDownload?: boolean }
   | { action: "type"; ref: string; text: string; submit?: boolean }
   | { action: "select"; ref: string; value: string }
   | { action: "press"; key: string }
@@ -49,10 +49,19 @@ export type BrowserAction =
   | { action: "screenshot"; fullPage?: boolean }
   | { action: "close" };
 
+export interface BrowserDownloadFile {
+  /** Tên file gốc do trang web gợi ý (Content-Disposition / download attr). */
+  suggestedFilename: string;
+  /** Lưu file đã tải về vào đường dẫn đích trên đĩa. */
+  saveAs(targetPath: string): Promise<void>;
+}
+
 export interface BrowserActionResult {
   text: string;
   /** Ảnh chụp màn hình JPEG (action screenshot). */
   image?: Buffer;
+  /** File vừa được trình duyệt tải về trong thao tác này (nếu có). */
+  download?: BrowserDownloadFile;
 }
 
 export interface BrowserManagerOptions {
@@ -209,7 +218,8 @@ export class BrowserManager {
       userAgent: profile?.userAgent || this.defaultUserAgent(b),
       locale: profile?.locale || "vi-VN",
       timezoneId: profile?.timezone || "Asia/Ho_Chi_Minh",
-      acceptDownloads: false,
+      // Cho phép tải file (vd tải văn bản .docx/.doc/.pdf trên vbpl.vn qua blob/Server Action)
+      acceptDownloads: true,
       extraHTTPHeaders: { "Accept-Language": `${profile?.locale || "vi-VN"},vi;q=0.9,en-US;q=0.8,en;q=0.7` },
     });
     s.context.setDefaultTimeout(ACTION_TIMEOUT);
@@ -387,12 +397,30 @@ export class BrowserManager {
   private async settle(p: Page, max = 6000, quiet = 700): Promise<void> {
     await p.waitForTimeout(300).catch(() => {});
     await p.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => {});
+    await p.waitForLoadState("networkidle", { timeout: 3_500 }).catch(() => {});
     await p
       .evaluate(
         `new Promise(function (res) {
           var start = Date.now(), t = null, obs = null;
+          // Trang SPA còn đang tải dữ liệu (khung xương/biểu tượng xoay của các bộ giao diện
+          // phổ biến, aria-busy, chữ "Đang tải...") → chờ thêm, tối đa max mili giây
+          var BUSY = '[aria-busy="true"], .ant-skeleton-active, .ant-spin-spinning, .el-loading-mask, ' +
+            '.MuiSkeleton-root, .MuiCircularProgress-root, .spinner-border, .v-progress-circular';
+          function isLoading() {
+            try {
+              if (document.querySelector(BUSY)) return true;
+              var txt = document.body ? (document.body.innerText || "") : "";
+              return txt.length < 20000 && /(^|\\n)\\s*(Đang tải|Loading)\\s*(\\.\\.\\.|…)\\s*(\\n|$)/.test(txt);
+            } catch (e) { return false; }
+          }
           function done() { if (obs) obs.disconnect(); clearTimeout(t); res(true); }
-          function arm() { clearTimeout(t); t = setTimeout(done, ${quiet}); }
+          function arm() {
+            clearTimeout(t);
+            t = setTimeout(function () {
+              if (isLoading() && Date.now() - start < ${max}) arm();
+              else done();
+            }, ${quiet});
+          }
           obs = new MutationObserver(function () { if (Date.now() - start > ${max}) done(); else arm(); });
           obs.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
           arm(); setTimeout(done, ${max});
@@ -435,10 +463,31 @@ export class BrowserManager {
         }
         case "click": {
           const loc = this.locate(s, a.ref);
-          await loc.scrollIntoViewIfNeeded().catch(() => {});
-          await loc.click({ timeout: ACTION_TIMEOUT });
-          await this.settle(s.page);
-          return { text: await this.describe(s, brief) };
+          await loc
+            .evaluate((el) => el.scrollIntoView({ block: "center", inline: "nearest" }))
+            .catch(() => loc.scrollIntoViewIfNeeded().catch(() => {}));
+          // Bắt sự kiện download nếu cú click kích hoạt tải file (trực tiếp hoặc qua blob/Server Action)
+          const dlTimeout = a.expectDownload ? 20_000 : 2_500;
+          const dlPromise = s.page
+            .waitForEvent("download", { timeout: dlTimeout })
+            .catch(() => null);
+          try {
+            await loc.click({ timeout: 4_500 });
+          } catch {
+            // Fallback force click nếu có thanh banner cố định (vd cookie banner) che một phần nút
+            await loc.click({ force: true, timeout: 4_500 });
+          }
+          // Chờ tải file (nút tải đã báo trước) thì không chờ trang yên — tải xong là trả ngay
+          if (!a.expectDownload) await this.settle(s.page);
+          const dl = await dlPromise;
+          if (a.expectDownload) await s.page.waitForTimeout(350).catch(() => {});
+          const download: BrowserDownloadFile | undefined = dl
+            ? { suggestedFilename: dl.suggestedFilename() || "tai-lieu", saveAs: (targetPath: string) => dl.saveAs(targetPath) }
+            : undefined;
+          return {
+            text: await this.describe(s, brief),
+            ...(download ? { download } : {}),
+          };
         }
         case "type": {
           const loc = this.locate(s, a.ref);

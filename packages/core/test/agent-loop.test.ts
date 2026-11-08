@@ -156,6 +156,22 @@ describe("Agent loop (spec-agent-loop)", () => {
     expect(done.type === "done" && done.finalText).toBe("vẫn ổn");
   });
 
+  it("tham số report của tool → hiện thành tin báo tiến độ và lưu vào lịch sử", async () => {
+    const provider = new ScriptedProvider([
+      toolResponse("call_1", "current_time", { report: "Đang xem giờ hệ thống…" }),
+      textResponse("Xong"),
+    ]);
+    const sessionId = await newSession();
+    const events = await collect(
+      runAgent(makeDeps(provider), { ctx: ctx(), agent: AGENT, sessionId, userMessage: "mấy giờ rồi" }),
+    );
+    const deltas = events.filter((e) => e.type === "text_delta").map((e) => (e as { text: string }).text);
+    expect(deltas[0]).toBe("Đang xem giờ hệ thống…");
+    const msgs = await loadMessages(dbh.db, ctx(), sessionId);
+    const firstAssistant = msgs.find((m) => m.role === "assistant");
+    expect((firstAssistant?.content as { text?: string }).text).toBe("Đang xem giờ hệ thống…");
+  });
+
   it("AC-3: max_iterations chặn vòng lặp vô hạn", async () => {
     // Provider luôn đòi gọi tool khi được cấp tools; không có tools → trả text
     const provider: Provider = {

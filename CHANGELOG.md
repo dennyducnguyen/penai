@@ -4,6 +4,18 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.14.0 — 2026-11-08
+
+Trình duyệt của agent thao tác tốt hơn (đem từ bản cài legal.penai.vn về bản chính thức):
+
+- **Tải file bằng trình duyệt**: agent bấm nút tải (kể cả trang tạo file bằng JavaScript/blob), file được lưu vào thư mục làm việc hoặc thư viện của agent (nếu agent được ghi), tên chuẩn hóa không dấu, giữ đuôi gốc, trùng tên thì tự thêm `-1`, `-2`. Tối đa 100 MB mỗi file. Sau đó agent đọc được bằng `read_document` hoặc gửi cho người dùng.
+- **Chờ trang SPA tải xong** (khung xương, biểu tượng đang tải, `aria-busy`, chữ "Đang tải...") trước khi đọc trang — bớt cảnh agent thấy trang trống.
+- **Bấm chắc hơn**: cuộn phần tử ra giữa màn hình, bị thanh cookie/banner che thì bấm thẳng.
+- **Nhận ra nhiều phần tử bấm được hơn** (thẻ `div` có kiểu con trỏ bấm), nút chỉ có biểu tượng được đặt tên theo dòng chứa nó, nút lặp lại trên từng thẻ ("Tải về", "Xem", "Chi tiết"…) kèm tiêu đề thẻ; link dài hiện đủ hơn.
+- **Báo tiến độ**: mỗi bước dùng trình duyệt, agent có thể gửi một câu báo đang làm tới đâu; trang Chat hiện thành từng tin riêng giữa các bước.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.13.0 — 2026-11-08
 
 - **⚙️ Quy trình tự động (Workflow)** — mục mới trên Dashboard để tự động hóa việc **không cần AI** (hoặc AI chỉ là một bước):

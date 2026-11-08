@@ -1,4 +1,4 @@
-import { mkdtemp, readdir } from "node:fs/promises";
+import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -213,5 +213,58 @@ describe("tool browser", () => {
     expect(r.result).toMatch(/browser\/man-hinh-.*\.jpg/);
     expect(shown[0]).toBe("data:image/jpeg;base64,/9j/");
     expect((await readdir(join(dir, "browser"))).some((f) => f.endsWith(".jpg"))).toBe(true);
+  });
+});
+
+describe("tool browser — tải file", () => {
+  const ctx: WorkspaceContext = {
+    workspaceId: "00000000-0000-0000-0000-000000000001",
+    userId: "00000000-0000-0000-0000-000000000002",
+    role: "operator",
+  };
+  const reg = createDefaultToolRegistry();
+
+  it("click kèm saveTo/fileName: báo trình duyệt chờ tải, lưu tên không dấu, trùng thì thêm -1", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "penai-dl-"));
+    const seen: BrowserAction[] = [];
+    const browser = {
+      act: async (a: BrowserAction) => {
+        seen.push(a);
+        return {
+          text: "Trang sau khi tải",
+          download: { suggestedFilename: "ND 15.docx", saveAs: (p: string) => writeFile(p, "noi dung") },
+        };
+      },
+    };
+    const args = { action: "click", ref: "e5", saveTo: "van-ban", fileName: "Nghị định 15/2026/NĐ-CP về Đất đai" };
+    const r1 = await reg.execute("browser", args, { ctx, workspaceDataDir: dir, workDir: dir, browser });
+    const r2 = await reg.execute("browser", args, { ctx, workspaceDataDir: dir, workDir: dir, browser });
+    expect(seen[0]).toEqual({ action: "click", ref: "e5", expectDownload: true });
+    expect(r1.result).toMatch(/Đã tải và lưu file thành công: van-ban\/nghi-dinh-15-2026-nd-cp-ve-dat-dai\.docx/);
+    expect(r2.result).toMatch(/nghi-dinh-15-2026-nd-cp-ve-dat-dai-1\.docx/);
+    expect((await readdir(join(dir, "van-ban"))).sort()).toEqual(["nghi-dinh-15-2026-nd-cp-ve-dat-dai-1.docx", "nghi-dinh-15-2026-nd-cp-ve-dat-dai.docx"]);
+  });
+
+  it("click thường mà trang tự tải file → vẫn lưu vào thư mục làm việc", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "penai-dl-"));
+    const seen: BrowserAction[] = [];
+    const browser = {
+      act: async (a: BrowserAction) => (seen.push(a), { text: "ok", download: { suggestedFilename: "Báo cáo Q3.pdf", saveAs: (p: string) => writeFile(p, "x") } }),
+    };
+    const r = await reg.execute("browser", { action: "click", ref: "e2" }, { ctx, workspaceDataDir: dir, workDir: dir, browser });
+    expect(seen[0]).toEqual({ action: "click", ref: "e2" });
+    expect(r.result).toMatch(/bao-cao-q3\.pdf/);
+  });
+
+  it("không được ghi thư viện của agent → từ chối lưu vào thu-vien", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "penai-dl-"));
+    const lib = await mkdtemp(join(tmpdir(), "penai-lib-"));
+    const browser = { act: async () => ({ text: "ok", download: { suggestedFilename: "a.pdf", saveAs: (p: string) => writeFile(p, "x") } }) };
+    const r = await reg.execute(
+      "browser",
+      { action: "click", ref: "e1", saveTo: "thu-vien", fileName: "a" },
+      { ctx, workspaceDataDir: dir, workDir: dir, libraryDir: lib, canWriteLibrary: false, browser },
+    );
+    expect(r.isError).toBe(true);
   });
 });

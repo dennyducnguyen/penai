@@ -653,21 +653,26 @@ export const INDEX_HTML = `<!doctype html>
                 if (line.indexOf("data: ") === 0) {
                   var d = line.slice(6); if (d === "[DONE]") continue;
                   try { var ev = JSON.parse(d);
-                    if (ev.type === "text_delta") { botText += ev.text; bot.innerHTML = md(splitBotText(botText).text); }
-                    else if (ev.type === "tool_call") showMsg("tool", "🔧 " + ev.name + "(" + JSON.stringify(ev.args).slice(0, 400) + ")");
+                    if (ev.type === "text_delta") { if (!bot) bot = showMsg("bot", "…"); botText += ev.text; bot.innerHTML = md(splitBotText(botText).text); }
+                    else if (ev.type === "tool_call") {
+                      // Mỗi bước tool một bong bóng: chữ báo tiến độ (vd tham số report của browser) giữ lại, bong bóng trống thì bỏ
+                      if (bot && botText.trim()) { bot.innerHTML = md(splitBotText(botText).text); bot = null; botText = ""; }
+                      else if (bot) { bot.remove(); bot = null; }
+                      showMsg("tool", "🔧 " + (ev.name === "browser" && ev.args && ev.args.action === "click" && (ev.args.saveTo || ev.args.fileName) ? "browser — tải file " + (ev.args.fileName || ev.args.ref || "") : ev.name + "(" + JSON.stringify(ev.args).slice(0, 400) + ")"));
+                    }
                     else if (ev.type === "tool_result") showMsg("tool", "↳ " + (ev.isError ? "❌ " : "") + String(ev.result).slice(0, 300));
                     else if (ev.type === "saved") { /* file người dùng đã lưu server-side → đổi chip tạm thành link thật */ if (ud && ev.files && ev.files.length) { var ua2 = ud.querySelector(".atts") || el("div", { "class": "atts" }); ua2.innerHTML = ev.files.map(function (f) { return fileChip(f.p, f.isImage); }).join(""); if (!ua2.parentNode) ud.appendChild(ua2); } }
                     else if (ev.type === "file") { if (!botFiles) botFiles = el("div", { "class": "files" }); botFiles.innerHTML += fileCard(ev); if (!botFiles.parentNode) log.appendChild(botFiles); botFiles.scrollIntoView(); }
-                    else if (ev.type === "done") { if (!botText) { var ft = splitBotText(ev.finalText || "").text; if (ft) bot.innerHTML = md(ft); else if (botFiles) bot.remove(); else bot.textContent = "(trống)"; } if (botFiles) log.appendChild(botFiles); loadHist(); }
-                    else if (ev.type === "error") { bot.textContent = "❌ " + ev.message; }
+                    else if (ev.type === "done") { if (!botText) { var ft = splitBotText(ev.finalText || "").text; if (ft) { if (!bot) bot = showMsg("bot", "…"); bot.innerHTML = md(ft); } else if (bot) { if (botFiles) bot.remove(); else bot.textContent = "(trống)"; } } if (botFiles) log.appendChild(botFiles); loadHist(); }
+                    else if (ev.type === "error") { if (!bot) bot = showMsg("bot", "…"); bot.textContent = "❌ " + ev.message; }
                   } catch (e) {}
                 }
               }
-              bot.scrollIntoView(); return pump();
+              if (bot) bot.scrollIntoView(); return pump();
             });
           }
           return pump();
-        }).catch(function (e) { bot.textContent = "❌ " + e.message; send.disabled = false; });
+        }).catch(function (e) { if (!bot) bot = showMsg("bot", "…"); bot.textContent = "❌ " + e.message; send.disabled = false; });
     }
     send.onclick = doSend;
     inp.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.isComposing) doSend(); });

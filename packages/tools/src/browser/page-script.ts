@@ -34,10 +34,13 @@ export function snapshotScript(maxItems: number): string {
   return `(() => {
   var MAX = ${Math.max(10, Math.min(400, Math.floor(maxItems)))};
   var ATTR = "${REF_ATTR}";
+  var REPEATED = {};
+  ["tải về", "tải xuống", "download", "pdf", "xem", "xem thêm", "chi tiết", "view", "details", "mở", "open", "sửa", "edit",
+   "xóa", "delete", "lược đồ", "mua", "mua ngay", "thêm vào giỏ", "add to cart"].forEach(function (k) { REPEATED[k] = 1; });
   Array.prototype.forEach.call(document.querySelectorAll("[" + ATTR + "]"), function (e) { e.removeAttribute(ATTR); });
   var SEL = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],' +
     '[role=menuitem],[role=checkbox],[role=radio],[role=option],[role=combobox],[role=switch],[role=textbox],' +
-    '[role=searchbox],[contenteditable=""],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"])';
+    '[role=searchbox],[contenteditable=""],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"]),[class*="cursor-pointer"]';
   var vh = window.innerHeight, vw = window.innerWidth;
   var inView = [], below = [];
   var nodes = document.querySelectorAll(SEL);
@@ -47,6 +50,15 @@ export function snapshotScript(maxItems: number): string {
     if (r.width < 2 || r.height < 2) continue;
     var st = window.getComputedStyle(el);
     if (st.visibility === "hidden" || st.display === "none" || Number(st.opacity) === 0) continue;
+    // Phần tử chỉ khớp nhờ class cursor-pointer (như tab div trên vbpl.vn): chỉ nhận
+    // phần tử lá hoặc ngắn gọn để tránh lấy nhầm cả khối container lớn.
+    var tagLow = el.tagName.toLowerCase();
+    if (tagLow !== "a" && tagLow !== "button" && tagLow !== "input" && tagLow !== "select" && tagLow !== "textarea" &&
+        tagLow !== "summary" && !el.getAttribute("role") && !el.getAttribute("onclick") && !el.getAttribute("tabindex") &&
+        !el.isContentEditable) {
+      var txt = String(el.innerText || el.textContent || "").replace(/\\s+/g, " ").trim();
+      if (el.children.length > 3 || !txt || txt.length > 320 || r.height > 120) continue;
+    }
     var vis = r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
     (vis ? inView : below).push({ el: el, vis: vis });
   }
@@ -62,7 +74,32 @@ export function snapshotScript(maxItems: number): string {
     if (!name) name = (e.innerText || e.textContent || "").trim();
     if (!name) { var img = e.querySelector("img[alt]"); if (img) name = img.getAttribute("alt") || ""; }
     if (!name) name = e.getAttribute("title") || "";
-    name = String(name).replace(/\\s+/g, " ").trim().slice(0, 90);
+    // Nút chỉ có biểu tượng (SVG/icon font) hoặc nút "Tải xuống" trong danh sách file: lấy chữ của
+    // dòng bao quanh làm nhãn ngữ cảnh (vd "Tải xuống: Nghị định 15-2026.docx")
+    var isDl = /^(tải xuống|download)$/i.test(String(name).trim());
+    if ((!name || isDl) && (tag === "button" || tag === "a" || e.getAttribute("role") === "button")) {
+      var p = e.parentElement;
+      for (var k = 0; k < 4 && p; k++, p = p.parentElement) {
+        var pr = p.getBoundingClientRect();
+        if (pr.height > 120) break;
+        var pt = String(p.innerText || p.textContent || "").replace(/\\s+/g, " ").replace(/Tải xuống|Download/gi, "").trim();
+        if (pt && pt.length <= 180) { name = (isDl ? name + ": " : "Nút biểu tượng — ") + pt; isDl = false; break; }
+      }
+    }
+    // Nút hành động lặp lại trên từng thẻ/dòng ("Tải về", "PDF", "Xem", "Chi tiết"…): gắn kèm tiêu đề
+    // của thẻ chứa nó, để mô hình phân biệt nút của mục nào (danh sách văn bản, sản phẩm, đơn hàng…)
+    if (REPEATED[String(name).trim().toLowerCase()] && (tag === "button" || tag === "a" || e.getAttribute("role") === "button")) {
+      var cp = e.parentElement;
+      for (var ck = 0; ck < 5 && cp; ck++, cp = cp.parentElement) {
+        if (cp.getBoundingClientRect().height > 600) break;
+        var titleEl = cp.querySelector && cp.querySelector('h1, h2, h3, h4, h5, h6, [class*="title" i], [class*="Title"], [class*="name" i]');
+        if (titleEl && titleEl !== e && !titleEl.contains(e)) {
+          var tt = String(titleEl.innerText || titleEl.textContent || "").replace(/\\s+/g, " ").trim();
+          if (tt && tt.length >= 3) { name = name + " — " + tt.slice(0, 110); break; }
+        }
+      }
+    }
+    name = String(name).replace(/\\s+/g, " ").trim().slice(0, 140);
     var ref = "e" + (out.length + 1);
     e.setAttribute(ATTR, ref);
     var val = "";
@@ -117,7 +154,7 @@ function shortHref(href: string, pageUrl: string): string {
     const u = new URL(href, pageUrl);
     const base = new URL(pageUrl);
     const s = u.host === base.host ? u.pathname + u.search : u.href;
-    return s.length > 90 ? s.slice(0, 87) + "…" : s;
+    return s.length > 280 ? s.slice(0, 277) + "…" : s;
   } catch {
     return "";
   }
