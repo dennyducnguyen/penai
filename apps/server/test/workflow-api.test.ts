@@ -128,7 +128,15 @@ describe("API /v1/workflows", () => {
   });
 
   it("tạo từ mẫu (tên kênh giả định) được ở trạng thái tắt; bật khi chưa sửa → 400 chỉ rõ chỗ sai", async () => {
-    const r = await app.inject({ method: "POST", url: "/v1/workflows", headers: auth(fx.keys.aOperator), payload: { template: "bao-cao-sang" } });
+    const tpl = await app.inject({ method: "POST", url: "/v1/workflows", headers: auth(fx.keys.aOperator), payload: { template: "bao-cao-sang" } });
+    expect(tpl.statusCode).toBe(201);
+    // Nhập JSON / mẫu trỏ tới kênh chưa có (máy test có sẵn kênh "Bot" nên dùng tên khác)
+    const r = await app.inject({
+      method: "POST",
+      url: "/v1/workflows",
+      headers: auth(fx.keys.aOperator),
+      payload: { enabled: false, definition: baseDef([{ id: "g", type: "send", channel: "telegram:Chua Co", to: "1", text: "x" }]) },
+    });
     expect(r.statusCode).toBe(201);
     const w = r.json() as { workflow: { id: string; enabled: boolean }; warnings: Array<{ message: string }> };
     expect(w.workflow.enabled).toBe(false);
