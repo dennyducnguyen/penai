@@ -379,7 +379,7 @@ export async function wsdbSchema(db: Db, ctx: WorkspaceContext, limits?: Partial
     ORDER BY a.attrelid, a.attnum`);
   const cons = await db.execute(sql`
     SELECT con.conrelid::bigint AS oid, con.conname AS name, con.contype AS type, pg_get_constraintdef(con.oid) AS def,
-      ARRAY(SELECT a.attname FROM unnest(con.conkey) k JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k) AS cols
+      ARRAY(SELECT a.attname::text FROM unnest(con.conkey) k JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k)::text[] AS cols
     FROM pg_constraint con JOIN pg_namespace n ON n.oid = con.connamespace
     WHERE n.nspname = ${schema} AND con.conrelid <> 0`);
   const idx = await db.execute(sql`

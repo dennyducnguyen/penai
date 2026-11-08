@@ -706,7 +706,14 @@ export class WorkflowService {
     let flushing: Promise<void> = Promise.resolve();
     const flush = () => {
       if (!buffer.length) return flushing;
-      const batch = newSecretValues.length ? (maskSecrets(buffer, newSecretValues) as typeof buffer) : buffer;
+      const batch = newSecretValues.length
+        ? buffer.map((l) => ({
+            ...l,
+            input: maskSecrets(l.input, newSecretValues),
+            output: maskSecrets(l.output, newSecretValues),
+            error: l.error ? String(maskSecrets(l.error, newSecretValues)) : null,
+          }))
+        : buffer;
       buffer = [];
       flushing = flushing.then(() => addWorkflowRunSteps(this.db, ctx, runId, batch).catch((e) => logger.warn(`Quy trình: ghi nhật ký bước lỗi — ${(e as Error).message}`)));
       return flushing;
