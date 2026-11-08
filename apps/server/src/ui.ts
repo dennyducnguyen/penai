@@ -1,5 +1,6 @@
 import { WORKFLOWS_UI } from "./ui-workflows.js";
 import { DATABASE_UI } from "./ui-database.js";
+import { CHAT_UI } from "./ui-chat.js";
 import { LIBRARY_EDITOR_UI } from "./ui-library-editor.js";
 
 /**
@@ -20,7 +21,8 @@ export const INDEX_HTML = `<!doctype html>
   @media (prefers-color-scheme: dark) { :root { --bg:#0b1220; --fg:#e5ecf6; --side:#0f172a; --card:#111a2e; --border:#ffffff22; } }
   %%BRAND_CSS%%
   * { box-sizing: border-box; }
-  body { font-family: system-ui, sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); }
+  html { height: 100%; -webkit-text-size-adjust: 100%; }
+  body { font-family: system-ui, sans-serif; margin: 0; height: 100vh; height: var(--app-h, 100dvh); overflow: hidden; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); }
   a { color: var(--accent2); }
   input, textarea, select, button { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: rgba(128,128,128,.08); color: inherit; }
   input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); }
@@ -38,7 +40,45 @@ export const INDEX_HTML = `<!doctype html>
   nav.side a:hover { background: rgba(128,128,128,.12); }
   nav.side a.active { background: var(--accent); color: #fff; }
   nav.side .grp { font-size: .68rem; text-transform: uppercase; opacity: .5; padding: 12px 11px 4px; letter-spacing: .04em; }
-  main { flex: 1; overflow-y: auto; padding: 20px 24px; }
+  main { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 20px 24px; }
+  /* Trang chiếm trọn khung (Chat, Inbox): chỉ vùng tin nhắn cuộn, cả trang đứng yên */
+  main.fill { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+  main.fill.pad { padding: 16px 20px 12px; }
+  .nav-toggle { display: none; background: transparent; border: 1px solid var(--border); color: inherit; padding: 5px 10px; font-size: 1.1rem; line-height: 1; }
+  .nav-back { display: none; }
+  nav.side .mob { display: none; }
+  #toastBox { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); z-index: 1000; max-width: min(520px, 92vw); padding: 10px 16px; border-radius: 12px; background: #111827ee; color: #fff; font-size: .9rem; box-shadow: 0 10px 30px #0005; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; }
+  #toastBox.on { opacity: 1; transform: translateX(-50%); }
+  #toastBox.err { background: #b91c1cee; }
+  .quick { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .quick a { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); text-decoration: none; color: inherit; font-weight: 500; }
+  .quick a:hover { border-color: var(--accent2); }
+  .quick a span { font-size: 1.3rem; }
+  .stat.link { cursor: pointer; } .stat.link:hover { border-color: var(--accent2); }
+  @media (max-width: 760px) {
+    header { padding: 8px 10px; gap: 8px; }
+    header h1 { font-size: 1rem; }
+    .nav-toggle { display: inline-flex; }
+    #wsinfo, #who, #btnPass, #btnLogout { display: none !important; }
+    .user-badge > span:last-child { display: none; }
+    nav.side { position: fixed; z-index: 60; top: 0; bottom: 0; left: 0; width: 80%; max-width: 300px; transform: translateX(-105%); transition: transform .22s ease; box-shadow: 0 0 40px #0006; padding-top: max(8px, env(safe-area-inset-top)); padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+    body.nav-open nav.side { transform: none; }
+    body.nav-open .nav-back { display: block; position: fixed; inset: 0; z-index: 55; background: #0006; }
+    nav.side a { padding: 11px 12px; font-size: .95rem; }
+    nav.side .mob { display: flex; }
+    main { padding: 12px 12px 24px; }
+    main.fill.pad { padding: 10px 10px 8px; }
+    h2.page { font-size: 1.15rem; }
+    .sub { font-size: .82rem; margin-bottom: 10px; }
+    .card { padding: 12px; overflow-x: auto; }
+    input, textarea, select { font-size: 16px; }
+    .row > input, .row > select, .row > textarea { min-width: 0; }
+    dialog { width: 96vw !important; max-width: 96vw !important; padding: 14px !important; max-height: 92dvh; }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .stat { padding: 10px 12px; } .stat .n { font-size: 1.4rem; }
+    .quick { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    #toastBox { bottom: max(16px, env(safe-area-inset-bottom)); }
+  }
   h2.page { margin: 0 0 4px; font-size: 1.3rem; }
   .sub { opacity: .6; font-size: .88rem; margin-bottom: 16px; }
   .card { border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; background: var(--card); }
@@ -188,9 +228,11 @@ export const INDEX_HTML = `<!doctype html>
   .agent-checks label { display: flex; align-items: center; gap: 6px; margin: 0; font-size: .85rem; opacity: 1; cursor: pointer; }
   .agent-checks input { width: auto; padding: 0; }
   /* Inbox Zalo */
-  .ibx { display: flex; height: calc(100vh - 190px); min-height: 420px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--card); }
+  .ibx { display: flex; flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--card); }
+  .ibx-top { margin-bottom: 10px; }
+  .ibx-back { display: none; background: transparent; border: 0; color: inherit; font-size: 1.5rem; line-height: 1; padding: 0 8px 0 0; }
   .ibx-list { width: 330px; border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
-  .ibx-threads { flex: 1; overflow-y: auto; }
+  .ibx-threads { flex: 1; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .ibx-item { display: flex; gap: 10px; padding: 9px 10px; cursor: pointer; border-bottom: 1px solid var(--border); }
   .ibx-item:hover { background: rgba(128,128,128,.08); }
   .ibx-item.active { background: rgba(128,128,128,.16); }
@@ -204,7 +246,7 @@ export const INDEX_HTML = `<!doctype html>
   .ibx-badge { display: inline-block; background: #ef4444; color: #fff; border-radius: 999px; padding: 0 7px; font-size: .72rem; margin-top: 3px; }
   .ibx-chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .ibx-head { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .ibx-msgs { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+  .ibx-msgs { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
   .ibx-msg { max-width: 72%; display: flex; flex-direction: column; }
   .ibx-msg.in { align-self: flex-start; }
   .ibx-msg.out { align-self: flex-end; align-items: flex-end; }
@@ -216,7 +258,13 @@ export const INDEX_HTML = `<!doctype html>
   .ibx-quote { font-size: .78rem; opacity: .75; border-left: 3px solid rgba(128,128,128,.5); padding-left: 6px; margin-bottom: 4px; }
   .ibx-photo { max-width: 260px; max-height: 260px; border-radius: 8px; display: block; }
   .ibx-sticker { width: 90px; height: 90px; object-fit: contain; }
-  .ibx-compose { border-top: 1px solid var(--border); padding: 8px 10px; }
+  .ibx-compose { border-top: 1px solid var(--border); padding: 8px 10px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .ibx-box { display: flex; align-items: flex-end; gap: 6px; border: 1px solid var(--border); border-radius: 18px; padding: 4px 4px 4px 6px; background: rgba(128,128,128,.06); }
+  .ibx-box:focus-within { border-color: var(--accent2); }
+  .ibx-box textarea { flex: 1; border: 0; background: transparent; resize: none; outline: none; min-height: 38px; max-height: 160px; padding: 8px 4px; line-height: 1.4; }
+  .ibx-box textarea:focus { outline: none; }
+  .ibx-box .ib { background: transparent; border: 0; color: inherit; padding: 7px; font-size: 1.15rem; opacity: .7; }
+  .ibx-box .snd { width: 38px; height: 38px; border-radius: 50%; padding: 0; flex-shrink: 0; }
   .ibx-msg { position: relative; }
   .ibx-react { display: none; position: absolute; top: -14px; right: -6px; background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 1px 4px; box-shadow: 0 2px 8px rgba(0,0,0,.12); z-index: 2; white-space: nowrap; }
   .ibx-msg.in .ibx-react { right: auto; left: 30px; }
@@ -226,8 +274,34 @@ export const INDEX_HTML = `<!doctype html>
   .ibx-react button.mine { background: rgba(37,99,235,.18); }
   .ibx-rx { display: flex; gap: 3px; flex-wrap: wrap; margin: 2px 4px 0; }
   .ibx-rx span { font-size: .78rem; background: rgba(128,128,128,.14); border-radius: 999px; padding: 0 6px; cursor: default; }
-  .ibx-compose textarea { flex: 1; resize: vertical; min-height: 42px; }
-  @media (max-width: 860px) { .ibx { flex-direction: column; height: auto; } .ibx-list { width: 100%; max-height: 300px; border-right: 0; border-bottom: 1px solid var(--border); } .ibx-msgs { min-height: 360px; } .ibx-msg { max-width: 90%; } }
+  .ibx-msg.rx-open .ibx-react { display: block; }
+  @media (max-width: 860px) { .ibx-list { width: 280px; } }
+  @media (max-width: 760px) {
+    .ibx { border-radius: 10px; }
+    .ibx-list { width: 100%; border-right: 0; }
+    .ibx-chat { display: none; }
+    .ibx.open .ibx-list { display: none; }
+    .ibx.open .ibx-chat { display: flex; }
+    .ibx-back { display: inline-block; }
+    .ibx-head { padding: 6px 8px; flex-wrap: nowrap; }
+    .ibx-head .muted { font-size: .72rem; }
+    .ibx-head .row { flex-wrap: nowrap; }
+    .ibx-head .row .muted { display: none; }
+    .ibx-head select { max-width: 120px; font-size: .8rem !important; }
+    .ibx-msgs { padding: 10px 8px; }
+    .ibx-msg { max-width: 86%; }
+    .ibx-photo { max-width: 220px; }
+    .ibx-item { padding: 11px 10px; }
+    main.fill.pad > h2.page { display: none; }
+    main.fill.pad > .sub { display: none; }
+    .ibx-top { gap: 6px; margin-bottom: 8px; }
+    .ibx-top #ibxCh { flex: 1; max-width: none !important; }
+    .ibx-top #ibxSt { order: 9; width: 100%; font-size: .74rem; }
+    .ibx-top .sp { display: none; }
+    .ibx-top button { padding: 6px 9px; }
+    .ibx-top button .tx { display: none; }
+    .ibx-react { top: -34px; }
+  }
 </style>
 </head>
 <body>
@@ -251,6 +325,7 @@ export const INDEX_HTML = `<!doctype html>
   </div>
 </div>
 <header>
+  <button id="navToggle" class="nav-toggle" type="button" aria-label="Menu" title="Menu">☰</button>
   <h1><img class="brand-logo" src="%%BRAND_LOGO%%" alt=""><span style="color:var(--accent2)">%%BRAND_NAME%%</span></h1>
   <span id="wsinfo" class="muted"></span>
   <span class="grow"></span>
@@ -261,6 +336,7 @@ export const INDEX_HTML = `<!doctype html>
 </header>
 <div class="layout">
   <nav class="side" id="nav"></nav>
+  <div class="nav-back" id="navBack"></div>
   <main id="main"><div class="muted">Đang tải…</div></main>
 </div>
 
@@ -352,6 +428,13 @@ export const INDEX_HTML = `<!doctype html>
     { id: "audit", icon: "📋", label: "Audit log" },
     { id: "usage", icon: "💳", label: "Usage" },
   ];
+  // Điện thoại: thanh trên ẩn nút tài khoản → đưa vào cuối ngăn kéo menu
+  function navAccount(nav) {
+    nav.appendChild(el("div", { "class": "grp mob" }, "Tài khoản"));
+    if (state.me && state.me.authKind === "web") { var p = el("a", { href: "javascript:void 0", "class": "mob" }, "🔒 <span>Đổi mật khẩu</span>"); p.onclick = function () { setNav(false); $("#btnPass").click(); }; nav.appendChild(p); }
+    var o = el("a", { href: "javascript:void 0", "class": "mob" }, "🚪 <span>Đăng xuất</span>"); o.onclick = function () { setNav(false); $("#btnLogout").click(); }; nav.appendChild(o);
+  }
+  function setNav(open) { document.body.classList.toggle("nav-open", !!open); }
   function renderNav() {
     var nav = $("#nav"); nav.innerHTML = "";
     var cur = (location.hash.replace("#/", "") || (isMember() ? "chat" : "overview")).split("?")[0].split("/")[0];
@@ -360,6 +443,7 @@ export const INDEX_HTML = `<!doctype html>
       nav.appendChild(el("div", { "class": "grp" }, "Trợ lý AI"));
       nav.appendChild(el("a", { href: "#/chat", "class": cur === "inbox" ? "" : "active" }, "💬 <span>Chat</span>"));
       if ((state.inboxChannels || []).length) nav.appendChild(el("a", { href: "#/inbox", "class": cur === "inbox" ? "active" : "" }, "📥 <span>Inbox Zalo</span>"));
+      navAccount(nav);
       return;
     }
     var pendingGrp = null;
@@ -371,6 +455,7 @@ export const INDEX_HTML = `<!doctype html>
       var a = el("a", { href: "#/" + n.id, "class": cur === n.id ? "active" : "" }, n.icon + " <span>" + n.label + "</span>");
       nav.appendChild(a);
     });
+    navAccount(nav);
   }
 
   // ===== helpers =====
@@ -394,9 +479,12 @@ export const INDEX_HTML = `<!doctype html>
     rows.forEach(function (r) { tb.appendChild(rowFn(r)); });
     t.appendChild(tb); return t;
   }
+  var toastTimer = null;
   function toast(msg, isErr) {
-    var w = $("#who"); w.innerHTML = '<span class="' + (isErr ? "err" : "ok") + '">' + esc(msg) + "</span>";
-    setTimeout(function () { w.innerHTML = ""; }, 3000);
+    var b = document.getElementById("toastBox");
+    if (!b) { b = el("div", { id: "toastBox", role: "status" }); document.body.appendChild(b); }
+    b.textContent = String(msg == null ? "" : msg); b.className = "on" + (isErr ? " err" : "");
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { b.className = isErr ? "err" : ""; }, isErr ? 4500 : 2600);
   }
 
   // ===== Markdown tối giản cho bong bóng chat =====
@@ -448,11 +536,12 @@ export const INDEX_HTML = `<!doctype html>
         var items = [], baseIndent = li[1].length, ordered = /\\d/.test(li[2]);
         while (i < lines.length) {
           var m = lines[i].match(/^(\\s*)([-*+]|\\d+[.)])\\s+(.*)$/);
-          if (m && m[1].length <= baseIndent) { if (/\d/.test(m[2]) !== ordered) break; items.push({ text: m[3], sub: [] }); i++; continue; }
+          if (m && m[1].length <= baseIndent) { if (/\\d/.test(m[2]) !== ordered) break; items.push({ text: m[3], sub: [] }); i++; continue; }
           if (m && m[1].length > baseIndent && items.length) { items[items.length - 1].sub.push(lines[i].slice(baseIndent + 2)); i++; continue; }
           if (/^\\s{2,}\\S/.test(lines[i]) && !m && items.length) { items[items.length - 1].text += "<br>" + lines[i].trim(); i++; continue; }
           break;
         }
+        if (!items.length) { para.push(line); i++; continue; }
         out.push("<" + (ordered ? "ol" : "ul") + ">" + items.map(function (it) {
           var sub = it.sub.length ? md(it.sub.map(function (x) { return x.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&"); }).join("\\n")) : "";
           return "<li>" + mdInline(it.text) + sub + "</li>";
@@ -506,179 +595,33 @@ export const INDEX_HTML = `<!doctype html>
 
   PAGES.overview = function () {
     var m = page("Tổng quan", "Trạng thái hệ thống " + BRAND.name);
+    var quick = el("div", { "class": "quick" });
+    [["chat", "💬", "Chat với trợ lý"], ["inbox", "📥", "Inbox"], ["workflows", "⚙️", "Quy trình"], ["database", "🗃️", "Dữ liệu"], ["agents", "🤖", "Agents"], ["channels", "📡", "Channels"]].forEach(function (q) {
+      if (q[0] === "inbox" && !(state.inboxChannels || []).length) return;
+      quick.appendChild(el("a", { href: "#/" + q[0] }, "<span>" + q[1] + "</span>" + esc(q[2])));
+    });
+    m.appendChild(quick);
     var grid = el("div", { "class": "stats" }); m.appendChild(grid);
     var items = [
-      ["agents", "Agents", "/v1/agents", "agents"],
-      ["sessions", "Sessions", "/v1/sessions", "sessions"],
-      ["channels", "Channels", "/v1/channels", "channels"],
-      ["skills", "Skills", "/v1/skills", "skills"],
-      ["cron", "Cron jobs", "/v1/cron", "jobs"],
-      ["hooks", "Hooks", "/v1/hooks", "hooks"],
-      ["traces", "Traces", "/v1/traces", "traces"],
+      ["agents", "Agents", "/v1/agents", "agents", "agents"],
+      ["sessions", "Sessions", "/v1/sessions", "sessions", "sessions"],
+      ["channels", "Channels", "/v1/channels", "channels", "channels"],
+      ["skills", "Skills", "/v1/skills", "skills", "skills"],
+      ["cron", "Cron jobs", "/v1/cron", "jobs", "cron"],
+      ["hooks", "Hooks", "/v1/hooks", "hooks", "hooks"],
+      ["traces", "Traces", "/v1/traces", "traces", "traces"],
     ];
     items.forEach(function (it) {
-      var s = el("div", { "class": "stat" }); s.appendChild(el("div", { "class": "n", id: "stat-" + it[0] }, "…"));
+      var s = el("div", { "class": "stat link" }); s.appendChild(el("div", { "class": "n", id: "stat-" + it[0] }, "…"));
       s.appendChild(el("div", { "class": "l" }, it[1])); grid.appendChild(s);
+      s.onclick = function () { location.hash = "#/" + it[4]; };
       api(it[2]).then(function (j) { $("#stat-" + it[0]).textContent = (j[it[3]] || []).length; }).catch(function () { $("#stat-" + it[0]).textContent = "–"; });
     });
     var u = card(m, "Sử dụng token tháng này");
+    u.style.marginTop = "14px";
     api("/v1/usage").then(function (j) {
-      u.appendChild(el("div", null, "Đã dùng: <b>" + j.monthTokens + "</b> token" + (j.cap ? " / hạn mức " + j.cap : " (không giới hạn)")));
+      u.appendChild(el("div", null, "Đã dùng: <b>" + Number(j.monthTokens || 0).toLocaleString("vi-VN") + "</b> token" + (j.cap ? " / hạn mức " + Number(j.cap).toLocaleString("vi-VN") : " (không giới hạn)")));
     });
-  };
-
-  PAGES.chat = function () {
-    var m = page("Chat", isMember() ? "Trò chuyện với trợ lý AI được cấp cho bạn" : null);
-    if (!state.agents.length) {
-      m.appendChild(el("div", { "class": "card" }, isMember()
-        ? "<b>Bạn chưa được gán trợ lý AI nào.</b> Hãy liên hệ quản trị viên để được cấp quyền chat."
-        : "<b>Chưa có agent nào.</b> Tạo agent trong mục Agents trước."));
-      return;
-    }
-    var wrap = el("div", { id: "chatWrap" });
-    var bar = el("div", { "class": "row", style: "margin-bottom:8px" });
-    var sel = el("select", { id: "chatAgent" });
-    state.agents.forEach(function (a) { sel.appendChild(el("option", { value: a.key }, esc(isMember() ? a.name : a.name + " (" + a.provider + "/" + a.model + ")"))); });
-    bar.appendChild(sel);
-    var btnNew = el("button", { "class": "ghost" }, "Cuộc mới"); bar.appendChild(btnNew);
-    var hist = el("select", { id: "chatHist", title: "Phiên gần đây" }); bar.appendChild(hist);
-    var st = el("span", { "class": "muted", id: "chatStatus" }); bar.appendChild(st);
-    wrap.appendChild(bar);
-    var log = el("div", { id: "log" }); wrap.appendChild(log);
-    function agentById(id) { for (var i = 0; i < state.agents.length; i++) if (state.agents[i].id === id) return state.agents[i]; return null; }
-    function loadHist() {
-      api("/v1/sessions").then(function (j) {
-        hist.innerHTML = '<option value="">— phiên gần đây —</option>';
-        (j.sessions || []).slice(0, 30).forEach(function (sx) {
-          var a = agentById(sx.agentId); if (!a) return;
-          hist.appendChild(el("option", { value: sx.id, "data-agent": a.key }, esc((sx.title || "Phiên " + sx.id.slice(0, 6)) + " · " + a.name + " · " + String(sx.updatedAt || "").slice(0, 16).replace("T", " "))));
-        });
-        if (state.sessionId) hist.value = state.sessionId;
-      }).catch(function () {});
-    }
-    hist.onchange = function () {
-      var id = hist.value; if (!id) return;
-      var opt = hist.options[hist.selectedIndex]; if (opt && opt.getAttribute("data-agent")) sel.value = opt.getAttribute("data-agent");
-      state.sessionId = id; log.innerHTML = ""; st.textContent = "đang tải lịch sử…";
-      api("/v1/sessions/" + id + "/messages").then(function (j) {
-        (j.messages || []).forEach(function (msg) {
-          var c = msg.content || {};
-          if (msg.role === "user" && c.kind === "text") {
-            var su = splitUserText(c.text);
-            if (su.text || su.names.length) {
-              var ud = showMsg("user", su.text || "");
-              if (su.names.length) { var ua = el("div", { "class": "atts" }); ua.innerHTML = su.names.map(function (n) { return fileChip(n, IMG_RE.test(n)); }).join(""); ud.appendChild(ua); }
-            }
-          }
-          else if (msg.role === "assistant" && c.text) {
-            var sb = splitBotText(c.text);
-            if (sb.files.length) { showFiles(sb.files); }
-            else if (sb.text) showMsg("bot", sb.text);
-          }
-        });
-        st.textContent = "";
-      }).catch(function (e) { st.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
-    };
-    loadHist();
-    var pend = el("div", { id: "pend" }); wrap.appendChild(pend);
-    var cb = el("div", { "class": "chatbar" });
-    var clip = el("button", { "class": "clip", type: "button", title: "Đính kèm ảnh / file (hoặc dán, kéo thả)" }, "📎");
-    var fileIn = el("input", { type: "file", multiple: "multiple", style: "display:none", accept: "image/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.txt,.md,.csv,.json,.zip" });
-    var inp = el("input", { id: "msg", type: "text", placeholder: "Nhập tin nhắn… (📎 để gửi ảnh/file cho agent)" });
-    var send = el("button", null, "Gửi");
-    cb.appendChild(clip); cb.appendChild(fileIn); cb.appendChild(inp); cb.appendChild(send); wrap.appendChild(cb);
-    m.appendChild(wrap);
-
-    // ----- file đính kèm chờ gửi -----
-    var pending = [];
-    function addPending(file) {
-      if (!file) return;
-      if (pending.length >= 10) { toast("Tối đa 10 file mỗi tin", true); return; }
-      if (file.size > 100 * 1024 * 1024) { toast(file.name + ": vượt 100MB", true); return; }
-      if (pending.reduce(function (n, it) { return n + it.file.size; }, file.size) > 100 * 1024 * 1024) { toast("Tổng file mỗi tin vượt 100MB", true); return; }
-      var item = { file: file, name: file.name || ("anh-" + Date.now() + ".png"), url: file.type.indexOf("image/") === 0 ? URL.createObjectURL(file) : null };
-      pending.push(item); renderPending();
-    }
-    function renderPending() {
-      pend.innerHTML = "";
-      pending.forEach(function (it, idx) {
-        var c = el("span", { "class": "chip" });
-        c.innerHTML = (it.url ? '<img src="' + it.url + '" alt="">' : fileIcon(it.name)) + ' <span class="nm">' + esc(it.name) + '</span> <span class="muted">' + fmtSize(it.file.size) + '</span> <span class="x" title="Bỏ">✕</span>';
-        c.querySelector(".x").onclick = function () { pending.splice(idx, 1); renderPending(); };
-        pend.appendChild(c);
-      });
-    }
-    clip.onclick = function () { fileIn.click(); };
-    fileIn.onchange = function () { Array.prototype.forEach.call(fileIn.files, addPending); fileIn.value = ""; inp.focus(); };
-    inp.addEventListener("paste", function (e) {
-      var items = (e.clipboardData && e.clipboardData.files) || [];
-      if (items.length) { e.preventDefault(); Array.prototype.forEach.call(items, addPending); }
-    });
-    wrap.addEventListener("dragover", function (e) { e.preventDefault(); wrap.classList.add("drop"); });
-    wrap.addEventListener("dragleave", function () { wrap.classList.remove("drop"); });
-    wrap.addEventListener("drop", function (e) { e.preventDefault(); wrap.classList.remove("drop"); Array.prototype.forEach.call((e.dataTransfer && e.dataTransfer.files) || [], addPending); });
-    function readB64(file) {
-      return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { var d = String(r.result); res(d.slice(d.indexOf(",") + 1)); }; r.onerror = rej; r.readAsDataURL(file); });
-    }
-
-    function showMsg(kind, text) { var d = el("div", { "class": "msg " + kind }); if (kind === "bot") d.innerHTML = md(splitBotText(text).text); else d.textContent = text; log.appendChild(d); d.scrollIntoView(); return d; }
-    function showFiles(files) { if (!files || !files.length) return null; var d = el("div", { "class": "files" }); d.innerHTML = files.map(fileCard).join(""); log.appendChild(d); d.scrollIntoView(); return d; }
-    btnNew.onclick = function () {
-      api("/v1/sessions", { method: "POST", body: { agentKey: sel.value } })
-        .then(function (j) { state.sessionId = j.session.id; log.innerHTML = ""; st.textContent = "phiên mới"; loadHist(); })
-        .catch(function (e) { st.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
-    };
-    function doSend() {
-      var text = inp.value.trim(); if (!text && !pending.length) return;
-      if (!state.sessionId) { btnNew.onclick(); setTimeout(doSend, 500); return; }
-      var atts = pending.slice(); pending = []; renderPending();
-      inp.value = ""; send.disabled = true;
-      var ud = showMsg("user", text);
-      if (atts.length) {
-        var ua = el("div", { "class": "atts" });
-        ua.innerHTML = atts.map(function (it) { return it.url ? '<img class="thumb" src="' + it.url + '" alt="">' : '<span class="chip">' + fileIcon(it.name) + ' <span class="nm">' + esc(it.name) + '</span></span>'; }).join("");
-        ud.appendChild(ua);
-      }
-      var bot = showMsg("bot", "…"); var botText = ""; var botFiles = null;
-      Promise.all(atts.map(function (it) { return readB64(it.file).then(function (b64) { return { name: it.name, contentB64: b64, mime: it.file.type || "" }; }); }))
-        .then(function (files) {
-          return fetch("/v1/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: state.sessionId, message: text, stream: true, files: files }) });
-        })
-        .then(function (res) {
-          if (!res.ok) { return res.text().then(function (t) { var j = {}; try { j = JSON.parse(t); } catch (e) {} throw new Error(j.error || ("HTTP " + res.status)); }); }
-          var rd = res.body.getReader(), dec = new TextDecoder(), buf = "";
-          function pump() {
-            return rd.read().then(function (r) {
-              if (r.done) { send.disabled = false; return; }
-              buf += dec.decode(r.value, { stream: true }); var i;
-              while ((i = buf.indexOf("\\n")) >= 0) {
-                var line = buf.slice(0, i); buf = buf.slice(i + 1);
-                if (line.indexOf("data: ") === 0) {
-                  var d = line.slice(6); if (d === "[DONE]") continue;
-                  try { var ev = JSON.parse(d);
-                    if (ev.type === "text_delta") { if (!bot) bot = showMsg("bot", "…"); botText += ev.text; bot.innerHTML = md(splitBotText(botText).text); }
-                    else if (ev.type === "tool_call") {
-                      // Mỗi bước tool một bong bóng: chữ báo tiến độ (vd tham số report của browser) giữ lại, bong bóng trống thì bỏ
-                      if (bot && botText.trim()) { bot.innerHTML = md(splitBotText(botText).text); bot = null; botText = ""; }
-                      else if (bot) { bot.remove(); bot = null; }
-                      showMsg("tool", "🔧 " + (ev.name === "browser" && ev.args && ev.args.action === "click" && (ev.args.saveTo || ev.args.fileName) ? "browser — tải file " + (ev.args.fileName || ev.args.ref || "") : ev.name + "(" + JSON.stringify(ev.args).slice(0, 400) + ")"));
-                    }
-                    else if (ev.type === "tool_result") showMsg("tool", "↳ " + (ev.isError ? "❌ " : "") + String(ev.result).slice(0, 300));
-                    else if (ev.type === "saved") { /* file người dùng đã lưu server-side → đổi chip tạm thành link thật */ if (ud && ev.files && ev.files.length) { var ua2 = ud.querySelector(".atts") || el("div", { "class": "atts" }); ua2.innerHTML = ev.files.map(function (f) { return fileChip(f.p, f.isImage); }).join(""); if (!ua2.parentNode) ud.appendChild(ua2); } }
-                    else if (ev.type === "file") { if (!botFiles) botFiles = el("div", { "class": "files" }); botFiles.innerHTML += fileCard(ev); if (!botFiles.parentNode) log.appendChild(botFiles); botFiles.scrollIntoView(); }
-                    else if (ev.type === "done") { if (!botText) { var ft = splitBotText(ev.finalText || "").text; if (ft) { if (!bot) bot = showMsg("bot", "…"); bot.innerHTML = md(ft); } else if (bot) { if (botFiles) bot.remove(); else bot.textContent = "(trống)"; } } if (botFiles) log.appendChild(botFiles); loadHist(); }
-                    else if (ev.type === "error") { if (!bot) bot = showMsg("bot", "…"); bot.textContent = "❌ " + ev.message; }
-                  } catch (e) {}
-                }
-              }
-              if (bot) bot.scrollIntoView(); return pump();
-            });
-          }
-          return pump();
-        }).catch(function (e) { if (!bot) bot = showMsg("bot", "…"); bot.textContent = "❌ " + e.message; send.disabled = false; });
-    }
-    send.onclick = doSend;
-    inp.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.isComposing) doSend(); });
   };
 
   // Bộ chọn model dùng chung: select provider + select model (nạp từ API) +
@@ -892,7 +835,7 @@ export const INDEX_HTML = `<!doctype html>
         }
         listC.appendChild(table(["Key", "Tên", "Model", "Thinking", "Workspace Memory", "Prompt", ""], j.agents, function (a) {
           var tr = el("tr");
-          var promptPreview = (a.systemPrompt || "").replace(/\s+/g, " ").slice(0, 60);
+          var promptPreview = (a.systemPrompt || "").replace(/\\s+/g, " ").slice(0, 60);
           tr.innerHTML =
             "<td><code>" + esc(a.key) + "</code></td><td>" + esc(a.name) + "</td>" +
             "<td><span class='pill'>" + esc(a.provider) + "</span> <code>" + esc(a.model) + "</code></td>" +
@@ -3831,19 +3774,26 @@ ${LIBRARY_EDITOR_UI}
 
   PAGES.inbox = function () {
     var m = page("Inbox", "Nhiều người cùng xem và trả lời khách trên Zalo cá nhân, WhatsApp cá nhân. Nhân viên trả lời thì AI tự tạm im trong hội thoại đó.");
+    m.className = "fill pad";
+    var touch = (function () { try { return window.matchMedia("(pointer: coarse)").matches; } catch (e) { return false; } })();
+    var mobile = function () { return window.matchMedia("(max-width: 760px)").matches; };
     var S = { channels: [], canManage: false, ch: null, threads: [], cur: null, msgs: [], filter: "", kind: "", img: null, es: null };
-    var top = el("div", { "class": "row", style: "margin-bottom:10px" });
-    top.innerHTML = '<select id="ibxCh" style="max-width:260px"></select><span id="ibxSt" class="muted"></span><span style="flex:1"></span>' +
-      '<button class="ghost sm" id="ibxNew">＋ Nhắn tin mới</button><button class="ghost sm" id="ibxSync" style="display:none">🔄 Đồng bộ danh bạ</button><button class="ghost sm" id="ibxSet" style="display:none">⚙️ Cài đặt</button>';
+    var top = el("div", { "class": "row ibx-top" });
+    top.innerHTML = '<select id="ibxCh" style="max-width:260px"></select><span id="ibxSt" class="muted"></span><span class="sp" style="flex:1"></span>' +
+      '<button class="ghost sm" id="ibxNew" title="Nhắn tin mới">＋<span class="tx"> Nhắn tin mới</span></button><button class="ghost sm" id="ibxSync" style="display:none" title="Đồng bộ danh bạ">🔄<span class="tx"> Đồng bộ danh bạ</span></button><button class="ghost sm" id="ibxSet" style="display:none" title="Cài đặt">⚙️<span class="tx"> Cài đặt</span></button>';
     m.appendChild(top);
     var wrap = el("div", { "class": "ibx" });
     wrap.innerHTML = '<div class="ibx-list"><div class="row" style="padding:8px"><input id="ibxQ" placeholder="Tìm tên, uid, SĐT…"><select id="ibxKind" style="flex:0 0 auto;min-width:0"><option value="">Tất cả</option><option value="direct">Cá nhân</option><option value="group">Nhóm</option><option value="unread">Chưa đọc</option></select></div><div id="ibxThreads" class="ibx-threads"></div></div>' +
       '<div class="ibx-chat"><div id="ibxHead" class="ibx-head muted">Chọn một hội thoại bên trái.</div><div id="ibxMsgs" class="ibx-msgs"></div>' +
-      '<div class="ibx-compose" id="ibxCompose" style="display:none"><div id="ibxImg"></div><div class="row" style="align-items:flex-end"><textarea id="ibxText" rows="2" placeholder="Nhập tin nhắn… (Enter để gửi, Shift+Enter xuống dòng, dán ảnh trực tiếp)"></textarea><input type="file" id="ibxFile" accept="image/png,image/jpeg,image/gif,image/webp" hidden><button class="ghost" id="ibxAttach" title="Gửi ảnh">🖼️</button><button id="ibxSend">Gửi</button></div></div></div>';
+      '<div class="ibx-compose" id="ibxCompose" style="display:none"><div id="ibxImg"></div><div class="ibx-box"><button class="ib" type="button" id="ibxAttach" title="Gửi ảnh">🖼️</button><input type="file" id="ibxFile" accept="image/png,image/jpeg,image/gif,image/webp" hidden><textarea id="ibxText" rows="1" enterkeyhint="send" placeholder="Nhập tin nhắn…"></textarea><button class="snd" id="ibxSend" title="Gửi" aria-label="Gửi">➤</button></div></div></div>';
+    $("#ibxText", wrap).placeholder = touch ? "Nhập tin nhắn…" : "Nhập tin nhắn… (Enter gửi, Shift+Enter xuống dòng, dán ảnh trực tiếp)";
     m.appendChild(wrap);
 
     function stopEs() { if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; } }
-    state.pageCleanup = stopEs;
+    state.pageCleanup = function () { stopEs(); window.removeEventListener("popstate", onPop); if (window.visualViewport) window.visualViewport.removeEventListener("resize", keepBottom); };
+    // Bàn phím ảo bật/tắt: giữ tin cuối trong tầm mắt nếu đang ở đáy
+    var keepBottom = function () { var b = $("#ibxMsgs"); if (b && b.scrollHeight - b.scrollTop - b.clientHeight < 160) b.scrollTop = b.scrollHeight; };
+    if (window.visualViewport) window.visualViewport.addEventListener("resize", keepBottom);
 
     function chInfo() { for (var i = 0; i < S.channels.length; i++) if (S.channels[i].id === S.ch) return S.channels[i]; return null; }
     function renderStatus() {
@@ -3938,9 +3888,10 @@ ${LIBRARY_EDITOR_UI}
       if (!t) { h.innerHTML = "Chọn một hội thoại bên trái."; return; }
       var paused = t.pausedUntil && new Date(t.pausedUntil).getTime() > Date.now();
       h.className = "ibx-head";
-      h.innerHTML = '<div><b>' + (t.kind === "group" ? "👥 " : "👤 ") + esc(t.contactAlias || t.name || t.threadId) + '</b>' + (t.contactAlias && t.name && t.contactAlias !== t.name ? '<div class="muted">Zalo: ' + esc(t.name) + '</div>' : '') + ' <span class="muted">' + (t.kind === "group" ? "nhóm" : "cá nhân") + " · uid <code>" + esc(t.threadId) + "</code>" + (t.phone ? " · " + esc(t.phone) : "") + "</span></div>" +
+      h.innerHTML = '<button class="ibx-back" id="ibxBack" type="button" aria-label="Quay lại danh sách">‹</button><div style="flex:1;min-width:0;overflow:hidden"><b>' + (t.kind === "group" ? "👥 " : "👤 ") + esc(t.contactAlias || t.name || t.threadId) + '</b>' + (t.contactAlias && t.name && t.contactAlias !== t.name ? '<div class="muted">Zalo: ' + esc(t.name) + '</div>' : '') + ' <span class="muted">' + (t.kind === "group" ? "nhóm" : "cá nhân") + " · uid <code>" + esc(t.threadId) + "</code>" + (t.phone ? " · " + esc(t.phone) : "") + "</span></div>" +
         '<div class="row" style="gap:6px"><span class="muted">AI trả lời:</span><select id="ibxAi" style="padding:3px 6px"><option value="auto">Theo cấu hình kênh</option><option value="off">Tắt cho hội thoại này</option></select>' +
         (paused ? '<span class="pill">⏸️ tạm dừng tới ' + esc(ibxTime(t.pausedUntil)) + '</span><button class="ghost sm" id="ibxResume">Cho AI trả lời lại</button>' : "") + "</div>";
+      $("#ibxBack").onclick = function () { if (history.state && history.state.ibx) history.back(); else closeThread(); };
       $("#ibxAi").value = t.aiMode || "auto";
       $("#ibxAi").onchange = function () { setAi({ mode: this.value }); };
       var r = $("#ibxResume"); if (r) r.onclick = function () { setAi({ resume: true }); };
@@ -3964,7 +3915,12 @@ ${LIBRARY_EDITOR_UI}
         S.msgs = (j.messages || []).concat(S.msgs); renderMsgs(true);
       }).catch(function (e) { toast(e.message, true); });
     }
+    function closeThread() { wrap.classList.remove("open"); }
+    var onPop = function () { if (wrap.classList.contains("open")) closeThread(); };
+    window.addEventListener("popstate", onPop);
     function openThread(t) {
+      if (mobile() && !wrap.classList.contains("open")) { try { history.pushState({ ibx: 1 }, "", location.hash); } catch (e) {} }
+      wrap.classList.add("open");
       S.cur = t; S.img = null; renderImg();
       Array.prototype.forEach.call(document.querySelectorAll(".ibx-item"), function (n) { n.classList.remove("active"); });
       renderThreads(); renderHead();
@@ -3979,7 +3935,7 @@ ${LIBRARY_EDITOR_UI}
         api("/v1/inbox/" + S.ch + "/threads/" + encodeURIComponent(t.threadId) + "/read", { method: "POST", body: {} }).catch(function () {});
         t.unreadCount = 0; renderThreads();
       }
-      $("#ibxText").focus();
+      try { $("#ibxText").focus({ preventScroll: true }); } catch (e) { $("#ibxText").focus(); }
     }
     function mergeThread(t) {
       var i; for (i = 0; i < S.threads.length; i++) if (S.threads[i].threadId === t.threadId) break;
@@ -4006,7 +3962,18 @@ ${LIBRARY_EDITOR_UI}
       var items = (e.clipboardData && e.clipboardData.items) || [];
       for (var i = 0; i < items.length; i++) if (items[i].kind === "file" && items[i].type.indexOf("image/") === 0) { takeFile(items[i].getAsFile()); e.preventDefault(); return; }
     });
-    $("#ibxText").addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+    function grow() { var ta = $("#ibxText"); ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 160) + "px"; }
+    $("#ibxText").addEventListener("input", grow);
+    $("#ibxText").addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.shiftKey && !touch && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } });
+    // Điện thoại không có hover: chạm vào tin của khách để hiện thanh thả cảm xúc
+    $("#ibxMsgs").addEventListener("click", function (e) {
+      if (!touch) return;
+      var mm = e.target.closest ? e.target.closest(".ibx-msg.in") : null;
+      if (!mm || e.target.closest("a,button,audio")) return;
+      var was = mm.classList.contains("rx-open");
+      Array.prototype.forEach.call(document.querySelectorAll(".ibx-msg.rx-open"), function (x) { x.classList.remove("rx-open"); });
+      if (!was) mm.classList.add("rx-open");
+    });
     $("#ibxSend").onclick = send;
     function send() {
       if (!S.cur) return;
@@ -4017,10 +3984,10 @@ ${LIBRARY_EDITOR_UI}
       var btn = $("#ibxSend"); btn.disabled = true;
       var tid = S.cur.threadId;
       api("/v1/inbox/" + S.ch + "/threads/" + encodeURIComponent(tid) + "/send", { method: "POST", body: body }).then(function () {
-        $("#ibxText").value = ""; S.img = null; renderImg();
+        $("#ibxText").value = ""; grow(); S.img = null; renderImg();
         // Tin mới tự về qua realtime; phòng khi mất kết nối realtime thì tải lại sau 2 giây
         setTimeout(function () { if (S.cur && S.cur.threadId === tid) api("/v1/inbox/" + S.ch + "/threads/" + encodeURIComponent(tid) + "/messages?limit=50").then(function (j) { if (S.cur && S.cur.threadId === tid && (j.messages || []).length !== S.msgs.length) { S.msgs = j.messages; renderMsgs(false); } }).catch(function () {}); }, 2000);
-      }).catch(function (e) { toast(e.message, true); }).then(function () { btn.disabled = false; $("#ibxText").focus(); });
+      }).catch(function (e) { toast(e.message, true); }).then(function () { btn.disabled = false; try { $("#ibxText").focus({ preventScroll: true }); } catch (e2) {} });
     }
     function connectEs() {
       stopEs();
@@ -4063,7 +4030,7 @@ ${LIBRARY_EDITOR_UI}
     var qTimer = null;
     $("#ibxQ").oninput = function () { var v = this.value.trim(); clearTimeout(qTimer); qTimer = setTimeout(function () { S.filter = v; loadThreads(); }, 300); };
     $("#ibxKind").onchange = function () { S.kind = this.value; loadThreads(); };
-    $("#ibxCh").onchange = function () { S.ch = this.value; S.cur = null; S.msgs = []; renderStatus(); renderHead(); $("#ibxMsgs").innerHTML = ""; $("#ibxCompose").style.display = "none"; loadThreads(); };
+    $("#ibxCh").onchange = function () { S.ch = this.value; S.cur = null; S.msgs = []; closeThread(); renderStatus(); renderHead(); $("#ibxMsgs").innerHTML = ""; $("#ibxCompose").style.display = "none"; loadThreads(); };
     $("#ibxSync").onclick = function () {
       var b = this; b.disabled = true;
       api("/v1/inbox/" + S.ch + "/sync-contacts", { method: "POST", body: {} })
@@ -4182,12 +4149,14 @@ ${LIBRARY_EDITOR_UI}
 
 ${WORKFLOWS_UI}
 ${DATABASE_UI}
+${CHAT_UI}
   // ===== Router =====
   function refreshAgents() { return api("/v1/agents").then(function (j) { state.agents = j.agents; }).catch(function () {}); }
   function route() {
     if (!state.me) { showLogin(); return; }
     if (state.pageCleanup) { try { state.pageCleanup(); } catch (e) {} state.pageCleanup = null; }
-    renderNav();
+    renderNav(); setNav(false);
+    var mainEl = $("#main"); mainEl.className = ""; mainEl.scrollTop = 0;
     var id = location.hash.replace("#/", "") || (isMember() ? "chat" : "overview");
     var qi = id.indexOf("?"); state.routeQuery = qi >= 0 ? id.slice(qi + 1) : ""; if (qi >= 0) id = id.slice(0, qi);
     var si = id.indexOf("/"); if (si >= 0) id = id.slice(0, si);
@@ -4198,6 +4167,17 @@ ${DATABASE_UI}
     try { fn(); } catch (e) { $("#main").innerHTML = '<div class="card err">Lỗi render: ' + esc(e.message) + "</div>"; }
   }
   window.addEventListener("hashchange", route);
+  $("#navToggle").onclick = function () { setNav(!document.body.classList.contains("nav-open")); };
+  $("#navBack").onclick = function () { setNav(false); };
+  // Chiều cao thật của khung nhìn (trừ bàn phím ảo trên điện thoại) → --app-h
+  (function () {
+    var vv = window.visualViewport;
+    function fit() { var h = vv ? vv.height : window.innerHeight; document.documentElement.style.setProperty("--app-h", Math.round(h) + "px"); if (window.scrollY) window.scrollTo(0, 0); }
+    fit();
+    if (vv) { vv.addEventListener("resize", fit); vv.addEventListener("scroll", function () { if (window.scrollY) window.scrollTo(0, 0); }); }
+    window.addEventListener("resize", fit);
+    window.addEventListener("orientationchange", function () { setTimeout(fit, 250); });
+  })();
 
   // ===== Đăng nhập / phiên (0024) =====
   function showLogin(msg) {

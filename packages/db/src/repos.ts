@@ -173,6 +173,20 @@ export async function listSessions(db: Db, ctx: WorkspaceContext): Promise<Sessi
   });
 }
 
+/** Đặt tiêu đề phiên (onlyIfEmpty: chỉ khi chưa có — tự đặt theo tin đầu). */
+export async function setSessionTitle(db: Db, ctx: WorkspaceContext, id: string, title: string, onlyIfEmpty = false): Promise<boolean> {
+  const t = title.replace(/\s+/g, " ").trim().slice(0, 120);
+  if (!t) return false;
+  const rows = await withWorkspace(db, ctx, (tx) =>
+    tx
+      .update(sessions)
+      .set({ title: t })
+      .where(onlyIfEmpty ? and(eq(sessions.id, id), sql`coalesce(${sessions.title}, '') = ''`) : eq(sessions.id, id))
+      .returning({ id: sessions.id }),
+  );
+  return rows.length > 0;
+}
+
 export async function getSession(
   db: Db,
   ctx: WorkspaceContext,
