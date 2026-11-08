@@ -4,6 +4,14 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.20.4 — 2026-11-08
+
+- **Fanpage / Instagram — tên khách trong Inbox**: app Facebook mới (chưa có tính năng đọc hồ sơ khách của Meta) giờ vẫn lấy được tên khách qua hội thoại của Trang, thay vì hiện mã số.
+- Kiểm tra token lúc khởi động dùng quyền nhắn tin (hết cảnh báo thiếu quyền `pages_read_engagement` với app chỉ Messenger).
+- Meta gửi tin cho Trang chưa có kênh trong PenAI → log ghi rõ "chưa có kênh — tin bị bỏ qua" để dễ tìm lỗi.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.20.3 — 2026-11-08
 
 - **Thêm kênh Fanpage / Instagram bằng app riêng ngay trong ＋ Thêm kênh**: chọn loại Facebook Fanpage (hoặc Instagram) → **Kết nối qua: App Facebook riêng** → chọn app, chọn Trang (tên kênh tự điền) → chọn agent → Tạo kênh. Kênh hiện trong Danh sách kênh như mọi kênh khác. Vẫn chọn được **Hub HoiAI** như trước.
