@@ -501,6 +501,41 @@ describe("Bình luận, app riêng, thao tác Trang", () => {
     expect(names).toEqual(["Con Ngan"]);
   });
 
+  it("rớt mạng khi gửi câu trả lời → tự thử lại; hỏng hẳn thì KHÔNG thay bằng lời xin lỗi", async () => {
+    const base = globalThis.fetch;
+    let fails = 1;
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      const u = new URL(String(input));
+      const body = typeof init?.body === "string" ? init.body : "";
+      if (u.pathname.endsWith("/1065/messages") && body.includes('"text"') && fails > 0) {
+        fails--;
+        throw new TypeError("fetch failed");
+      }
+      return base(input, init);
+    });
+    const ch = make();
+    await ch.start();
+    ch.ingest({ object: "page", entry: [{ id: "1065", messaging: [{ sender: { id: "u5" }, recipient: { id: "1065" }, timestamp: 1, message: { mid: "m.r1", text: "Còn hàng?" } }] }] });
+    await ch.idle();
+    const texts = calls.filter((c) => c.method === "POST" && (c.body as { message?: { text?: string } })?.message?.text).map((c) => (c.body as { message: { text: string } }).message.text);
+    expect(texts).toEqual(["Dạ áo còn size M ạ"]);
+
+    calls = [];
+    fails = 99;
+    const errors: string[] = [];
+    const ch2 = new MetaPageChannel("facebook", {
+      id: "chR", name: "KOS", token: serializeMetaCredentials({ pageAccessToken: "t", penaiSecret: "", appSecret: APP_SECRET }),
+      config: { mode: "app", pageId: "1065" }, requirePairing: false,
+      onInbound: async () => ({ kind: "reply", text: "Câu trả lời" }),
+      onError: (e) => errors.push(e.message),
+    });
+    await ch2.start();
+    ch2.ingest({ object: "page", entry: [{ id: "1065", messaging: [{ sender: { id: "u6" }, recipient: { id: "1065" }, timestamp: 1, message: { mid: "m.r2", text: "hi" } }] }] });
+    await ch2.idle();
+    expect(errors.some((m) => m.includes("Gửi trả lời") && m.includes("fetch failed"))).toBe(true);
+    expect(calls.some((c) => JSON.stringify(c.body ?? "").includes("hệ thống đang bận"))).toBe(false);
+  }, 20_000);
+
   it("app riêng: token hỏng (190) không gọi hub, báo đăng nhập lại", async () => {
     vi.stubGlobal("fetch", async (input: string | URL) => {
       calls.push({ url: String(input), method: "POST", body: null });
