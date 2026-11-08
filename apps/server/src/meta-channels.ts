@@ -39,6 +39,7 @@ import {
   type MetaChannelKind,
 } from "@penai/channels";
 import { applyChannelChange, channelHandlers } from "./channels-runtime.js";
+import { resubscribeAppChannel } from "./meta-apps.js";
 
 /** Hub giữ Meta App — đổi bằng PENAI_META_HUB_URL (bản fork tự dựng hub riêng). */
 export function metaHubUrl(): string {
@@ -71,6 +72,8 @@ function configFromCode(p: HoiaiConnectPayload): Record<string, unknown> {
   const s = (v: unknown) => (typeof v === "string" ? v : "");
   return {
     platform: p.platform,
+    mode: "hub",
+    metaAppId: "",
     pageId: p.page_id,
     pageName: p.page_name,
     pageAvatar: s(p.avatar_url),
@@ -297,8 +300,20 @@ export function registerMetaRoutes(app: FastifyInstance, deps: { db: Db }): void
     if (!row || !isMetaChannelKind(row.kind)) return reply.code(404).send({ error: "Không có kênh Facebook/Instagram này" });
     const rt = channelHandlers.get(id)?.channel;
     const cfg = (row.config as Record<string, unknown>) ?? {};
+    if (cfg["mode"] === "app") {
+      return {
+        kind: row.kind,
+        mode: "app",
+        metaAppId: cfg["metaAppId"] ?? "",
+        page: { id: cfg["pageId"] ?? "", name: cfg["pageName"] ?? "", avatar: cfg["pageAvatar"] ?? "", igAccountId: cfg["igAccountId"] ?? "", igUsername: cfg["igUsername"] ?? "" },
+        registeredAt: cfg["subscribedAt"] ?? null,
+        registerError: cfg["subscribeError"] ?? null,
+        status: rt instanceof MetaPageChannel ? rt.status() : { running: false, connected: false, error: null, authError: null, lastWebhookAt: null, account: null },
+      };
+    }
     return {
       kind: row.kind,
+      mode: "hub",
       page: {
         id: cfg["pageId"] ?? "",
         name: cfg["pageName"] ?? "",
@@ -320,6 +335,12 @@ export function registerMetaRoutes(app: FastifyInstance, deps: { db: Db }): void
     const { id } = req.params as { id: string };
     const row = await getChannelById(db, req.authCtx, id);
     if (!row || !isMetaChannelKind(row.kind)) return reply.code(404).send({ error: "Không có kênh Facebook/Instagram này" });
+    if ((row.config as Record<string, unknown>)?.["mode"] === "app") {
+      const r = await resubscribeAppChannel(db, req.authCtx, row);
+      await recordAudit(db, req.authCtx, "channel.meta_register", { channelId: id, ok: r.ok, mode: "app" });
+      if (!r.ok) return reply.code(502).send({ error: r.message });
+      return { registered: true };
+    }
     const reg = await registerMetaWebhook(db, req.authCtx, row);
     await recordAudit(db, req.authCtx, "channel.meta_register", { channelId: id, ok: reg.ok });
     if (!reg.ok) return reply.code(reg.rejected ? 400 : 502).send({ error: reg.message });

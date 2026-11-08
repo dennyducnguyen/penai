@@ -21,6 +21,7 @@ export * from "./migrate.js";
 export * from "./seed.js";
 export * from "./api-repo.js";
 export * from "./inbox-repo.js";
+export * from "./meta-apps-repo.js";
 export * from "./mcp-oauth-repo.js";
 export * from "./browser-repo.js";
 export * from "./workflow-repo.js";

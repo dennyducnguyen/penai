@@ -30,6 +30,11 @@ export interface InboundMessage {
    * pass-through mọi tin (zalo_personal) để runtime gate theo require_mention.
    */
   mentioned?: boolean;
+  /**
+   * Mã hội thoại Inbox của tin này nếu khác chatKey (bình luận Fanpage: chatKey theo người bình luận,
+   * hội thoại Inbox theo bài viết "post:<mã>") — runtime dùng để kiểm "AI tạm im / tắt AI".
+   */
+  inboxThreadId?: string;
 }
 
 /** Nút bấm inline (Telegram inline keyboard). data ≤ 64 byte theo giới hạn Telegram. */

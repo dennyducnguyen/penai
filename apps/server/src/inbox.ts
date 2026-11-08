@@ -53,6 +53,7 @@ import {
   isValidThreadId,
   type InboxChannel,
   type PersonalChannel,
+  MetaPageChannel,
   isZaloReactionKey,
   parseAutoReaction,
   ZALO_REACTIONS,
@@ -83,6 +84,10 @@ export function readInboxConfig(config: Record<string, unknown>, kind = ""): {
   autoReaction: "heart" | "like" | null;
   agentReply: boolean;
   photoAck: "short" | "off" | "ai";
+  /** Fanpage/Instagram: nhận bình luận, AI trả lời công khai, AI nhắn riêng (mặc định bật cả ba) */
+  comments: boolean;
+  commentAiPublic: boolean;
+  commentAiPrivate: boolean;
 } {
   const raw = Number(config["inbox_pause_minutes"]);
   return {
@@ -95,6 +100,9 @@ export function readInboxConfig(config: Record<string, unknown>, kind = ""): {
     // Công tắc "Agent tự trả lời" (Channels → Sửa): mặc định bật.
     agentReply: config["agent_reply"] !== false,
     photoAck: readPhotoAcknowledgement(config, kind),
+    comments: config["comments"] !== false,
+    commentAiPublic: config["comment_ai_public"] !== false,
+    commentAiPrivate: config["comment_ai_private"] !== false,
   };
 }
 
@@ -519,6 +527,8 @@ export interface InboxSendRequest {
   source: ZaloSendSource;
   webUserId?: string;
   threadName?: string;
+  /** Hội thoại bình luận: trả lời bình luận này / nhắn riêng người bình luận */
+  comment?: { id: string; private?: boolean };
 }
 
 /** Nạp + kiểm tra + lưu ảnh gửi đi. Lỗi → ImageInputError (chưa gửi gì). */
@@ -570,6 +580,7 @@ export async function sendInbox(dataDir: string, req: InboxSendRequest): Promise
     source: req.source,
     ...(req.webUserId ? { webUserId: req.webUserId } : {}),
     ...(req.threadName ? { threadName: req.threadName } : {}),
+    ...(req.comment ? { comment: req.comment } : {}),
   });
   return { msgIds };
 }
@@ -586,6 +597,10 @@ const SendBody = z
     text: z.string().max(10_000).optional(),
     image: z.string().max(15_000_000).optional(),
     peerKind: z.enum(["direct", "group"]).optional(),
+    /** Hội thoại bình luận: id tin (trong Inbox) của bình luận cần trả lời */
+    replyTo: z.union([z.string().regex(/^\d{1,20}$/), z.number().int().positive()]).optional(),
+    /** true = nhắn riêng (Messenger/Direct) cho người viết bình luận replyTo */
+    private: z.boolean().optional(),
   })
   .refine((v) => (v.text && v.text.trim()) || v.image, { message: "Cần nội dung hoặc ảnh" });
 
@@ -607,6 +622,9 @@ const InboxSettingsBody = z.object({
   mcpReadMessages: z.boolean().optional(),
   autoReaction: z.enum(["off", "heart", "like"]).optional(),
   photoAck: z.enum(["short", "off", "ai"]).optional(),
+  comments: z.boolean().optional(),
+  commentAiPublic: z.boolean().optional(),
+  commentAiPrivate: z.boolean().optional(),
 });
 
 const ReactBody = z.object({ reaction: z.enum(["heart", "like", "haha", "wow", "cry", "angry", "none"]) });
@@ -660,6 +678,9 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
           autoReaction: cfg.autoReaction,
           agentReply: cfg.agentReply,
           photoAck: cfg.photoAck,
+          comments: cfg.comments,
+          commentAiPublic: cfg.commentAiPublic,
+          commentAiPrivate: cfg.commentAiPrivate,
         };
       }),
       canManage: hasRole(req.authCtx.role, "operator"),
@@ -732,6 +753,15 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Dữ liệu không hợp lệ" });
     const thread = await getInboxThread(db, req.authCtx, channelId, threadId);
     const peerKind = thread?.kind ?? parsed.data.peerKind ?? "direct";
+    let comment: { id: string; private?: boolean } | undefined;
+    if (parsed.data.replyTo !== undefined) {
+      const target = await getInboxMessageById(db, req.authCtx, channelId, threadId, String(parsed.data.replyTo));
+      const cid = typeof target?.meta?.commentId === "string" ? target.meta.commentId : "";
+      if (!cid) return reply.code(400).send({ error: "Tin được chọn không phải bình luận" });
+      comment = { id: cid, ...(parsed.data.private ? { private: true } : {}) };
+    } else if (parsed.data.private) {
+      return reply.code(400).send({ error: "Nhắn riêng cần chọn một bình luận" });
+    }
     try {
       const out = await sendInbox(dataDir, {
         channelId,
@@ -742,6 +772,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
         ...(parsed.data.image ? { image: parsed.data.image } : {}),
         source: "web",
         webUserId: req.authCtx.userId,
+        ...(comment ? { comment } : {}),
       });
       return { sent: true, msgIds: out.msgIds };
     } catch (err) {
@@ -873,6 +904,9 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     if (parsed.data.mcpReadMessages !== undefined) config["mcp_read_messages"] = parsed.data.mcpReadMessages;
     if (parsed.data.autoReaction !== undefined) config["auto_reaction"] = parsed.data.autoReaction;
     if (parsed.data.photoAck !== undefined) config["photo_ack"] = parsed.data.photoAck;
+    if (parsed.data.comments !== undefined) config["comments"] = parsed.data.comments;
+    if (parsed.data.commentAiPublic !== undefined) config["comment_ai_public"] = parsed.data.commentAiPublic;
+    if (parsed.data.commentAiPrivate !== undefined) config["comment_ai_private"] = parsed.data.commentAiPrivate;
     await updateChannel(db, req.authCtx, channelId, { config });
     const cfg = readInboxConfig(config, row.kind);
     // Đặt "số phút AI tạm im" về 0 = không tạm dừng nữa → gỡ luôn các lượt tạm dừng đang treo,
@@ -884,6 +918,8 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     const st = inboxState.get(channelId);
     if (st) Object.assign(st, { enabled: cfg.enabled, pauseMinutes: cfg.pauseMinutes });
     personalRuntime(channelId)?.setAutoReaction(cfg.autoReaction);
+    const metaRt = channelHandlers.get(channelId)?.channel;
+    if (metaRt instanceof MetaPageChannel) metaRt.updateOptions(config);
     await recordAudit(db, req.authCtx, "zalo_inbox.settings", { channelId, ...cfg });
     return cfg;
   });

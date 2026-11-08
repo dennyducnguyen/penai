@@ -9,6 +9,7 @@ import { loadDbProviders } from "./providers-runtime.js";
 import { CronRunner } from "./cron-runner.js";
 import { MemoryWorker } from "./memory-worker.js";
 import { McpManager } from "./mcp-manager.js";
+import { createInternalMcpServer } from "./mcp-server.js";
 import { syncAllSkillsToDisk } from "./skills-fs.js";
 import { shutdownBrowser } from "./browser-runtime.js";
 import { getWorkflowService } from "./workflow-service.js";
@@ -51,6 +52,9 @@ const mcp = new McpManager({
   oauthRedirectUrl:
     process.env.PENAI_MCP_OAUTH_REDIRECT?.replace(/\/$/, "") ??
     `${publicBase}/oauth/mcp/callback`,
+  // MCP "internal": agent dùng chính bộ công cụ MCP của PenAI (PenAI Kênh), không qua mạng/OAuth
+  internalServer: (srv) =>
+    createInternalMcpServer({ db: db.db, dataDir: config.dataDir, brandName: () => config.branding?.name || "PenAI" }, srv),
   persistOauth: async (serverId, workspaceId, encrypted) => {
     await saveMcpOauth(
       db.db,

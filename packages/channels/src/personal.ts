@@ -81,5 +81,6 @@ export function isValidThreadId(kind: string, threadId: string): boolean {
   if (kind === "whatsapp_personal") {
     return /^\d{5,20}$/.test(threadId) || /^\d{5,25}@lid$/.test(threadId) || /^[0-9-]{5,40}@g\.us$/.test(threadId);
   }
+  if (kind === "facebook" || kind === "instagram") return /^\d{1,30}$/.test(threadId) || /^post:[0-9_]{1,80}$/.test(threadId);
   return /^\d{1,30}$/.test(threadId);
 }

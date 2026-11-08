@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { decryptSecret, encryptSecret, logger } from "@penai/shared";
 import { listEnabledMcpServers, type DbHandle, type EnabledMcpServer } from "@penai/db";
 import {
+  InMemoryTransport,
   McpConnection,
   UnauthorizedError,
+  type McpServer,
   createOauthProvider,
   finishMcpAuth,
   type McpOauthSession,
@@ -81,6 +83,42 @@ export interface McpManagerDeps {
   oauthRedirectUrl?: string;
   /** Test inject connection giả; mặc định tạo McpConnection thật. */
   connectionFactory?: (serverName: string) => McpConnectionLike;
+  /** Dựng MCP server của chính PenAI cho kết nối "internal" (bộ công cụ PenAI Kênh). */
+  internalServer?: (srv: EnabledMcpServer) => McpServer;
+}
+
+/** Kết nối "internal": client MCP nối thẳng vào MCP server của PenAI trong cùng tiến trình. */
+class InternalMcpConnection implements McpConnectionLike {
+  private inner: McpConnection;
+  private server: McpServer | null = null;
+  constructor(
+    name: string,
+    private readonly make: () => McpServer,
+  ) {
+    this.inner = new McpConnection(name);
+  }
+  async connect(): Promise<void> {
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    this.server = this.make();
+    await this.server.connect(serverT);
+    await this.inner.connectTransport(clientT);
+  }
+  listTools(): Promise<McpTool[]> {
+    return this.inner.listTools();
+  }
+  callTool(name: string, args: Record<string, unknown>): Promise<string> {
+    return this.inner.callTool(name, args);
+  }
+  callToolRich(name: string, args: Record<string, unknown>): Promise<McpRichResult> {
+    return this.inner.callToolRich(name, args);
+  }
+  ping(): Promise<boolean> {
+    return this.inner.ping();
+  }
+  async close(): Promise<void> {
+    await this.inner.close().catch(() => {});
+    await this.server?.close().catch(() => {});
+  }
 }
 
 /**
@@ -144,7 +182,11 @@ export class McpManager {
       tools: [],
     };
     try {
-      const conn = this.deps.connectionFactory?.(srv.name) ?? new McpConnection(srv.name);
+      if (srv.transport === "internal" && !this.deps.internalServer) throw new Error("Kết nối nội bộ chưa sẵn sàng");
+      const conn =
+        srv.transport === "internal"
+          ? new InternalMcpConnection(srv.name, () => this.deps.internalServer!(srv))
+          : (this.deps.connectionFactory?.(srv.name) ?? new McpConnection(srv.name));
       const env = srv.envEncrypted ? parseEnv(decryptSecret(srv.envEncrypted)) : undefined;
       const authProvider = this.buildOauthProvider(srv, st);
       await conn.connect({

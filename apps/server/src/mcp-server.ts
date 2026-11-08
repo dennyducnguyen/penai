@@ -66,6 +66,7 @@ import { parseCookies, SESSION_COOKIE, clientIp } from "./web-auth.js";
 import { addWorkflowMcpTools, WORKFLOW_SCOPE_LABEL, WORKFLOW_SCOPES } from "./mcp-workflow-tools.js";
 import type { WorkflowService } from "./workflow-service.js";
 import { addDbMcpTools, DB_SCOPE_LABEL, DB_SCOPES } from "./mcp-db-tools.js";
+import { addChannelMcpTools, CHANNEL_SCOPE_LABEL, CHANNEL_SCOPES } from "./mcp-channel-tools.js";
 import type { WsdbService } from "./wsdb-service.js";
 import {
   allowedInboxChannelIds,
@@ -87,6 +88,7 @@ export const MCP_SCOPES = [
   "whatsapp:read",
   "whatsapp:send",
   "whatsapp:messages",
+  ...CHANNEL_SCOPES,
   ...WORKFLOW_SCOPES,
   ...DB_SCOPES,
 ] as const;
@@ -107,6 +109,7 @@ const SCOPE_LABEL: Record<Scope, string> = {
   "whatsapp:send": "WhatsApp: gửi tin nhắn và hình ảnh từ tài khoản WhatsApp cá nhân đang kết nối",
   "whatsapp:messages":
     "WhatsApp: đọc danh sách hội thoại và TOÀN BỘ nội dung tin nhắn (cá nhân + nhóm) — chỉ có tác dụng ở kênh quản trị đã bật cho phép",
+  ...CHANNEL_SCOPE_LABEL,
   ...WORKFLOW_SCOPE_LABEL,
   ...DB_SCOPE_LABEL,
 };
@@ -193,6 +196,8 @@ export interface McpPrincipal {
   ctx: WorkspaceContext;
   grant: McpOauthGrant;
   scopes: string[];
+  /** Kết nối nội bộ (agent của PenAI dùng MCP "internal"): giới hạn kênh (null = mọi kênh có Inbox). */
+  internal?: { channelIds: string[] | null };
 }
 
 async function verifyAccess(db: Db, raw: string): Promise<McpPrincipal | null> {
@@ -317,9 +322,10 @@ function buildMcpServer(
   readableAll: Array<{ id: string; kind: string }>,
   kinds: Set<string>,
 ): McpServer {
-  // Tài khoản chưa có kênh nào → vẫn đăng ký bộ Zalo (như các bản trước) để công cụ trả lỗi NO_CHANNEL rõ ràng
-  const platforms = PLATFORMS.filter((pf) => kinds.has(pf.kind));
-  if (!platforms.length) platforms.push(PLATFORMS[0]!);
+  // Tài khoản chưa có kênh nào → vẫn đăng ký bộ Zalo (như các bản trước) để công cụ trả lỗi NO_CHANNEL rõ ràng.
+  // Kết nối nội bộ (agent PenAI) chỉ dùng bộ chung "PenAI Kênh".
+  const platforms = p.internal ? [] : PLATFORMS.filter((pf) => kinds.has(pf.kind));
+  if (!platforms.length && !p.internal) platforms.push(PLATFORMS[0]!);
   const readableAny = readableAll;
   const readable = readableAny.map((r) => r.id);
   const server = new McpServer(
@@ -340,10 +346,14 @@ function buildMcpServer(
         (platforms.some((pf) => pf.px === "whatsapp")
           ? " WhatsApp cá nhân: dùng bộ công cụ whatsapp_* cùng cách dùng với zalo_* (người nhận = số điện thoại kèm mã quốc gia, " +
             "ví dụ 84901234567, hoặc thread_id lấy từ whatsapp_list_contacts / whatsapp_list_groups)."
-          : ""),
+          : "") +
+        " Bộ công cụ chung cho MỌI kênh (Zalo, WhatsApp, Facebook Fanpage, Instagram…): channels_list → conversations_list / " +
+        "messages_get / messages_search → message_send. Fanpage/Instagram: page_posts_list, page_post_create (đăng ngay lên trang công khai), " +
+        "page_comments_list, page_comment_reply, page_private_reply, page_comment_hide, page_insights.",
     },
   );
   for (const pf of platforms) addTools(pf);
+  if (p.scopes.some((s) => s.startsWith("channels:") || s.startsWith("pages:"))) addChannelMcpTools(server, p, deps);
   if (deps.workflows) addWorkflowMcpTools(server, p, deps.workflows, deps.db);
   if (deps.wsdb) addDbMcpTools(server, p, deps.wsdb);
   return server;
@@ -1016,6 +1026,36 @@ export function isMcpPublicPath(path: string): boolean {
     path === "/oauth/revoke" ||
     path === "/oauth/consent"
   );
+}
+
+/**
+ * MCP server cho kết nối "internal" (agent của PenAI dùng chính bộ công cụ MCP, trong tiến trình).
+ * args của server: các quyền (vd "channels:send", "pages:publish") + "channel:<uuid>" để giới hạn kênh.
+ * Không có quyền nào → mặc định mọi quyền kênh + Trang.
+ */
+export function createInternalMcpServer(
+  deps: { db: Db; dataDir: string; brandName: () => string },
+  srv: { id: string; workspaceId: string; args: string[] },
+): McpServer {
+  const scopes = srv.args.filter((a) => (CHANNEL_SCOPES as readonly string[]).includes(a));
+  const channelIds = srv.args.filter((a) => /^channel:[0-9a-f-]{36}$/i.test(a)).map((a) => a.slice(8));
+  const principal: McpPrincipal = {
+    ctx: { workspaceId: srv.workspaceId, userId: srv.workspaceId, role: "operator" },
+    grant: {
+      id: `internal:${srv.id}`,
+      clientId: "penai-internal",
+      userId: srv.workspaceId,
+      workspaceId: srv.workspaceId,
+      scopes: [],
+      passwordVersion: "",
+      createdAt: new Date().toISOString(),
+      lastUsedAt: null,
+      revokedAt: null,
+    },
+    scopes: scopes.length ? scopes : [...CHANNEL_SCOPES],
+    internal: { channelIds: channelIds.length ? channelIds : null },
+  };
+  return buildMcpServer({ db: deps.db, dataDir: deps.dataDir }, principal, deps.brandName(), [], new Set());
 }
 
 export function registerMcpServerRoutes(app: FastifyInstance, deps: { db: Db; dataDir: string; config: PenaiConfig; workflows?: WorkflowService; wsdb?: WsdbService }): void {

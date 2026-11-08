@@ -4,6 +4,17 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.20.0 — 2026-11-08
+
+- **App Facebook riêng** — nối Fanpage / Instagram bằng app của chính bạn, không qua hub: Channels → **Meta Apps** → ＋ Thêm app (App ID, App Secret) → dán các địa chỉ PenAI đưa vào app trên developers.facebook.com → **Đăng nhập Facebook** → **Chọn Trang** → mỗi Trang một kênh, agent riêng. Chế độ phát triển dùng được ngay với Trang bạn quản trị. Nhắn tin, Inbox, nhận ra người trả lời trên Meta Business Suite chạy như kênh qua hub.
+- **Bình luận Fanpage / Instagram**: mỗi bài viết thành một hội thoại trong Inbox; **AI trả lời công khai dưới bình luận** và **nhắn riêng** cho người bình luận (bật/tắt từng kiểu ở Inbox → ⚙️ Cài đặt); nhân viên bấm ↩ Trả lời / ✉ Nhắn riêng ngay trong Inbox; bình luận Trang viết trên Meta Business Suite cũng hiện và làm AI tạm im.
+- **MCP "PenAI Kênh"** — một bộ công cụ cho mọi kênh (Zalo, WhatsApp, Facebook, Instagram…): đọc hội thoại, gửi tin, **đăng bài** (ảnh, video, hẹn giờ), trả lời / ẩn bình luận, nhắn riêng, xem số liệu Trang.
+  - Agent của PenAI dùng qua kết nối mới **PenAI Kênh (nội bộ)** ở trang MCP (chạy trong PenAI, không cần đăng nhập; chọn quyền + giới hạn kênh).
+  - Claude / ChatGPT dùng qua địa chỉ MCP như trước với các quyền mới `channels:*`, `pages:*` (kết nối cũ cần kết nối lại để được cấp).
+- Hướng dẫn: [docs/facebook-instagram.md](docs/facebook-instagram.md) mục 7–9.
+
+Cập nhật: `sudo penai update`. Có migration (0038: bảng `meta_apps`, cho phép kiểu MCP `internal` — chỉ thêm), không phải làm gì thêm.
+
 ## 1.19.1 — 2026-11-08
 
 - **Sửa lỗi**: người lạ nhắn lần đầu (Fanpage, Zalo cá nhân…) đôi khi làm log báo lỗi ghi Contacts ("duplicate key") vì Inbox và bộ xử lý tin cùng tạo liên hệ một lúc — nay tự thử lại.
