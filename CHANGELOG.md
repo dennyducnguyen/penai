@@ -4,6 +4,13 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.20.3 — 2026-11-08
+
+- **Thêm kênh Fanpage / Instagram bằng app riêng ngay trong ＋ Thêm kênh**: chọn loại Facebook Fanpage (hoặc Instagram) → **Kết nối qua: App Facebook riêng** → chọn app, chọn Trang (tên kênh tự điền) → chọn agent → Tạo kênh. Kênh hiện trong Danh sách kênh như mọi kênh khác. Vẫn chọn được **Hub HoiAI** như trước.
+- Hộp **Chọn Trang** sau khi đăng nhập Facebook ghi rõ bước cuối (bấm ＋ Kênh Facebook); tạo xong thì đóng và làm mới Danh sách kênh.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.20.2 — 2026-11-08
 
 - **App Facebook riêng — chọn quyền trước khi đăng nhập**: bấm Đăng nhập Facebook hiện hộp chọn tính năng, **mặc định chỉ Messenger** (nhắn tin, Inbox). Tick thêm Bình luận / Đăng bài / Số liệu / Instagram thì mới xin thêm quyền tương ứng. Hết lỗi "Invalid Scopes" khi app chưa thêm đủ quyền; app chỉ Messenger cũng dễ được Meta duyệt hơn. Trang chỉ đăng ký nhận bình luận (`feed`) khi đã được cấp quyền đọc bài.

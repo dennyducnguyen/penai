@@ -146,7 +146,7 @@ Dùng khi muốn tự chủ (không phụ thuộc hub) hoặc cần quyền mà 
 
    Tick mục mà app chưa có quyền thì Facebook báo **Invalid Scopes** — bỏ tick mục đó hoặc thêm quyền vào app rồi đăng nhập lại.
 
-**Nối Trang:** mục Meta Apps → **Đăng nhập Facebook** → chọn tính năng (mặc định chỉ Messenger) → **Tiếp tục sang Facebook** → cấp quyền, tick các Trang → quay về PenAI, hộp **Chọn Trang** tự mở → chọn agent → **＋ Kênh Facebook** / **＋ Kênh Instagram**. PenAI tự đăng ký Trang gửi sự kiện cho app.
+**Nối Trang:** mục Meta Apps → **Đăng nhập Facebook** → chọn tính năng (mặc định chỉ Messenger) → **Tiếp tục sang Facebook** → cấp quyền, tick các Trang → quay về PenAI, hộp **Chọn Trang** tự mở → chọn agent → **＋ Kênh Facebook** / **＋ Kênh Instagram**. Hoặc lúc nào cũng được: **＋ Thêm kênh** → Facebook Fanpage / Instagram → **Kết nối qua: App Facebook riêng** → chọn app, Trang, agent → Tạo kênh. Kênh hiện trong Danh sách kênh; PenAI tự đăng ký Trang gửi sự kiện cho app.
 
 - Token Trang lấy theo cách này không tự hết hạn (trừ khi đổi mật khẩu hoặc gỡ quyền). Token người dùng của app hết hạn sau ~60 ngày: chỉ cần khi chọn thêm Trang — bấm **Đăng nhập lại**, token các kênh tự cập nhật.
 - Token hỏng (Graph API báo lỗi 190): kênh báo "Đăng nhập Facebook lại" ở Channels → Kết nối Trang và Inbox.
