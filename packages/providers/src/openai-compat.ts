@@ -75,21 +75,56 @@ export class OpenAICompatProvider implements Provider, EmbeddingProvider {
     });
   }
 
-  private buildParams(req: ChatRequest) {
+  /**
+   * Model có nhận âm thanh (`input_audio`) không. Mặc định không — endpoint
+   * OpenAI-compatible nói chung từ chối phần âm thanh lạ; provider biết chắc
+   * (vd hoiai khai báo trong /models) thì ghi đè.
+   */
+  protected acceptsAudio(_model: string): boolean {
+    return false;
+  }
+
+  /**
+   * Giá trị `reasoning_effort` gửi đi (undefined = không gửi). Mặc định chỉ cho
+   * model reasoning của OpenAI; provider khác có thể ghi đè.
+   */
+  protected reasoningEffortParam(req: ChatRequest, hasTools: boolean): string | undefined {
+    // reasoning_effort: theo thinking level agent (chỉ model reasoning OpenAI,
+    // và chỉ các mức API chắc chắn nhận: low/medium/high — "minimal" không gửi,
+    // gpt-5.5 từ chối giá trị này); gpt-5.6+ với tools mà không có mức hợp lệ
+    // → bắt buộc gửi "none".
+    const explicitEffort =
+      req.reasoningEffort &&
+      ["low", "medium", "high"].includes(req.reasoningEffort) &&
+      ACCEPTS_REASONING_EFFORT.test(req.model)
+        ? req.reasoningEffort
+        : undefined;
+    // gpt-5.6+ trên chat/completions CHỈ nhận reasoning_effort="none" khi có
+    // tools (mọi mức khác đều 400) — ép "none", bỏ qua thinking level agent.
+    return hasTools && REQUIRES_EFFORT_WITH_TOOLS.test(req.model) ? "none" : explicitEffort;
+  }
+
+  protected buildParams(req: ChatRequest) {
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
     if (req.system) messages.push({ role: "system", content: req.system });
+    const withAudio = this.acceptsAudio(req.model);
     for (const m of req.messages) {
       if (m.role === "user") {
-        if (m.images?.length) {
+        const audio = withAudio ? (m.audio ?? []) : [];
+        if (m.images?.length || audio.length) {
           messages.push({
             role: "user",
             content: [
               { type: "text", text: m.content },
-              ...m.images.map((url) => ({
+              ...(m.images ?? []).map((url) => ({
                 type: "image_url" as const,
                 image_url: { url },
               })),
-            ],
+              ...audio.map((a) => ({
+                type: "input_audio" as const,
+                input_audio: { data: a.data, format: a.format },
+              })),
+            ] as OpenAI.Chat.Completions.ChatCompletionContentPart[],
           });
         } else {
           messages.push({ role: "user", content: m.content });
@@ -124,21 +159,7 @@ export class OpenAICompatProvider implements Provider, EmbeddingProvider {
           },
         }))
       : undefined;
-    // reasoning_effort: theo thinking level agent (chỉ model reasoning OpenAI,
-    // và chỉ các mức API chắc chắn nhận: low/medium/high — "minimal" không gửi,
-    // gpt-5.5 từ chối giá trị này); gpt-5.6+ với tools mà không có mức hợp lệ
-    // → bắt buộc gửi "none".
-    const explicitEffort =
-      req.reasoningEffort &&
-      ["low", "medium", "high"].includes(req.reasoningEffort) &&
-      ACCEPTS_REASONING_EFFORT.test(req.model)
-        ? req.reasoningEffort
-        : undefined;
-    // gpt-5.6+ trên chat/completions CHỈ nhận reasoning_effort="none" khi có
-    // tools (mọi mức khác đều 400) — ép "none", bỏ qua thinking level agent.
-    const reasoningEffort = tools && REQUIRES_EFFORT_WITH_TOOLS.test(req.model)
-      ? ("none" as const)
-      : explicitEffort;
+    const reasoningEffort = this.reasoningEffortParam(req, Boolean(tools));
     return {
       model: req.model,
       messages,

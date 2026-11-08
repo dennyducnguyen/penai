@@ -23,9 +23,11 @@ import {
   ImageRouter,
   antigravityImageBackend,
   codexImageBackend,
+  hoiaiImageBackend,
   openAIImageBackend,
   AntigravityProvider,
   CodexProvider,
+  HoiaiProvider,
   type ChatRequest,
   type ImageBackend,
   type Provider,
@@ -1172,6 +1174,7 @@ export function registerApiRoutes(app: FastifyInstance, deps: ApiDeps): void {
       const opts = cand.model ? { model: cand.model } : {};
       if (p instanceof AntigravityProvider) backends.push(antigravityImageBackend(p, opts));
       else if (p instanceof CodexProvider) backends.push(codexImageBackend(p, opts));
+      else if (p instanceof HoiaiProvider) backends.push(hoiaiImageBackend(p, cand.model));
     }
     const key = process.env.OPENAI_API_KEY;
     if (!backends.length && key) backends.push(openAIImageBackend(key));

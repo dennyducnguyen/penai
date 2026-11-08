@@ -900,9 +900,89 @@ export const INDEX_HTML = `<!doctype html>
     var c = card(m);
     c.innerHTML =
       '<div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Danh sách</h3>' +
-      '<button id="pvAdd" class="sm">＋ Thêm provider API key</button></div>' +
+      '<span class="row" style="gap:6px"><button id="pvHoiai" class="sm">＋ Kết nối HoiAI</button><button id="pvAdd" class="ghost sm">＋ Thêm provider API key</button></span></div>' +
       '<div id="pvList" style="margin-top:6px"><span class="muted">đang tải...</span></div>';
     $("#pvAdd").onclick = function () { openProviderCreate(); };
+    $("#pvHoiai").onclick = function () { openHoiaiConnect(); };
+
+    function fmtVnd(n) { return Number(n).toLocaleString("vi-VN") + " đ"; }
+
+    // Kết nối HoiAI bằng mã kích hoạt: PenAI xin mã → người dùng mở trang HoiAI,
+    // đăng nhập, bấm Đồng ý → PenAI hỏi lại định kỳ, nhận API key và tự lưu provider.
+    // Không cần tên miền/HTTPS cho PenAI (HoiAI không chuyển hướng về đây).
+    function openHoiaiConnect(pName) {
+      var dlg = el("dialog", { style: "width:560px;max-width:95vw;padding:20px" });
+      dlg.innerHTML =
+        '<h3 style="margin:0 0 4px">Kết nối HoiAI</h3>' +
+        '<div class="muted" style="margin-bottom:12px">Một tài khoản HoiAI (chat.hoiai.vn) dùng cho chat (chữ, ảnh, tin nhắn thoại), embedding và tạo ảnh — không cần tự tạo API key.</div>' +
+        '<div id="hcBody"><span class="muted">Đang lấy mã kích hoạt...</span></div>' +
+        '<div class="row" style="margin-top:14px;justify-content:space-between;align-items:center"><a href="#" id="hcPaste" style="font-size:.85rem">Đã có API key HoiAI? Dán khóa</a><button id="hcClose" class="ghost">Đóng</button></div>';
+      document.body.appendChild(dlg); dlg.showModal();
+      var timer = null, tick = null, closed = false;
+      function stop() { if (timer) clearTimeout(timer); if (tick) clearInterval(tick); timer = null; tick = null; }
+      dlg.onclose = function () { closed = true; stop(); dlg.remove(); };
+      $("#hcClose", dlg).onclick = function () { dlg.close(); };
+      $("#hcPaste", dlg).onclick = function (ev) { ev.preventDefault(); dlg.close(); openProviderCreate("hoiai"); };
+      var box = $("#hcBody", dlg);
+      function failView(msg) {
+        stop();
+        box.innerHTML = '<div class="err" style="margin-bottom:8px">' + esc(msg) + '</div><button id="hcRetry">Lấy mã mới</button>';
+        $("#hcRetry", dlg).onclick = start;
+      }
+      function start() {
+        stop();
+        box.innerHTML = '<span class="muted">Đang lấy mã kích hoạt...</span>';
+        api("/v1/providers/hoiai/device/start", { method: "POST", body: pName ? { name: pName } : {} }).then(function (r) {
+          if (closed) return;
+          var left = r.expiresIn || 600, wait = (r.interval || 5) * 1000;
+          box.innerHTML =
+            '<div style="margin-bottom:8px">1) Mở trang kích hoạt của HoiAI — đăng nhập (hoặc đăng ký nếu chưa có tài khoản).</div>' +
+            '<div style="margin-bottom:12px"><button id="hcOpen">Mở trang kích hoạt</button> <span class="muted" style="font-size:.8rem">' + esc(r.verificationUri) + '</span></div>' +
+            '<div style="margin-bottom:6px">2) Kiểm tra mã trên trang trùng với mã dưới đây rồi bấm <b>Đồng ý</b>:</div>' +
+            '<div style="font-size:2rem;font-weight:700;letter-spacing:4px;text-align:center;padding:10px;border:1px dashed var(--border);border-radius:8px;margin-bottom:8px">' + esc(r.userCode) + '</div>' +
+            '<div class="muted" style="font-size:.8rem">Trang này tự cập nhật khi bạn bấm Đồng ý · mã hết hạn sau <b id="hcLeft"></b></div>' +
+            '<div id="hcStatus" class="muted" style="margin-top:8px;font-size:.85rem"></div>';
+          $("#hcOpen", dlg).onclick = function () { window.open(r.verificationUriComplete, "_blank", "noopener"); };
+          function showLeft() {
+            var lb = $("#hcLeft", dlg);
+            if (lb) lb.textContent = Math.floor(left / 60) + ":" + ("0" + (left % 60)).slice(-2);
+          }
+          showLeft();
+          tick = setInterval(function () { left = Math.max(0, left - 1); showLeft(); if (!left) failView("Mã kích hoạt đã hết hạn."); }, 1000);
+          function poll() {
+            if (closed) return;
+            api("/v1/providers/hoiai/device/poll", { method: "POST", body: { flowId: r.flowId } }).then(function (pr) {
+              if (closed) return;
+              if (pr.status === "ok") {
+                stop();
+                var acc = pr.account || {};
+                box.innerHTML =
+                  '<div class="ok" style="font-size:1.05rem">✓ Đã kết nối HoiAI' + (acc.email ? " — " + esc(acc.email) : "") + "</div>" +
+                  '<div class="muted" style="margin-top:6px">Provider <b>' + esc(pr.provider.name) + "</b>" +
+                  (pr.provider.defaultModel ? " · model mặc định <b>" + esc(pr.provider.defaultModel) + "</b>" : "") +
+                  (typeof acc.credit_vnd === "number" ? " · credit " + fmtVnd(acc.credit_vnd) : "") +
+                  ". Vào <b>Agents</b> → chọn provider này cho agent để dùng.</div>";
+                toast("Đã kết nối HoiAI");
+                PAGES.providers();
+                return;
+              }
+              if (pr.status === "denied") { failView("Bạn đã bấm Từ chối trên trang HoiAI."); return; }
+              if (pr.status === "expired") { failView("Mã kích hoạt đã hết hạn."); return; }
+              if (pr.status === "slow_down") wait += 5000;
+              timer = setTimeout(poll, wait);
+            }).catch(function (e) {
+              if (closed) return;
+              if (/không tồn tại/.test(e.message)) { failView(e.message); return; }
+              var st = $("#hcStatus", dlg);
+              if (st) st.innerHTML = '<span class="err">' + esc(e.message) + "</span> — đang thử lại...";
+              timer = setTimeout(poll, wait * 2);
+            });
+          }
+          timer = setTimeout(poll, wait);
+        }).catch(function (e) { if (!closed) failView(e.message); });
+      }
+      start();
+    }
 
     function accStatusHtml(a) {
       if (a.status === "needs_reauth") return '<span class="pill err">cần đăng nhập lại</span>';
@@ -995,6 +1075,7 @@ export const INDEX_HTML = `<!doctype html>
         if (dbRow.kind === "openai") return "OpenAI API";
         if (dbRow.kind === "gemini") return "Gemini API";
         if (dbRow.kind === "qwen" || dbRow.kind === "dashscope") return "Qwen API";
+        if (dbRow.kind === "hoiai") return "HoiAI";
         if (dbRow.kind === "anthropic") return "Anthropic API";
         if (dbRow.kind === "openai-compat") return "OpenAI-compatible";
         return dbRow.kind;
@@ -1166,6 +1247,35 @@ export const INDEX_HTML = `<!doctype html>
             };
             btns.appendChild(accB);
           }
+        } else if (dbRow && dbRow.kind === "hoiai") {
+          var hAccB = el("button", { "class": "ghost sm" }, "Tài khoản");
+          hAccB.onclick = function () {
+            toggleDetail(function () {
+              detail.innerHTML = '<span class="muted">Đang đọc tài khoản HoiAI...</span>';
+              api("/v1/providers-db/" + dbRow.id + "/hoiai-account").then(function (a) {
+                detail.innerHTML =
+                  "<div>👤 " + esc(a.email || a.keyName || "(HoiAI không trả email)") +
+                  (a.creditVnd !== null && a.creditVnd !== undefined ? " · credit còn <b>" + fmtVnd(a.creditVnd) + "</b>" : "") +
+                  (a.topupUrl ? ' · <a href="' + esc(a.topupUrl) + '" target="_blank" rel="noopener">Nạp credit</a>' : "") + "</div>" +
+                  (a.allowedModels && a.allowedModels.length ? '<div class="muted" style="font-size:.78rem;margin-top:4px">Model được dùng: ' + a.allowedModels.map(function (x) { return esc(x); }).join(", ") + "</div>" : "");
+              }).catch(function (e) { detail.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+            });
+          };
+          btns.appendChild(hAccB);
+          var hReB = el("button", { "class": "ghost sm" }, "Đăng nhập lại");
+          hReB.onclick = function () { openHoiaiConnect(p.name); };
+          btns.appendChild(hReB);
+          var hEditB = el("button", { "class": "ghost sm" }, "Cấu hình");
+          hEditB.onclick = function () { openProviderEdit(dbRow); };
+          btns.appendChild(hEditB);
+          var hDelB = el("button", { "class": "ghost sm" }, "Ngắt kết nối");
+          hDelB.onclick = function () {
+            if (!confirm("Ngắt kết nối HoiAI " + p.name + "? Khóa sẽ bị thu hồi phía HoiAI và xóa khỏi PenAI.")) return;
+            api("/v1/providers-db/" + dbRow.id, { method: "DELETE" })
+              .then(function () { toast("Đã ngắt kết nối HoiAI"); PAGES.providers(); })
+              .catch(function (e) { toast(e.message, 1); });
+          };
+          btns.appendChild(hDelB);
         } else if (dbRow) {
           var editB = el("button", { "class": "ghost sm" }, "Cấu hình");
           editB.onclick = function () { openProviderEdit(dbRow); };
@@ -1191,13 +1301,13 @@ export const INDEX_HTML = `<!doctype html>
     }).catch(function (e) { $("#pvList").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
 
     // Dialog thêm provider bằng API key: một credential phục vụ cả chat và embedding.
-    function openProviderCreate() {
+    function openProviderCreate(presetKind) {
       var dlg = el("dialog", { style: "width:720px;max-width:95vw;padding:20px" });
       dlg.innerHTML =
         '<h3 style="margin:0 0 4px">Thêm provider bằng API key</h3>' +
         '<div class="muted" style="margin-bottom:12px">Provider gói subscription (ChatGPT, Claude Max, Antigravity) đã được hệ thống cấu hình sẵn ở danh sách — mục này chỉ dành cho provider dùng API key.</div>' +
         '<div class="row"><div style="flex:1"><label>Tên provider</label><input id="pName" placeholder="vd: openai" style="width:100%"><div id="pNameHint" class="muted" style="font-size:.75rem"></div></div>' +
-        '<div style="flex:1"><label>Loại provider</label><select id="pKind" style="width:100%"><option value="openai">OpenAI API</option><option value="gemini">Gemini API</option><option value="qwen">Qwen API</option><option value="anthropic">Anthropic (chỉ chat)</option><option value="openai-compat">OpenAI-compatible khác</option></select></div></div>' +
+        '<div style="flex:1"><label>Loại provider</label><select id="pKind" style="width:100%"><option value="openai">OpenAI API</option><option value="gemini">Gemini API</option><option value="qwen">Qwen API</option><option value="hoiai">HoiAI (chat.hoiai.vn)</option><option value="anthropic">Anthropic (chỉ chat)</option><option value="openai-compat">OpenAI-compatible khác</option></select></div></div>' +
         '<div id="pBaseWrap"><label>Base URL</label><input id="pBase" style="width:100%"></div>' +
         '<label>API key</label><input id="pKey" type="password" autocomplete="off" placeholder="Dán API key của provider" style="width:100%">' +
         '<div class="row" style="margin-top:8px"><button id="pPreview" class="ghost">Kiểm tra key & tải model</button><span id="pCheck" class="muted"></span></div>' +
@@ -1225,7 +1335,7 @@ export const INDEX_HTML = `<!doctype html>
       }
       function applyProviderKind() {
         var kind = $("#pKind", dlg).value;
-        var defaults = { openai: "openai-api", gemini: "gemini-api", qwen: "qwen-api", anthropic: "anthropic", "openai-compat": "llm-custom" };
+        var defaults = { openai: "openai-api", gemini: "gemini-api", qwen: "qwen-api", hoiai: "hoiai", anthropic: "anthropic", "openai-compat": "llm-custom" };
         if (!providerNameTouched || !$("#pName", dlg).value.trim()) $("#pName", dlg).value = defaults[kind];
         var base = $("#pBase", dlg);
         base.disabled = kind === "openai" || kind === "gemini";
@@ -1233,8 +1343,10 @@ export const INDEX_HTML = `<!doctype html>
         else if (kind === "gemini") { base.value = ""; base.placeholder = "Tự động: Gemini API chính thức"; }
         else if (kind === "qwen") base.placeholder = "Endpoint workspace ...aliyuncs.com/compatible-mode/v1 (hoặc để trống)";
         else if (kind === "anthropic") base.placeholder = "Để trống = Anthropic mặc định";
+        else if (kind === "hoiai") base.placeholder = "Để trống = https://chat.hoiai.vn/api/v1";
         else base.placeholder = "Bắt buộc, vd: https://openrouter.ai/api/v1";
         $("#pEmbedWrap", dlg).style.display = kind === "anthropic" ? "none" : "";
+        $("#pEmbedDim", dlg).value = kind === "hoiai" ? 1024 : 768;
         showProviderName(); resetProviderModels();
       }
       function previewProviderModels() {
@@ -1252,10 +1364,10 @@ export const INDEX_HTML = `<!doctype html>
           $("#pModelSelect", dlg).innerHTML = '<option value="">— chọn model —</option>' + models.map(function (x) { return '<option value="' + esc(x.slug) + '">' + esc(x.displayName || x.slug) + "</option>"; }).join("");
           $("#pEmbedSelect", dlg).innerHTML = '<option value="">— chọn model embedding —</option>' + embeddingModels.map(function (x) { return '<option value="' + esc(x.slug) + '">' + esc(x.displayName || x.slug) + "</option>"; }).join("");
           var kind = $("#pKind", dlg).value;
-          var preferred = $("#pModelFree", dlg).value.trim() || (kind === "openai" ? "gpt-4.1-mini" : kind === "gemini" ? "gemini-3.7-flash" : kind === "qwen" ? "qwen-plus" : "");
+          var preferred = $("#pModelFree", dlg).value.trim() || (kind === "openai" ? "gpt-4.1-mini" : kind === "gemini" ? "gemini-3.7-flash" : kind === "qwen" ? "qwen-plus" : kind === "hoiai" ? "flash" : "");
           if (preferred && models.some(function (x) { return x.slug === preferred; })) { $("#pModelSelect", dlg).value = preferred; $("#pModelFree", dlg).value = preferred; }
           if (!$("#pModelFree", dlg).value && models[0]) { $("#pModelSelect", dlg).value = models[0].slug; $("#pModelFree", dlg).value = models[0].slug; }
-          var preferredEmbed = $("#pEmbedFree", dlg).value.trim() || (kind === "openai" ? "text-embedding-3-small" : kind === "gemini" ? "gemini-embedding-2" : kind === "qwen" ? "text-embedding-v4" : "");
+          var preferredEmbed = $("#pEmbedFree", dlg).value.trim() || (kind === "openai" ? "text-embedding-3-small" : kind === "gemini" ? "gemini-embedding-2" : kind === "qwen" ? "text-embedding-v4" : kind === "hoiai" ? "text-embedding" : "");
           if (preferredEmbed && embeddingModels.some(function (x) { return x.slug === preferredEmbed; })) { $("#pEmbedSelect", dlg).value = preferredEmbed; $("#pEmbedFree", dlg).value = preferredEmbed; }
           if (!$("#pEmbedFree", dlg).value && embeddingModels[0]) { $("#pEmbedSelect", dlg).value = embeddingModels[0].slug; $("#pEmbedFree", dlg).value = embeddingModels[0].slug; }
           $("#pCheck", dlg).innerHTML = '<span class="ok">✓ key hợp lệ · ' + models.length + " model chat · " + embeddingModels.length + " model embedding</span>";
@@ -1274,6 +1386,7 @@ export const INDEX_HTML = `<!doctype html>
       $("#pModelSelect", dlg).onchange = function () { if ($("#pModelSelect", dlg).value) $("#pModelFree", dlg).value = $("#pModelSelect", dlg).value; };
       $("#pEmbedSelect", dlg).onchange = function () { if ($("#pEmbedSelect", dlg).value) $("#pEmbedFree", dlg).value = $("#pEmbedSelect", dlg).value; };
       $("#pPreview", dlg).onclick = function () { previewProviderModels().catch(function () {}); };
+      if (presetKind) $("#pKind", dlg).value = presetKind;
       applyProviderKind();
       $("#pCreate", dlg).onclick = function () {
         var name = normalizedProviderName();

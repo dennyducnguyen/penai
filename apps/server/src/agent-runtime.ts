@@ -70,9 +70,11 @@ import {
   AntigravityProvider,
   CodexProvider,
   FallbackProvider,
+  HoiaiProvider,
   ImageRouter,
   antigravityImageBackend,
   codexImageBackend,
+  hoiaiImageBackend,
   type ImageBackend,
   type Provider,
   type ProviderRegistry,
@@ -751,6 +753,13 @@ return res.text || "(agent không trả về nội dung)";
       // nền cho request tạo ảnh (vd gpt-5.6-sol); ngược lại để provider tự chọn.
       const carrier = base instanceof CodexProvider ? opts.agentModel : undefined;
       backends.push(codexImageBackend(codex, carrier ? { carrierModel: carrier } : {}));
+    }
+    // HoiAI: agent chạy trên HoiAI thì tạo ảnh bằng chính khóa đó trước; provider
+    // HoiAI khác trong workspace làm ứng viên cuối (khóa không mở model ảnh → lỗi → bỏ qua).
+    if (base instanceof HoiaiProvider) backends.unshift(hoiaiImageBackend(base));
+    for (const name of rt.providers.names(ctx.workspaceId)) {
+      const p = tryGet(name);
+      if (p instanceof HoiaiProvider && p !== base) backends.push(hoiaiImageBackend(p));
     }
     if (backends.length) {
       const gate = rt.gate;

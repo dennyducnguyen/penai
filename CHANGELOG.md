@@ -4,6 +4,14 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.21.0 — 2026-11-09
+
+- **Provider HoiAI (chat.hoiai.vn)**: Providers → **＋ Kết nối HoiAI** → mở trang kích hoạt, đăng nhập (hoặc đăng ký) HoiAI, bấm Đồng ý — PenAI tự nhận khóa và tạo provider `hoiai`, không cần tự tạo API key, không cần tên miền/HTTPS. Vẫn dán được khóa `hk_live_…` nếu đã có. Một tài khoản dùng cho chat (chữ, ảnh, tin nhắn thoại), embedding (kho tri thức) và tạo ảnh. Hàng `hoiai` có nút **Tài khoản** (credit còn lại, link nạp), **Đăng nhập lại**, **Ngắt kết nối** (thu hồi khóa phía HoiAI).
+- **Agent nghe được tin nhắn thoại** từ Telegram, Zalo cá nhân, WhatsApp cá nhân khi model của agent nhận âm thanh (vd model `flash` của HoiAI). Model không nghe được thì vẫn như trước: AI đề nghị người dùng nhắn chữ.
+- **Tạo ảnh qua HoiAI**: agent chạy trên HoiAI tạo ảnh bằng chính khóa đó; workspace có HoiAI thì HoiAI là nguồn tạo ảnh dự phòng.
+
+Cập nhật: `sudo penai update`. Có migration nhỏ (thêm loại provider `hoiai`), không phải làm gì thêm.
+
 ## 1.20.7 — 2026-11-08
 
 - **Fanpage / Instagram — sửa lỗi khách nhận "Xin lỗi, hệ thống đang bận" dù AI đã trả lời xong**: khi mạng tới Meta chập chờn lúc gửi, PenAI tự thử lại (2 lần); nếu vẫn không gửi được thì ghi log rõ nguyên nhân, không thay câu trả lời bằng lời xin lỗi. Lời xin lỗi chỉ gửi khi AI thật sự lỗi.

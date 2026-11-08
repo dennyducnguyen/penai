@@ -7,6 +7,7 @@ import type {
   OutboundButton,
   OutboundMessage,
 } from "./types.js";
+import { VOICE_UNSUPPORTED_NOTE, audioFormatOf } from "./types.js";
 import { StatusReactionController, REACTION_LEGEND } from "./status-reactions.js";
 import { BoundedRunner } from "./bounded-runner.js";
 import { TypingController } from "./typing.js";
@@ -600,9 +601,14 @@ export class TelegramChannel implements Channel {
         }
       }
       if (msg.voice || msg.audio) {
+        const v = msg.voice ?? msg.audio!;
+        const name = (msg.audio?.file_name as string | undefined) ?? "voice.ogg";
+        const data = (v.file_size ?? 0) <= MEDIA_MAX_BYTES ? await this.downloadFile(v.file_id) : null;
         out.push({
           kind: "voice",
-          note: "[Người dùng gửi tin nhắn thoại — hệ thống chưa hỗ trợ nghe, hãy lịch sự đề nghị họ nhắn chữ]",
+          name,
+          note: VOICE_UNSUPPORTED_NOTE,
+          ...(data ? { audio: { data: data.toString("base64"), format: audioFormatOf(v.mime_type, name) } } : {}),
         });
       }
       if (msg.video || msg.video_note || msg.animation) {
