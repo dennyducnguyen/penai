@@ -4,6 +4,12 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.20.1 — 2026-11-08
+
+- Trang Channels: mục **Meta Apps** (app Facebook riêng) nằm ngay dưới Danh sách kênh, dễ thấy khi thêm Fanpage / Instagram.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.20.0 — 2026-11-08
 
 - **App Facebook riêng** — nối Fanpage / Instagram bằng app của chính bạn, không qua hub: Channels → **Meta Apps** → ＋ Thêm app (App ID, App Secret) → dán các địa chỉ PenAI đưa vào app trên developers.facebook.com → **Đăng nhập Facebook** → **Chọn Trang** → mỗi Trang một kênh, agent riêng. Chế độ phát triển dùng được ngay với Trang bạn quản trị. Nhắn tin, Inbox, nhận ra người trả lời trên Meta Business Suite chạy như kênh qua hub.
