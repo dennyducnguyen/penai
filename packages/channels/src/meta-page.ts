@@ -735,8 +735,9 @@ export class MetaPageChannel implements InboxChannel {
       });
       typing.start();
     };
+    let result: Awaited<ReturnType<ChannelDeps["onInbound"]>>;
     try {
-      const result = await this.deps.onInbound(
+      result = await this.deps.onInbound(
         {
           channelId: this.id,
           channelKind: this.kind,
@@ -757,13 +758,22 @@ export class MetaPageChannel implements InboxChannel {
         },
       );
       (typing as TypingController | null)?.markRunComplete();
+    } catch (err) {
+      // AI lỗi thật (provider, tool…) → xin lỗi khách
+      (typing as TypingController | null)?.stopNow();
+      this.deps.onError?.(err as Error);
+      await this.sendTextLogged(threadId, "Xin lỗi, hệ thống đang bận. Bạn vui lòng nhắn lại sau ít phút nhé.", "agent").catch(() => {});
+      return;
+    }
+    // Gửi câu trả lời: lỗi ở bước này là lỗi gửi (mạng / Meta), KHÔNG thay câu trả lời bằng lời xin lỗi
+    try {
       if (result.kind === "reply" || result.kind === "pairing") {
         if (result.text.trim()) await this.sendTextLogged(threadId, result.text, "agent");
         if (result.kind === "reply" && result.media?.length) await this.sendFilesLogged(threadId, result.media, "agent");
       }
     } catch (err) {
-      this.deps.onError?.(err as Error);
-      await this.sendTextLogged(threadId, "Xin lỗi, hệ thống đang bận. Bạn vui lòng nhắn lại sau ít phút nhé.", "agent").catch(() => {});
+      this.lastError = `Gửi trả lời lỗi: ${(err as Error).message}`;
+      this.deps.onError?.(new Error(`Gửi trả lời cho ${threadId} lỗi: ${(err as Error).message}`));
     } finally {
       (typing as TypingController | null)?.stopNow();
     }
@@ -1512,12 +1522,38 @@ export class MetaPageChannel implements InboxChannel {
       headers["content-type"] = "application/json";
       body = JSON.stringify(init.json);
     }
-    const res = await fetch(url, {
-      method: init.method ?? "GET",
-      headers,
-      ...(body !== undefined ? { body } : {}),
-      signal: AbortSignal.timeout(init.timeoutMs ?? 20_000),
-    });
+    const call = () =>
+      fetch(url, {
+        method: init.method ?? "GET",
+        headers,
+        ...(body !== undefined ? { body: init.form ? init.form() : body } : {}),
+        signal: AbortSignal.timeout(init.timeoutMs ?? 20_000),
+      });
+    let res: Response;
+    try {
+      res = await call();
+    } catch (err) {
+      // Rớt mạng lúc kết nối (TypeError "fetch failed": ECONNRESET, DNS…) — yêu cầu chưa tới Meta → thử lại 2 lần.
+      // Hết thời gian chờ (TimeoutError) thì không thử lại: có thể Meta đã nhận, gửi lại sẽ trùng tin.
+      if (!(err instanceof TypeError)) throw err;
+      let last: unknown = err;
+      res = null as unknown as Response;
+      for (const wait of [1_000, 3_000]) {
+        await new Promise((r) => setTimeout(r, wait));
+        try {
+          res = await call();
+          last = null;
+          break;
+        } catch (e) {
+          last = e;
+          if (!(e instanceof TypeError)) break;
+        }
+      }
+      if (last) {
+        const cause = (last as { cause?: { code?: string; message?: string } }).cause;
+        throw new Error(`${(last as Error).message}${cause ? ` (${cause.code ?? cause.message ?? ""})` : ""} — gọi Graph API ${path}`);
+      }
+    }
     const text = await res.text();
     let j: Obj = {};
     try {

@@ -4,6 +4,12 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.20.7 — 2026-11-08
+
+- **Fanpage / Instagram — sửa lỗi khách nhận "Xin lỗi, hệ thống đang bận" dù AI đã trả lời xong**: khi mạng tới Meta chập chờn lúc gửi, PenAI tự thử lại (2 lần); nếu vẫn không gửi được thì ghi log rõ nguyên nhân, không thay câu trả lời bằng lời xin lỗi. Lời xin lỗi chỉ gửi khi AI thật sự lỗi.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.20.6 — 2026-11-08
 
 - **Fanpage / Instagram qua hub**: khi kết nối (hoặc bấm Đăng ký lại), PenAI tự đăng ký Trang gửi sự kiện cho app của hub — trước đây nếu hub quên bước này thì Meta không gửi tin nào, AI không trả lời.
