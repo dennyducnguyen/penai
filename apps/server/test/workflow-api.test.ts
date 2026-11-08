@@ -80,6 +80,13 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  // Webhook "wait" trả kết quả ngay ở bước respond trong khi lần chạy còn ghi nốt nhật ký —
+  // chờ mọi lần chạy dở xong hẳn rồi mới dọn bảng (xóa song song với ghi gây deadlock).
+  for (let i = 0; i < 100; i++) {
+    const r = await adminQuery<{ n: number }>("SELECT count(*)::int AS n FROM workflow_runs WHERE status = 'running'");
+    if (!r[0]?.n) break;
+    await new Promise((res) => setTimeout(res, 100));
+  }
   await adminQuery("DELETE FROM workflows");
   await adminQuery("DELETE FROM workspace_secrets");
   channel.sent = [];
