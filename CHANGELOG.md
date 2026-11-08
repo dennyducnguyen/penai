@@ -4,6 +4,12 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.19.1 — 2026-11-08
+
+- **Sửa lỗi**: người lạ nhắn lần đầu (Fanpage, Zalo cá nhân…) đôi khi làm log báo lỗi ghi Contacts ("duplicate key") vì Inbox và bộ xử lý tin cùng tạo liên hệ một lúc — nay tự thử lại.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.19.0 — 2026-11-08
 
 - **Facebook Fanpage + Instagram** — kênh mới, nối qua hub **chat.hoiai.vn** nên **không cần tự tạo Meta App**:

@@ -85,4 +85,15 @@ describe("channels + pairing + contacts (RLS)", () => {
     expect(u1).toHaveLength(1); // dedup
     expect(u1[0]!.displayName).toBe("An Nguyen"); // cập nhật
   });
+
+  it("nhiều luồng cùng ghi contact lần đầu → không lỗi khóa trùng, chỉ 1 dòng", async () => {
+    const ch = await createChannel(dbh.db, ctxA(), { kind: "facebook", name: "Race", agentId: fx.agentA });
+    const results = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        upsertContact(dbh.db, ctxA(), { channelId: ch.id, channelKind: "facebook", externalId: "race-1", displayName: `Khách ${i}` }),
+      ),
+    );
+    expect(new Set(results.map((r) => r.contactId)).size).toBe(1);
+    expect((await listContacts(dbh.db, ctxA())).filter((c) => c.externalId === "race-1")).toHaveLength(1);
+  });
 });
