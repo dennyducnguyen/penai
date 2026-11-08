@@ -48,6 +48,8 @@ export interface InboxCapabilities {
   files: boolean;
   /** Cách xử lý khi khách chỉ gửi ảnh có tùy chọn "AI trả lời luôn" */
   photoAi: boolean;
+  /** Có hội thoại bình luận bài viết (Fanpage / Instagram) */
+  comments?: boolean;
 }
 
 export type InboxSendSource = "agent" | "web" | "mcp" | "api";
@@ -66,6 +68,8 @@ export interface InboxChannel extends Channel {
     source: InboxSendSource;
     webUserId?: string;
     threadName?: string;
+    /** Hội thoại bình luận: trả lời công khai bình luận này, hoặc nhắn riêng người bình luận (private) */
+    comment?: { id: string; private?: boolean };
   }): Promise<string[]>;
 }
 
@@ -87,7 +91,7 @@ export function isInboxChannel(ch: Channel | null | undefined): ch is InboxChann
 export function inboxCapabilitiesOf(ch: InboxChannel | null | undefined, kind?: string): InboxCapabilities {
   if (ch?.inboxCapabilities) return ch.inboxCapabilities();
   if (kind === "facebook" || kind === "instagram") {
-    return { groups: false, phoneLookup: false, syncContacts: false, reactions: false, newConversation: false, mcp: false, files: true, photoAi: true };
+    return { groups: false, phoneLookup: false, syncContacts: false, reactions: false, newConversation: false, mcp: false, files: true, photoAi: true, comments: true };
   }
   return PERSONAL_CAPS;
 }

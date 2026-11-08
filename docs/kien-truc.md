@@ -51,6 +51,8 @@ Monorepo pnpm (nhiều gói trong một kho mã), TypeScript strict, ESM.
 | `apps/server/src/wsdb-service.ts`, `wsdb-routes.ts`, `mcp-db-tools.ts`, `ui-database.ts`; `packages/db/src/wsdb.ts`, `wsdb-guard.ts` | CSDL riêng của workspace (schema + role `wsdb_<uuid>`, bộ kiểm SQL bằng libpg-query), API `/v1/db/*`, tool `db_*`, MCP `db:*`, trang 🗃️ Dữ liệu, bản chụp hằng ngày — [co-so-du-lieu.md](co-so-du-lieu.md) |
 | `apps/server/src/memory-worker.ts`, `mcp-manager.ts` | Tóm tắt hội thoại cũ thành trí nhớ; kết nối và tự nối lại MCP |
 | `apps/server/src/inbox.ts`, `mcp-server.ts` | Inbox dùng chung cho Zalo/WhatsApp cá nhân, Facebook, Instagram (lưu tin, realtime SSE, gửi text/ảnh, tạm im AI khi người trả lời); PenAI MCP server + OAuth cho Claude/ChatGPT gọi vào ([zalo-personal.md](zalo-personal.md)) |
+| `apps/server/src/meta-apps.ts` | App Facebook riêng: đăng nhập Facebook, chọn Trang, webhook thẳng từ Meta `/webhooks/meta-app/:id` |
+| `apps/server/src/mcp-channel-tools.ts` | MCP "PenAI Kênh": bộ công cụ chung cho mọi kênh (tin nhắn, đăng bài, bình luận, số liệu); agent dùng qua kết nối MCP `internal` |
 | `apps/server/src/meta-channels.ts` | Kết nối Fanpage/Instagram qua hub (mã kết nối, đăng ký nhận tin), route `/webhooks/meta/:kênh` kiểm chữ ký trên body gốc ([facebook-instagram.md](facebook-instagram.md)) |
 | `apps/server/src/browser-runtime.ts` | Trình duyệt của agent: một Chromium dùng chung, phiên theo agent + người dùng; API Dashboard → Trình duyệt (hồ sơ cookie mã hóa, thử truy cập) — [trinh-duyet.md](trinh-duyet.md) |
 | `apps/server/src/version.ts` | Phiên bản đang chạy (đọc `release.json` do lệnh cài/cập nhật ghi) |

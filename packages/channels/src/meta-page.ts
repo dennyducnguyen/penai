@@ -140,20 +140,27 @@ export function sameOrigin(url: string, hubUrl: string): boolean {
 
 export interface MetaCredentials {
   pageAccessToken: string;
+  /** Chế độ hub: khóa chung với hub (ký webhook, xin token mới). Chế độ app riêng: rỗng. */
   penaiSecret: string;
+  /** Chế độ app riêng: App Secret — ký appsecret_proof cho mọi lời gọi Graph API. */
+  appSecret?: string;
 }
 
 export function parseMetaCredentials(token: string): MetaCredentials {
   try {
     const j = JSON.parse(token) as Partial<MetaCredentials>;
-    return { pageAccessToken: String(j.pageAccessToken ?? ""), penaiSecret: String(j.penaiSecret ?? "") };
+    return {
+      pageAccessToken: String(j.pageAccessToken ?? ""),
+      penaiSecret: String(j.penaiSecret ?? ""),
+      ...(j.appSecret ? { appSecret: String(j.appSecret) } : {}),
+    };
   } catch {
     return { pageAccessToken: "", penaiSecret: "" };
   }
 }
 
 export function serializeMetaCredentials(c: MetaCredentials): string {
-  return JSON.stringify({ pageAccessToken: c.pageAccessToken, penaiSecret: c.penaiSecret });
+  return JSON.stringify({ pageAccessToken: c.pageAccessToken, penaiSecret: c.penaiSecret, ...(c.appSecret ? { appSecret: c.appSecret } : {}) });
 }
 
 export interface MetaPageConfig {
@@ -168,11 +175,26 @@ export interface MetaPageConfig {
   hubUrl?: string;
   registerEndpoint?: string;
   refreshEndpoint?: string;
+  /** hub = nối qua hub (chat.hoiai.vn); app = app Meta riêng của người dùng */
+  mode: "hub" | "app";
+  /** Chế độ app: id dòng meta_apps */
+  metaAppId?: string;
+  /** Nhận bình luận bài viết vào Inbox (mặc định bật) */
+  comments: boolean;
+  /** AI trả lời công khai dưới bình luận (mặc định bật) */
+  commentAiPublic: boolean;
+  /** AI nhắn riêng (Messenger/Direct) cho người bình luận (mặc định bật) */
+  commentAiPrivate: boolean;
 }
 
 export function readMetaConfig(kind: MetaChannelKind, config: Record<string, unknown>): MetaPageConfig {
   const s = (k: string) => (typeof config[k] === "string" ? (config[k] as string) : "");
   return {
+    mode: config["mode"] === "app" ? "app" : "hub",
+    metaAppId: s("metaAppId"),
+    comments: config["comments"] !== false,
+    commentAiPublic: config["comment_ai_public"] !== false,
+    commentAiPrivate: config["comment_ai_private"] !== false,
     platform: kind,
     pageId: s("pageId"),
     pageName: s("pageName"),
@@ -218,6 +240,13 @@ export function verifyHubSignature(
   return safeEqual(headers.signature.trim(), expected);
 }
 
+/** Webhook gửi THẲNG từ Meta (chế độ app riêng): `X-Hub-Signature-256: sha256=HMAC(App Secret, body)`. */
+export function verifyMetaAppSignature(rawBody: string, header: string | undefined, appSecret: string): boolean {
+  if (!appSecret || !header?.startsWith("sha256=")) return false;
+  const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
+  return safeEqual(header.trim(), expected);
+}
+
 // ===== Đọc sự kiện webhook =====
 
 export interface MetaAttachment {
@@ -240,7 +269,21 @@ export type MetaEvent =
       timestamp: number;
     }
   | { type: "postback"; senderId: string; mid: string; title: string; payload: string; timestamp: number }
-  | { type: "echo"; customerId: string; mid: string; text: string; attachments: MetaAttachment[]; appId?: string; timestamp: number };
+  | { type: "echo"; customerId: string; mid: string; text: string; attachments: MetaAttachment[]; appId?: string; timestamp: number }
+  | {
+      type: "comment";
+      commentId: string;
+      postId: string;
+      parentId?: string;
+      text: string;
+      fromId: string;
+      fromName: string;
+      /** add | edited | remove | hide… — chỉ xử lý "add" */
+      verb: string;
+      /** ảnh/sticker kèm bình luận (Facebook) */
+      photo?: string;
+      timestamp: number;
+    };
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" ? (v as Obj) : {});
@@ -315,6 +358,47 @@ export function parseMetaWebhook(payload: unknown, kind: MetaChannelKind, ownId:
         out.push({ type: "postback", senderId: sender, mid: str(pb.mid), title: str(pb.title), payload: str(pb.payload), timestamp });
       }
       // read / delivery / reaction / referral: chưa dùng
+    }
+    // Bình luận: Facebook "feed" (item=comment), Instagram "comments"
+    for (const chRaw of Array.isArray(entry.changes) ? entry.changes : []) {
+      const ch = obj(chRaw);
+      const v = obj(ch.value);
+      const timestamp = (Number(v.created_time) || Number(entry.time) || Date.now() / 1000) * 1000;
+      if (kind === "facebook" && ch.field === "feed" && v.item === "comment") {
+        const from = obj(v.from);
+        const commentId = str(v.comment_id);
+        const postId = str(v.post_id);
+        if (!commentId || !postId) continue;
+        const parent = str(v.parent_id);
+        out.push({
+          type: "comment",
+          commentId,
+          postId,
+          ...(parent && parent !== postId ? { parentId: parent } : {}),
+          text: str(v.message),
+          fromId: str(from.id),
+          fromName: str(from.name),
+          verb: str(v.verb) || "add",
+          ...(str(v.photo) ? { photo: str(v.photo) } : {}),
+          timestamp,
+        });
+      } else if (kind === "instagram" && ch.field === "comments") {
+        const from = obj(v.from);
+        const commentId = str(v.id);
+        const postId = str(obj(v.media).id);
+        if (!commentId || !postId) continue;
+        out.push({
+          type: "comment",
+          commentId,
+          postId,
+          ...(str(v.parent_id) ? { parentId: str(v.parent_id) } : {}),
+          text: str(v.text),
+          fromId: str(from.id),
+          fromName: str(from.username) ? `@${str(from.username)}` : str(from.name),
+          verb: "add",
+          timestamp: Number(entry.time) ? Number(entry.time) * (Number(entry.time) > 1e12 ? 1 : 1000) : Date.now(),
+        });
+      }
     }
   }
   return out;
@@ -393,7 +477,30 @@ const VISION_MAX = 8 * 1024 * 1024;
 /** Chờ kết quả gửi về trước khi coi một tin dội lại là do người khác gửi. */
 export const ECHO_GRACE_MS = 2500;
 
-type GraphInit = { method?: "GET" | "POST" | "DELETE"; json?: unknown; form?: () => FormData; query?: Record<string, string>; timeoutMs?: number };
+type GraphInit = { method?: "GET" | "POST" | "DELETE"; json?: unknown; form?: () => FormData; query?: Record<string, string>; timeoutMs?: number; base?: string };
+
+export interface MetaPostSummary {
+  id: string;
+  text: string;
+  createdAt: string;
+  permalink: string;
+  type?: string;
+  comments?: number;
+  likes?: number;
+}
+
+export interface MetaCommentSummary {
+  id: string;
+  text: string;
+  fromId: string;
+  fromName: string;
+  createdAt: string;
+  parentId?: string;
+  hidden?: boolean;
+  replies?: number;
+}
+
+const META_VIDEO_BASE = "https://graph-video.facebook.com/v22.0";
 
 export class MetaPageChannel implements InboxChannel {
   readonly kind: MetaChannelKind;
@@ -414,6 +521,10 @@ export class MetaPageChannel implements InboxChannel {
   private profiles = new Map<string, { name: string; avatar: string; at: number }>();
   /** Xử lý tuần tự theo từng khách */
   private chains = new Map<string, Promise<void>>();
+  /** Bình luận Trang vừa đăng qua PenAI → nguồn để ghi khi Meta báo lại (đã ghi rồi thì logged = true) */
+  private sentComments = new Map<string, { at: number; source: InboxSendSource; webUserId?: string; logged: boolean }>();
+  /** Đoạn đầu + link của bài viết (tên hội thoại bình luận) */
+  private postInfoCache = new Map<string, { snippet: string; permalink: string; at: number }>();
   /** Chờ trước khi coi tin dội lại là người khác gửi — test chỉnh nhỏ lại. */
   echoGraceMs = ECHO_GRACE_MS;
 
@@ -437,7 +548,7 @@ export class MetaPageChannel implements InboxChannel {
     void this.graph(`/${this.cfg.pageId}`, { query: { fields: "id,name" }, timeoutMs: 15_000 })
       .then(() => { this.authError = null; })
       .catch((err: unknown) => {
-        if (err instanceof MetaGraphError && (err.code === 190 || err.status === 401)) {
+        if (err instanceof MetaGraphError && (err.code === 190 || err.status === 401) && !this.authError) {
           this.authError = `Token Trang không còn hiệu lực: ${err.message}`;
         }
         logger.warn(`meta.start_check (${this.name}): ${(err as Error).message}`);
@@ -469,7 +580,26 @@ export class MetaPageChannel implements InboxChannel {
   }
 
   inboxCapabilities(): InboxCapabilities {
-    return { groups: false, phoneLookup: false, syncContacts: false, reactions: false, newConversation: false, mcp: false, files: true, photoAi: true };
+    return { groups: false, phoneLookup: false, syncContacts: false, reactions: false, newConversation: false, mcp: false, files: true, photoAi: true, comments: true };
+  }
+
+  /** Cài đặt đổi trên Dashboard (Inbox → Cài đặt) áp dụng ngay, không cần khởi động lại kênh. */
+  updateOptions(config: Record<string, unknown>): void {
+    const next = readMetaConfig(this.kind, config);
+    this.cfg = { ...this.cfg, comments: next.comments, commentAiPublic: next.commentAiPublic, commentAiPrivate: next.commentAiPrivate };
+  }
+
+  /** Thông tin Trang/tài khoản cho MCP. */
+  pageInfo(): { kind: MetaChannelKind; mode: "hub" | "app"; metaAppId: string; pageId: string; pageName: string; igAccountId: string; igUsername: string } {
+    return {
+      kind: this.kind,
+      mode: this.cfg.mode,
+      metaAppId: this.cfg.metaAppId ?? "",
+      pageId: this.cfg.pageId,
+      pageName: this.cfg.pageName,
+      igAccountId: this.cfg.igAccountId ?? "",
+      igUsername: this.cfg.igUsername ?? "",
+    };
   }
 
   status(): { running: boolean; connected: boolean; error: string | null; authError: string | null; lastWebhookAt: string | null; account: InboxAccount | null } {
@@ -501,17 +631,30 @@ export class MetaPageChannel implements InboxChannel {
     } catch {
       return { status: 400, error: "Body không phải JSON" };
     }
+    return { status: 200, events: this.ingest(payload) };
+  }
+
+  /**
+   * Xử lý payload webhook ĐÃ kiểm chữ ký (hub hoặc Meta gửi thẳng tới app riêng).
+   * Trả số sự kiện dành cho kênh này; xử lý chạy nền, tuần tự theo từng khách / bài viết.
+   */
+  ingest(payload: unknown): number {
+    if (!this.running) return 0;
     this.lastWebhookAt = new Date();
     const events = parseMetaWebhook(payload, this.kind, this.ownId);
     for (const ev of events) {
-      const key = ev.type === "echo" ? ev.customerId : ev.senderId;
-      if (ev.mid && ev.type !== "echo") {
+      const key = ev.type === "echo" ? ev.customerId : ev.type === "comment" ? `post:${ev.postId}` : ev.senderId;
+      if (ev.type === "comment") {
+        if (ev.verb !== "add" || !this.cfg.comments) continue;
+        if (this.seen.has(`c:${ev.commentId}`)) continue;
+        this.remember(this.seen, `c:${ev.commentId}`);
+      } else if (ev.mid && ev.type !== "echo") {
         if (this.seen.has(ev.mid)) continue;
         this.remember(this.seen, ev.mid);
       }
       const prev = this.chains.get(key) ?? Promise.resolve();
       const next = prev
-        .then(() => (ev.type === "echo" ? this.onEcho(ev) : this.onCustomerEvent(ev)))
+        .then(() => (ev.type === "echo" ? this.onEcho(ev) : ev.type === "comment" ? this.onComment(ev) : this.onCustomerEvent(ev)))
         .catch((err: unknown) => {
           this.lastError = (err as Error).message;
           this.deps.onError?.(err as Error);
@@ -521,7 +664,7 @@ export class MetaPageChannel implements InboxChannel {
         });
       this.chains.set(key, next);
     }
-    return { status: 200, events: events.length };
+    return events.length;
   }
 
   /** Chờ mọi tin đang xử lý xong (test). */
@@ -623,6 +766,119 @@ export class MetaPageChannel implements InboxChannel {
     } finally {
       (typing as TypingController | null)?.stopNow();
     }
+  }
+
+  /**
+   * Bình luận mới trên bài viết của Trang → hội thoại "post:<mã bài>" trong Inbox.
+   * Bình luận của chính Trang: PenAI vừa đăng thì bỏ qua (hoặc ghi đúng nguồn), không thì là người
+   * trả lời ở nơi khác (Meta Business Suite) → AI tạm im ở bài đó.
+   * Khách bình luận → AI trả lời công khai và/hoặc nhắn riêng (bật/tắt theo kênh).
+   */
+  private async onComment(ev: Extract<MetaEvent, { type: "comment" }>): Promise<void> {
+    const threadId = `post:${ev.postId}`;
+    const post = await this.postInfo(ev.postId);
+    const threadName = `📝 ${post.snippet || "Bài viết"}`;
+    const meta: Record<string, unknown> = {
+      commentId: ev.commentId,
+      postId: ev.postId,
+      ...(ev.parentId ? { parentId: ev.parentId } : {}),
+      ...(post.permalink ? { permalink: post.permalink } : {}),
+    };
+    const account = this.accountInfo();
+    if (ev.fromId && ev.fromId === this.ownId) {
+      let mine = this.sentComments.get(ev.commentId);
+      if (!mine) {
+        await new Promise((r) => setTimeout(r, this.echoGraceMs));
+        mine = this.sentComments.get(ev.commentId);
+      }
+      if (mine?.logged) return;
+      this.deps.onMessageLog?.({
+        threadId,
+        peerKind: "group",
+        msgId: `c:${ev.commentId}`,
+        direction: "out",
+        source: mine ? mine.source : "app",
+        senderId: account?.id ?? "",
+        senderName: account?.name ?? "",
+        ...(mine?.webUserId ? { webUserId: mine.webUserId } : {}),
+        contentType: ev.photo ? "photo" : "text",
+        text: ev.text,
+        ...(ev.photo ? { media: { url: ev.photo } } : {}),
+        meta: mine ? meta : { ...meta, via: `bình luận trên ${this.kind === "instagram" ? "Instagram" : "Facebook"} (Meta Business Suite / ứng dụng Trang)` },
+        sentAt: new Date(ev.timestamp),
+        threadName,
+      });
+      if (mine) mine.logged = true;
+      return;
+    }
+    const senderName = ev.fromName || ev.fromId || "Người bình luận";
+    this.deps.onMessageLog?.({
+      threadId,
+      peerKind: "group",
+      msgId: `c:${ev.commentId}`,
+      direction: "in",
+      source: "peer",
+      senderId: ev.fromId,
+      senderName,
+      contentType: ev.photo ? "photo" : "text",
+      text: ev.text,
+      ...(ev.photo ? { media: { url: ev.photo } } : {}),
+      meta,
+      sentAt: new Date(ev.timestamp),
+      threadName,
+    });
+    if (!this.cfg.commentAiPublic && !this.cfg.commentAiPrivate) return;
+    if (!ev.text.trim() || !ev.fromId) return;
+    const ways = [this.cfg.commentAiPublic ? "đăng CÔNG KHAI dưới bình luận" : "", this.cfg.commentAiPrivate ? "gửi RIÊNG qua tin nhắn cho người bình luận" : ""].filter(Boolean).join(" và ");
+    let result;
+    try {
+      result = await this.deps.onInbound({
+        channelId: this.id,
+        channelKind: this.kind,
+        chatKey: `cmt:${ev.postId}:${ev.fromId}`,
+        senderId: ev.fromId,
+        senderName,
+        text:
+          `[Bình luận của ${senderName} trên bài viết của Trang: "${post.snippet || "(không có chữ)"}"]\n${ev.text}\n\n` +
+          `(Câu trả lời của bạn sẽ được ${ways}. Trả lời ngắn gọn, lịch sự, đúng câu hỏi; không nêu thông tin riêng tư của khách công khai.)`,
+        peerKind: "direct",
+        inboxThreadId: threadId,
+      });
+    } catch (err) {
+      this.deps.onError?.(err as Error);
+      return;
+    }
+    if (result.kind !== "reply" || !result.text.trim()) return;
+    const text = stripToPlain(result.text).trim();
+    if (this.cfg.commentAiPublic) {
+      await this.replyComment(ev.commentId, text, { source: "agent", threadId, postId: ev.postId, threadName }).catch((err: unknown) =>
+        this.deps.onError?.(new Error(`Trả lời bình luận lỗi: ${(err as Error).message}`)),
+      );
+    }
+    if (this.cfg.commentAiPrivate) {
+      await this.privateReply(ev.commentId, text, { source: "agent", threadName: senderName }).catch((err: unknown) =>
+        this.deps.onError?.(new Error(`Nhắn riêng người bình luận lỗi: ${(err as Error).message}`)),
+      );
+    }
+  }
+
+  /** Đoạn đầu + link của bài viết (lưu tạm 1 giờ). */
+  private async postInfo(postId: string): Promise<{ snippet: string; permalink: string }> {
+    const hit = this.postInfoCache.get(postId);
+    if (hit && Date.now() - hit.at < 3600_000) return hit;
+    let snippet = "", permalink = "";
+    try {
+      const fields = this.kind === "instagram" ? "caption,permalink" : "message,permalink_url";
+      const j = obj(await this.graph(`/${postId}`, { query: { fields }, timeoutMs: 8_000 }));
+      snippet = (str(j.caption) || str(j.message)).replace(/\s+/g, " ").trim().slice(0, 80);
+      permalink = str(j.permalink) || str(j.permalink_url);
+    } catch {
+      // thiếu quyền đọc bài — vẫn ghi bình luận
+    }
+    const v = { snippet, permalink, at: Date.now() };
+    this.postInfoCache.set(postId, v);
+    if (this.postInfoCache.size > 2000) this.postInfoCache.delete(this.postInfoCache.keys().next().value!);
+    return v;
   }
 
   /** Tin dội lại: Trang vừa gửi đi. Không phải PenAI gửi → người trả lời ở nơi khác. */
@@ -751,9 +1007,30 @@ export class MetaPageChannel implements InboxChannel {
     source: InboxSendSource;
     webUserId?: string;
     threadName?: string;
+    comment?: { id: string; private?: boolean };
   }): Promise<string[]> {
     if (!this.isConnected()) {
       throw Object.assign(new Error(this.authError ?? "Kênh chưa kết nối"), { code: "NOT_CONNECTED" });
+    }
+    // Hội thoại bình luận: trả lời công khai một bình luận / nhắn riêng người bình luận / bình luận vào bài
+    if (input.threadId.startsWith("post:")) {
+      const text = input.text?.trim() ?? "";
+      if (!text) throw Object.assign(new Error("Trả lời bình luận chỉ gửi được chữ"), { platformRejected: true });
+      const postId = input.threadId.slice(5);
+      if (input.comment?.private) {
+        const r = await this.privateReply(input.comment.id, text, { source: input.source, ...(input.webUserId ? { webUserId: input.webUserId } : {}) });
+        return [r.messageId];
+      }
+      const target = input.comment?.id ?? postId;
+      const id = await this.replyComment(target, text, {
+        source: input.source,
+        threadId: input.threadId,
+        postId,
+        ...(input.webUserId ? { webUserId: input.webUserId } : {}),
+        ...(input.threadName ? { threadName: input.threadName } : {}),
+        onPost: !input.comment,
+      });
+      return [id];
     }
     const ids: string[] = [];
     if (input.filePaths?.length) ids.push(...(await this.sendFilesLogged(input.threadId, input.filePaths, input.source, input.webUserId)));
@@ -918,11 +1195,291 @@ export class MetaPageChannel implements InboxChannel {
     await this.graph(`/${this.cfg.pageId}/messages`, { method: "POST", json: { recipient: { id: recipientId }, sender_action: action }, timeoutMs: 10_000 });
   }
 
+  // ===== Thao tác trên Trang (MCP "PenAI Kênh" gọi) =====
+
+  private assertReady(): void {
+    if (!this.isConnected()) throw Object.assign(new Error(this.authError ?? "Kênh chưa kết nối"), { code: "NOT_CONNECTED" });
+  }
+
+  /** Trả lời công khai một bình luận (hoặc bình luận vào bài khi onPost). Trả mã bình luận mới. */
+  async replyComment(
+    targetId: string,
+    text: string,
+    opts: { source: InboxSendSource; webUserId?: string; threadId?: string; postId?: string; threadName?: string; onPost?: boolean },
+  ): Promise<string> {
+    this.assertReady();
+    const message = text.slice(0, 2000);
+    const path = this.kind === "instagram" && !opts.onPost ? `/${targetId}/replies` : `/${targetId}/comments`;
+    const j = obj(await this.graph(path, { method: "POST", json: { message } }));
+    const id = str(j.id);
+    const logged = !!opts.threadId;
+    if (id) {
+      this.sentComments.set(id, { at: Date.now(), source: opts.source, ...(opts.webUserId ? { webUserId: opts.webUserId } : {}), logged });
+      if (this.sentComments.size > 2000) this.sentComments.delete(this.sentComments.keys().next().value!);
+    }
+    if (logged) {
+      const account = this.accountInfo();
+      this.deps.onMessageLog?.({
+        threadId: opts.threadId!,
+        peerKind: "group",
+        msgId: `c:${id || Date.now()}`,
+        direction: "out",
+        source: opts.source,
+        senderId: account?.id ?? "",
+        senderName: account?.name ?? "",
+        ...(opts.webUserId ? { webUserId: opts.webUserId } : {}),
+        contentType: "text",
+        text: message,
+        meta: { commentId: id, ...(opts.postId ? { postId: opts.postId } : {}), ...(opts.onPost ? {} : { parentId: targetId }) },
+        sentAt: new Date(),
+        ...(opts.threadName ? { threadName: opts.threadName } : {}),
+      });
+    }
+    return id;
+  }
+
+  /** Nhắn riêng (Messenger / Instagram Direct) cho người vừa bình luận — Meta cho 1 lần mỗi bình luận, trong 7 ngày. */
+  async privateReply(commentId: string, text: string, opts: { source: InboxSendSource; webUserId?: string; threadName?: string }): Promise<{ messageId: string; recipientId: string }> {
+    this.assertReady();
+    const max = this.kind === "instagram" ? IG_TEXT_MAX : FB_TEXT_MAX;
+    const message = text.slice(0, max);
+    const j = obj(await this.graph(`/${this.cfg.pageId}/messages`, { method: "POST", json: { recipient: { comment_id: commentId }, message: { text: message } } }));
+    const mid = str(j.message_id);
+    const recipientId = str(j.recipient_id);
+    this.markSent(mid);
+    if (recipientId) {
+      const account = this.accountInfo();
+      this.deps.onMessageLog?.({
+        threadId: recipientId,
+        peerKind: "direct",
+        msgId: mid,
+        direction: "out",
+        source: opts.source,
+        senderId: account?.id ?? "",
+        senderName: account?.name ?? "",
+        ...(opts.webUserId ? { webUserId: opts.webUserId } : {}),
+        contentType: "text",
+        text: message,
+        meta: { privateReplyTo: commentId },
+        sentAt: new Date(),
+        ...(opts.threadName ? { threadName: opts.threadName } : {}),
+      });
+    }
+    return { messageId: mid, recipientId };
+  }
+
+  /** Ẩn / hiện bình luận. */
+  async hideComment(commentId: string, hidden: boolean): Promise<void> {
+    this.assertReady();
+    await this.graph(`/${commentId}`, { method: "POST", json: this.kind === "instagram" ? { hide: hidden } : { is_hidden: hidden } });
+  }
+
+  /** Bài viết gần đây của Trang / tài khoản Instagram. */
+  async listPosts(limit = 10): Promise<MetaPostSummary[]> {
+    this.assertReady();
+    const n = String(Math.min(Math.max(limit, 1), 50));
+    if (this.kind === "instagram") {
+      const j = obj(await this.graph(`/${this.ownId}/media`, { query: { fields: "id,caption,media_type,permalink,timestamp,comments_count,like_count", limit: n } }));
+      return (Array.isArray(j.data) ? j.data : []).map((x) => {
+        const o = obj(x);
+        return { id: str(o.id), text: str(o.caption), createdAt: str(o.timestamp), permalink: str(o.permalink), type: str(o.media_type), comments: Number(o.comments_count) || 0, likes: Number(o.like_count) || 0 };
+      });
+    }
+    const j = obj(
+      await this.graph(`/${this.cfg.pageId}/posts`, {
+        query: { fields: "id,message,created_time,permalink_url,comments.summary(true).limit(0),reactions.summary(true).limit(0)", limit: n },
+      }),
+    );
+    return (Array.isArray(j.data) ? j.data : []).map((x) => {
+      const o = obj(x);
+      return {
+        id: str(o.id),
+        text: str(o.message),
+        createdAt: str(o.created_time),
+        permalink: str(o.permalink_url),
+        comments: Number(obj(obj(o.comments).summary).total_count) || 0,
+        likes: Number(obj(obj(o.reactions).summary).total_count) || 0,
+      };
+    });
+  }
+
+  /** Bình luận của một bài (mới nhất trước). */
+  async listComments(postId: string, limit = 25): Promise<MetaCommentSummary[]> {
+    this.assertReady();
+    const n = String(Math.min(Math.max(limit, 1), 100));
+    if (this.kind === "instagram") {
+      const j = obj(await this.graph(`/${postId}/comments`, { query: { fields: "id,text,username,from,timestamp,hidden,replies{id}", limit: n } }));
+      return (Array.isArray(j.data) ? j.data : []).map((x) => {
+        const o = obj(x);
+        return {
+          id: str(o.id),
+          text: str(o.text),
+          fromId: str(obj(o.from).id),
+          fromName: str(o.username) ? `@${str(o.username)}` : "",
+          createdAt: str(o.timestamp),
+          hidden: o.hidden === true,
+          replies: Array.isArray(obj(o.replies).data) ? (obj(o.replies).data as unknown[]).length : 0,
+        };
+      });
+    }
+    const j = obj(
+      await this.graph(`/${postId}/comments`, {
+        query: { fields: "id,message,from,created_time,parent{id},is_hidden,comment_count", filter: "stream", order: "reverse_chronological", limit: n },
+      }),
+    );
+    return (Array.isArray(j.data) ? j.data : []).map((x) => {
+      const o = obj(x);
+      const parent = str(obj(o.parent).id);
+      return {
+        id: str(o.id),
+        text: str(o.message),
+        fromId: str(obj(o.from).id),
+        fromName: str(obj(o.from).name),
+        createdAt: str(o.created_time),
+        ...(parent ? { parentId: parent } : {}),
+        hidden: o.is_hidden === true,
+        replies: Number(o.comment_count) || 0,
+      };
+    });
+  }
+
+  /**
+   * Đăng bài. Facebook: chữ / link / 1 ảnh / nhiều ảnh / 1 video, hẹn giờ được.
+   * Instagram: 1 ảnh, 1 video (reel) hoặc nhiều ảnh/video (carousel) — cần PENAI_PUBLIC_URL, không hẹn giờ.
+   */
+  async createPost(input: { message?: string; link?: string; filePaths?: string[]; scheduledAt?: Date }): Promise<{ id: string; permalink: string; scheduledAt?: string }> {
+    this.assertReady();
+    const files = input.filePaths ?? [];
+    const message = (input.message ?? "").trim();
+    if (input.scheduledAt) {
+      const diff = input.scheduledAt.getTime() - Date.now();
+      if (this.kind === "instagram") throw Object.assign(new Error("Instagram không cho hẹn giờ đăng qua API — đăng ngay hoặc dùng lịch hẹn của PenAI."), { platformRejected: true });
+      if (diff < 10 * 60_000 || diff > 75 * 24 * 3600_000) throw Object.assign(new Error("Giờ hẹn phải cách hiện tại từ 10 phút tới 75 ngày."), { platformRejected: true });
+    }
+    const sched = input.scheduledAt ? { published: "false", scheduled_publish_time: String(Math.floor(input.scheduledAt.getTime() / 1000)) } : null;
+    let id = "";
+    if (this.kind === "instagram") {
+      if (!files.length) throw Object.assign(new Error("Instagram cần ít nhất 1 ảnh hoặc video."), { platformRejected: true });
+      if (files.length > 10) throw Object.assign(new Error("Instagram carousel tối đa 10 ảnh/video."), { platformRejected: true });
+      const urls: Array<{ url: string; video: boolean }> = [];
+      for (const f of files) {
+        const url = this.deps.publishFile ? await this.deps.publishFile(f, basename(f), 24 * 3600) : null;
+        if (!url) throw new Error("Không tạo được link công khai cho file (máy chủ thiếu PENAI_PUBLIC_URL).");
+        urls.push({ url, video: metaAttachmentType(f) === "video" });
+      }
+      const ig = this.ownId;
+      const container = async (body: Record<string, unknown>) => str(obj(await this.graph(`/${ig}/media`, { method: "POST", json: body, timeoutMs: 60_000 })).id);
+      let creationId: string;
+      if (urls.length === 1) {
+        const u = urls[0]!;
+        creationId = await container(u.video ? { media_type: "REELS", video_url: u.url, caption: message } : { image_url: u.url, caption: message });
+        if (u.video) await this.waitIgContainer(creationId);
+      } else {
+        const children: string[] = [];
+        for (const u of urls) {
+          const c = await container(u.video ? { media_type: "VIDEO", video_url: u.url, is_carousel_item: true } : { image_url: u.url, is_carousel_item: true });
+          if (u.video) await this.waitIgContainer(c);
+          children.push(c);
+        }
+        creationId = await container({ media_type: "CAROUSEL", children: children.join(","), caption: message });
+      }
+      id = str(obj(await this.graph(`/${ig}/media_publish`, { method: "POST", json: { creation_id: creationId }, timeoutMs: 60_000 })).id);
+    } else {
+      const page = this.cfg.pageId;
+      const images = files.filter((f) => metaAttachmentType(f) === "image");
+      const videos = files.filter((f) => metaAttachmentType(f) === "video");
+      if (files.length && images.length + videos.length !== files.length) throw Object.assign(new Error("Đăng bài chỉ nhận ảnh hoặc video."), { platformRejected: true });
+      if (videos.length && (videos.length > 1 || images.length)) throw Object.assign(new Error("Facebook: mỗi bài một video, không kèm ảnh."), { platformRejected: true });
+      const fileForm = async (path: string, fields: Record<string, string>) => {
+        const buf = await readFile(path);
+        const mime = MIME_BY_EXT[extname(path).toLowerCase()] ?? "application/octet-stream";
+        return () => {
+          const f = new FormData();
+          for (const [k, v] of Object.entries(fields)) f.append(k, v);
+          f.append("source", new Blob([new Uint8Array(buf)], { type: mime }), basename(path));
+          return f;
+        };
+      };
+      if (videos.length) {
+        const form = await fileForm(videos[0]!, { description: message, ...(sched ?? {}) });
+        id = str(obj(await this.graph(`/${page}/videos`, { method: "POST", form, timeoutMs: 300_000, base: META_VIDEO_BASE })).id);
+      } else if (images.length === 1) {
+        const form = await fileForm(images[0]!, { caption: message, ...(sched ?? {}) });
+        const j = obj(await this.graph(`/${page}/photos`, { method: "POST", form, timeoutMs: 120_000 }));
+        id = str(j.post_id) || str(j.id);
+      } else if (images.length > 1) {
+        const media: Array<{ media_fbid: string }> = [];
+        for (const img of images.slice(0, 30)) {
+          const form = await fileForm(img, { published: "false", ...(sched ? { temporary: "true" } : {}) });
+          media.push({ media_fbid: str(obj(await this.graph(`/${page}/photos`, { method: "POST", form, timeoutMs: 120_000 })).id) });
+        }
+        id = str(obj(await this.graph(`/${page}/feed`, { method: "POST", json: { message, attached_media: media, ...(sched ? { published: false, scheduled_publish_time: Number(sched.scheduled_publish_time) } : {}) } })).id);
+      } else {
+        if (!message && !input.link) throw Object.assign(new Error("Bài viết cần nội dung, link hoặc ảnh/video."), { platformRejected: true });
+        id = str(obj(await this.graph(`/${page}/feed`, { method: "POST", json: { message, ...(input.link ? { link: input.link } : {}), ...(sched ? { published: false, scheduled_publish_time: Number(sched.scheduled_publish_time) } : {}) } })).id);
+      }
+    }
+    let permalink = "";
+    if (id && !input.scheduledAt) {
+      try {
+        const j = obj(await this.graph(`/${id}`, { query: { fields: this.kind === "instagram" ? "permalink" : "permalink_url" }, timeoutMs: 8_000 }));
+        permalink = str(j.permalink) || str(j.permalink_url);
+      } catch {
+        // link không bắt buộc
+      }
+    }
+    return { id, permalink, ...(input.scheduledAt ? { scheduledAt: input.scheduledAt.toISOString() } : {}) };
+  }
+
+  /** Instagram: chờ video xử lý xong (tối đa ~2 phút) trước khi xuất bản. */
+  private async waitIgContainer(id: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      const j = obj(await this.graph(`/${id}`, { query: { fields: "status_code" }, timeoutMs: 10_000 }));
+      const st = str(j.status_code);
+      if (st === "FINISHED") return;
+      if (st === "ERROR" || st === "EXPIRED") throw new Error(`Instagram xử lý video lỗi (${st})`);
+      await new Promise((r) => setTimeout(r, 3_000));
+    }
+    throw new Error("Instagram xử lý video quá lâu — thử lại sau");
+  }
+
+  /** Xóa bài (chỉ Facebook — Instagram không cho xóa qua API). */
+  async deletePost(postId: string): Promise<void> {
+    this.assertReady();
+    if (this.kind === "instagram") throw Object.assign(new Error("Instagram không cho xóa bài qua API — xóa trong ứng dụng Instagram."), { platformRejected: true });
+    await this.graph(`/${postId}`, { method: "DELETE" });
+  }
+
+  /** Số liệu Trang / tài khoản theo ngày. */
+  async insights(input: { metrics?: string[]; days?: number }): Promise<Array<{ metric: string; title: string; values: Array<{ date: string; value: unknown }>; total?: unknown }>> {
+    this.assertReady();
+    const days = Math.min(Math.max(input.days ?? 7, 1), 90);
+    const until = Math.floor(Date.now() / 1000);
+    const since = until - days * 86400;
+    const ig = this.kind === "instagram";
+    const metrics = (input.metrics?.length ? input.metrics : ig ? ["reach", "profile_views", "accounts_engaged"] : ["page_impressions_unique", "page_post_engagements", "page_daily_follows_unique"])
+      .map((m) => m.replace(/[^a-z_]/gi, ""))
+      .filter(Boolean)
+      .join(",");
+    const query: Record<string, string> = { metric: metrics, period: "day", since: String(since), until: String(until) };
+    if (ig) query.metric_type = "total_value";
+    const j = obj(await this.graph(`/${ig ? this.ownId : this.cfg.pageId}/insights`, { query }));
+    return (Array.isArray(j.data) ? j.data : []).map((x) => {
+      const o = obj(x);
+      const values = (Array.isArray(o.values) ? o.values : []).map((v) => ({ date: str(obj(v).end_time).slice(0, 10), value: obj(v).value }));
+      const total = obj(o.total_value).value;
+      return { metric: str(o.name), title: str(o.title) || str(o.name), values, ...(total !== undefined ? { total } : {}) };
+    });
+  }
+
   /** Gọi Graph API; lỗi 190 (token hết hạn/đổi) → xin token mới từ hub rồi thử lại 1 lần. */
-  private async graph(path: string, init: GraphInit, retried = false): Promise<unknown> {
-    const url = new URL(`${META_GRAPH_BASE}${path}`);
+  async graph(path: string, init: GraphInit, retried = false): Promise<unknown> {
+    const url = new URL(`${init.base ?? META_GRAPH_BASE}${path}`);
     for (const [k, v] of Object.entries(init.query ?? {})) url.searchParams.set(k, v);
     url.searchParams.set("access_token", this.creds.pageAccessToken);
+    if (this.creds.appSecret) {
+      url.searchParams.set("appsecret_proof", createHmac("sha256", this.creds.appSecret).update(this.creds.pageAccessToken).digest("hex"));
+    }
     const headers: Record<string, string> = {};
     let body: FormData | string | undefined;
     if (init.form) body = init.form();
@@ -948,8 +1505,11 @@ export class MetaPageChannel implements InboxChannel {
     const code = Number(e.code) || undefined;
     const sub = Number(e.error_subcode) || undefined;
     if (!retried && (code === 190 || code === 102)) {
-      if (await this.refreshToken()) return this.graph(path, init, true);
-      this.authError = `Token Trang không còn hiệu lực (${str(e.message) || res.status}) — kết nối lại Trang trên hub.`;
+      if (this.cfg.mode === "hub" && (await this.refreshToken())) return this.graph(path, init, true);
+      this.authError =
+        this.cfg.mode === "app"
+          ? `Token Trang không còn hiệu lực (${str(e.message) || res.status}) — vào Channels → Meta Apps → Đăng nhập Facebook lại.`
+          : `Token Trang không còn hiệu lực (${str(e.message) || res.status}) — kết nối lại Trang trên hub.`;
     }
     throw new MetaGraphError(str(e.message) || `Graph API lỗi HTTP ${res.status}`, res.status, code, sub);
   }

@@ -404,6 +404,8 @@ createServer(async (req, res) => {
     { id: "c1", kind: "zalo_personal", name: "Zalo bán hàng", agentId: "a1", agentKey: "tro-ly", agentName: "Trợ lý", enabled: true, requirePairing: true, config: {} },
   ], supportedKinds: ["telegram", "discord", "slack", "whatsapp", "zalo", "zalo_personal", "whatsapp_personal", "feishu", "msteams", "facebook", "instagram"] });
   if (path === "/v1/channel-pairings/pending") return json({ pending: [] });
+  if (path === "/v1/meta-apps" && method === "GET") return json({ apps: [{ id: "ma1", name: "App shop", appId: "1234567890", loginConfigId: "", verifyToken: "pvt_demo", redirectUri: "http://127.0.0.1:" + port + "/oauth/meta/callback", webhookUrl: "http://127.0.0.1:" + port + "/webhooks/meta-app/ma1", loggedIn: true, fbUserName: "Nguyễn Văn A", tokenExpiresAt: new Date(Date.now() + 50 * 86400000).toISOString(), tokenExpired: false, grantedScopes: ["pages_messaging", "pages_manage_posts"], channels: 1 }], ready: true });
+  if (path === "/v1/meta-apps/ma1/pages") return json({ pages: [{ id: "1065", name: "Thời Trang KOS", avatar: "", facebookChannelId: "fb1", instagram: { id: "1784", username: "kosshop", name: "KOS", avatar: "", channelId: null } }] });
   if (path === "/v1/usage") return json({ monthTokens: 1234567, cap: null });
   // ----- Cron -----
   if (path === "/v1/cron" && method === "GET") return json(cronView());

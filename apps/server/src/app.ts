@@ -279,6 +279,8 @@ import {
 import { registerLibraryRoutes } from "./library.js";
 import { registerInboxRoutes } from "./inbox.js";
 import { registerMetaRoutes, unregisterMetaWebhook } from "./meta-channels.js";
+import { registerMetaAppRoutes } from "./meta-apps.js";
+import { CHANNEL_SCOPES } from "./mcp-channel-tools.js";
 import { buildXlsx, type XlsxCell } from "./xlsx.js";
 import { isMcpPublicPath, registerMcpServerRoutes } from "./mcp-server.js";
 import { registerBrowserRoutes } from "./browser-runtime.js";
@@ -677,6 +679,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       path === "/auth/login" || // đăng nhập email + mật khẩu
       path === "/auth/logout" || // tự đọc cookie, luôn cho phép
       path === "/oauth/mcp/callback" || // redirect từ trang OAuth của MCP server
+      path === "/oauth/meta/callback" || // Facebook chuyển về sau khi cấp quyền cho app Meta riêng (xác thực bằng state)
       path.startsWith("/f/") || // link file công khai — token ngẫu nhiên là bằng chứng
       path.startsWith("/landing/") || // landing page public, HTML chay trong CSP sandbox
       path.startsWith("/webhooks/") ||
@@ -740,6 +743,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Inbox Zalo cá nhân (trực chat nhiều người) + PenAI MCP server (Claude/ChatGPT gọi vào)
   registerInboxRoutes(app, { db, dataDir: deps.config.dataDir });
   registerMetaRoutes(app, { db });
+  registerMetaAppRoutes(app, { db });
   registerMcpServerRoutes(app, { db, dataDir: deps.config.dataDir, config: deps.config, workflows: getWorkflowService(deps), wsdb: getWsdbService(deps) });
 
   // Trình duyệt của agent: hồ sơ cookie, thử truy cập, phiên đang mở (ws_admin)
@@ -3714,10 +3718,21 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.post("/v1/mcp", async (req, reply) => {
     if (!requireRole(req, reply, "ws_admin")) return;
     const b = req.body as {
-      name?: string; transport?: "stdio" | "sse" | "http";
+      name?: string; transport?: "stdio" | "sse" | "http" | "internal";
       command?: string; args?: string[]; url?: string; env?: string;
     };
     if (!b.name || !b.transport) return reply.code(400).send({ error: "Thiếu name/transport" });
+    if (!["stdio", "sse", "http", "internal"].includes(b.transport)) return reply.code(400).send({ error: "transport không hợp lệ" });
+    if (b.transport === "internal") {
+      // PenAI Kênh (nội bộ): args = quyền + "channel:<uuid>" giới hạn kênh
+      const args = Array.isArray(b.args) ? b.args.map(String) : [];
+      const bad = args.find((a) => !(CHANNEL_SCOPES as readonly string[]).includes(a) && !/^channel:[0-9a-f-]{36}$/i.test(a));
+      if (bad) return reply.code(400).send({ error: `Quyền không hợp lệ: ${bad}` });
+      b.args = args;
+      delete b.command;
+      delete b.url;
+      delete b.env;
+    }
     const s = await createMcpServer(db, req.authCtx, {
       name: b.name,
       transport: b.transport,

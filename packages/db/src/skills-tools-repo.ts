@@ -623,7 +623,7 @@ export async function createMcpServer(
   ctx: WorkspaceContext,
   input: {
     name: string;
-    transport: "stdio" | "sse" | "http";
+    transport: "stdio" | "sse" | "http" | "internal";
     command?: string;
     args?: string[];
     url?: string;

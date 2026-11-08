@@ -13,6 +13,7 @@ import {
   sameOrigin,
   serializeMetaCredentials,
   verifyHubSignature,
+  verifyMetaAppSignature,
   type ChannelMessageLog,
   type InboundMessage,
   type RunHooks,
@@ -331,5 +332,208 @@ describe("MetaPageChannel", () => {
     const bodies = sentMessages().map((c) => c.body as { message: Record<string, unknown> });
     expect(bodies[0]!.message).toEqual({ attachment: { type: "image", payload: { url: "https://penai.test/f/san-pham.jpg" } } });
     expect(bodies[1]!.message).toEqual({ text: "📎 bang-gia.pdf: https://penai.test/f/bang-gia.pdf" });
+  });
+});
+
+describe("Bình luận, app riêng, thao tác Trang", () => {
+  type Call = { url: string; method: string; body: unknown };
+  let calls: Call[];
+  let logs: ChannelMessageLog[];
+  let inbound: InboundMessage[];
+  let reply: (m: InboundMessage) => Promise<{ kind: "reply"; text: string } | { kind: "ignore" }>;
+  let n: number;
+  let dir: string;
+  const APP_SECRET = "abcdef0123456789abcdef0123456789";
+
+  function make(kind: "facebook" | "instagram" = "facebook", config: Record<string, unknown> = {}) {
+    const ch = new MetaPageChannel(kind, {
+      id: "chA",
+      name: "KOS",
+      token: serializeMetaCredentials({ pageAccessToken: "EAA-app", penaiSecret: "", appSecret: APP_SECRET }),
+      config: { mode: "app", metaAppId: "app-row", pageId: "1065", pageName: "Thời Trang KOS", igAccountId: "1784", igUsername: "kos", ...config },
+      requirePairing: false,
+      onInbound: async (m) => {
+        inbound.push(m);
+        return reply(m);
+      },
+      onMessageLog: (e) => logs.push(e),
+      publishFile: async (_p, name) => `https://penai.test/f/${name}`,
+    });
+    ch.echoGraceMs = 20;
+    return ch;
+  }
+  const feed = (value: Record<string, unknown>) => ({
+    object: "page",
+    entry: [{ id: "1065", time: 1700000000, changes: [{ field: "feed", value: { item: "comment", verb: "add", post_id: "1065_99", created_time: 1700000000, ...value } }] }],
+  });
+
+  beforeEach(async () => {
+    calls = [];
+    logs = [];
+    inbound = [];
+    n = 0;
+    reply = async () => ({ kind: "reply", text: "Dạ áo còn size M ạ" });
+    dir = await mkdtemp(join(tmpdir(), "penai-meta2-"));
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      let body: unknown = init?.body;
+      if (typeof body === "string") body = JSON.parse(body);
+      calls.push({ url, method, body });
+      const path = new URL(url).pathname.replace("/v22.0", "");
+      const json = (o: unknown) => new Response(JSON.stringify(o), { status: 200 });
+      if (method === "GET" && path === "/1065_99") return json({ message: "Áo thun trắng giảm 20% cuối tuần", permalink_url: "https://facebook.com/p/99" });
+      if (method === "POST" && /\/comments$|\/replies$/.test(path)) return json({ id: `c.ai${++n}` });
+      if (method === "POST" && path === "/1065/messages") return json({ recipient_id: "psid-77", message_id: `mid.p${++n}` });
+      if (method === "POST" && path === "/1065/feed") return json({ id: "1065_500" });
+      if (method === "POST" && path === "/1065/photos") return json({ id: `ph${++n}`, post_id: "1065_501" });
+      if (method === "POST" && path === "/1784/media") return json({ id: `cont${++n}` });
+      if (method === "POST" && path === "/1784/media_publish") return json({ id: "ig-post-1" });
+      if (method === "GET" && path === "/1065/posts")
+        return json({ data: [{ id: "1065_99", message: "Áo", created_time: "2026-11-08T00:00:00+0000", permalink_url: "https://fb/p", comments: { summary: { total_count: 3 } }, reactions: { summary: { total_count: 9 } } }] });
+      if (method === "GET" && path === "/1065/insights") return json({ data: [{ name: "page_impressions_unique", title: "Reach", values: [{ value: 12, end_time: "2026-11-07T08:00:00+0000" }] }] });
+      return json({ id: "x", permalink_url: "https://fb/x" });
+    });
+  });
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("đọc sự kiện bình luận Facebook + Instagram; bỏ sự kiện không phải bình luận", () => {
+    const fb = parseMetaWebhook(feed({ comment_id: "99_1", message: "Còn size M?", from: { id: "u9", name: "Lan" } }), "facebook", "1065");
+    expect(fb[0]).toMatchObject({ type: "comment", commentId: "99_1", postId: "1065_99", fromName: "Lan", verb: "add" });
+    expect(parseMetaWebhook(feed({ item: "reaction" }), "facebook", "1065")).toEqual([]);
+    const ig = parseMetaWebhook(
+      { object: "instagram", entry: [{ id: "1784", time: 1700000000, changes: [{ field: "comments", value: { id: "ig_c1", text: "Giá?", from: { id: "igu", username: "linh" }, media: { id: "ig_m1" } } }] }] },
+      "instagram",
+      "1784",
+    );
+    expect(ig[0]).toMatchObject({ type: "comment", commentId: "ig_c1", postId: "ig_m1", fromName: "@linh" });
+  });
+
+  it("khách bình luận → Inbox (hội thoại bài viết), AI trả lời công khai + nhắn riêng, ghi đúng nguồn", async () => {
+    const ch = make();
+    await ch.start();
+    ch.ingest(feed({ comment_id: "99_1", message: "Còn size M không shop?", from: { id: "u9", name: "Lan" } }));
+    await ch.idle();
+    expect(inbound[0]).toMatchObject({ chatKey: "cmt:1065_99:u9", inboxThreadId: "post:1065_99", senderName: "Lan" });
+    expect(inbound[0]!.text).toContain("Áo thun trắng giảm 20%");
+    expect(logs[0]).toMatchObject({
+      threadId: "post:1065_99",
+      peerKind: "group",
+      direction: "in",
+      text: "Còn size M không shop?",
+      meta: { commentId: "99_1" },
+      threadName: "📝 Áo thun trắng giảm 20% cuối tuần",
+    });
+    const pub = calls.find((c) => c.method === "POST" && c.url.includes("/99_1/comments"))!;
+    expect(pub.body).toEqual({ message: "Dạ áo còn size M ạ" });
+    expect(pub.url).toContain("appsecret_proof=" + createHmac("sha256", APP_SECRET).update("EAA-app").digest("hex"));
+    const priv = calls.find((c) => c.method === "POST" && c.url.includes("/1065/messages"))!;
+    expect(priv.body).toEqual({ recipient: { comment_id: "99_1" }, message: { text: "Dạ áo còn size M ạ" } });
+    expect(logs.filter((l) => l.direction === "out").map((l) => [l.threadId, l.source])).toEqual([
+      ["post:1065_99", "agent"],
+      ["psid-77", "agent"],
+    ]);
+    // Meta báo lại bình luận của chính Trang (do AI vừa đăng) → không ghi trùng
+    ch.ingest(feed({ comment_id: "c.ai1", message: "Dạ áo còn size M ạ", from: { id: "1065", name: "Thời Trang KOS" } }));
+    await ch.idle();
+    expect(logs.filter((l) => l.direction === "out")).toHaveLength(2);
+  });
+
+  it("tắt từng kiểu trả lời; bình luận Trang viết ở Meta Business Suite → ghi người trả lời ngoài PenAI", async () => {
+    const ch = make("facebook", { comment_ai_private: false });
+    await ch.start();
+    ch.ingest(feed({ comment_id: "99_2", message: "Ship Hà Nội không?", from: { id: "u8", name: "Minh" } }));
+    await ch.idle();
+    expect(calls.some((c) => c.url.includes("/1065/messages"))).toBe(false);
+    expect(calls.some((c) => c.url.includes("/99_2/comments"))).toBe(true);
+    ch.updateOptions({ comment_ai_public: false, comment_ai_private: false });
+    calls = [];
+    ch.ingest(feed({ comment_id: "99_3", message: "Còn màu đen?", from: { id: "u8", name: "Minh" } }));
+    ch.ingest(feed({ comment_id: "99_4", message: "Dạ còn ạ", from: { id: "1065", name: "KOS" } }));
+    await ch.idle();
+    expect(inbound).toHaveLength(1);
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    expect(logs.at(-1)).toMatchObject({ direction: "out", source: "app", meta: { via: expect.stringContaining("Meta Business Suite") } });
+    ch.updateOptions({ comments: false });
+    const before = logs.length;
+    ch.ingest(feed({ comment_id: "99_5", message: "?", from: { id: "u1", name: "A" } }));
+    await ch.idle();
+    expect(logs).toHaveLength(before);
+  });
+
+  it("Inbox: trả lời bình luận / nhắn riêng / bình luận vào bài", async () => {
+    const ch = make();
+    await ch.start();
+    await ch.sendManual({ threadId: "post:1065_99", peerKind: "group", text: "Có ạ", source: "web", webUserId: "w1", comment: { id: "99_1" } });
+    await ch.sendManual({ threadId: "post:1065_99", peerKind: "group", text: "Chi tiết", source: "web", comment: { id: "99_1", private: true } });
+    await ch.sendManual({ threadId: "post:1065_99", peerKind: "group", text: "Cảm ơn mọi người", source: "web" });
+    const posts = calls.filter((c) => c.method === "POST").map((c) => new URL(c.url).pathname.replace("/v22.0", ""));
+    expect(posts).toEqual(["/99_1/comments", "/1065/messages", "/1065_99/comments"]);
+    expect(logs[0]).toMatchObject({ threadId: "post:1065_99", source: "web", webUserId: "w1", meta: { parentId: "99_1" } });
+  });
+
+  it("app riêng: token hỏng (190) không gọi hub, báo đăng nhập lại", async () => {
+    vi.stubGlobal("fetch", async (input: string | URL) => {
+      calls.push({ url: String(input), method: "POST", body: null });
+      return new Response(JSON.stringify({ error: { message: "expired", code: 190 } }), { status: 400 });
+    });
+    const ch = make();
+    await ch.start();
+    await expect(ch.sendManual({ threadId: "123", peerKind: "direct", text: "x", source: "web" })).rejects.toThrow();
+    expect(calls.some((c) => c.url.includes("hoiai"))).toBe(false);
+    expect(ch.status().authError).toMatch(/Đăng nhập Facebook lại/);
+  });
+
+  it("đăng bài Facebook: chữ + link, 1 ảnh (multipart), hẹn giờ; Instagram: carousel qua container", async () => {
+    const img = join(dir, "a.jpg");
+    const img2 = join(dir, "b.jpg");
+    await writeFile(img, Buffer.from([0xff, 0xd8, 0xff]));
+    await writeFile(img2, Buffer.from([0xff, 0xd8, 0xff]));
+    const fb = make();
+    await fb.start();
+    expect(await fb.createPost({ message: "Xin chào", link: "https://shop.vn" })).toMatchObject({ id: "1065_500" });
+    expect(calls.find((c) => c.url.includes("/1065/feed"))!.body).toEqual({ message: "Xin chào", link: "https://shop.vn" });
+    const one = await fb.createPost({ message: "Ảnh mới", filePaths: [img] });
+    expect(one.id).toBe("1065_501");
+    const form = calls.find((c) => c.url.includes("/1065/photos"))!.body as FormData;
+    expect(form.get("caption")).toBe("Ảnh mới");
+    const when = new Date(Date.now() + 3600_000);
+    calls = [];
+    await fb.createPost({ message: "Hẹn giờ", scheduledAt: when });
+    expect(calls.find((c) => c.url.includes("/1065/feed"))!.body).toMatchObject({ published: false, scheduled_publish_time: Math.floor(when.getTime() / 1000) });
+    await expect(fb.createPost({ message: "x", scheduledAt: new Date(Date.now() + 60_000) })).rejects.toThrow(/10 phút/);
+
+    calls = [];
+    const ig = make("instagram");
+    await ig.start();
+    expect(await ig.createPost({ message: "Bộ sưu tập", filePaths: [img, img2] })).toMatchObject({ id: "ig-post-1" });
+    const media = calls.filter((c) => c.url.includes("/1784/media") && !c.url.includes("publish")).map((c) => c.body);
+    expect(media.slice(0, 2)).toEqual([
+      { image_url: "https://penai.test/f/a.jpg", is_carousel_item: true },
+      { image_url: "https://penai.test/f/b.jpg", is_carousel_item: true },
+    ]);
+    expect(media[2]).toMatchObject({ media_type: "CAROUSEL", caption: "Bộ sưu tập" });
+    await expect(ig.createPost({ message: "chỉ chữ" })).rejects.toThrow(/ít nhất 1 ảnh/);
+    await expect(ig.deletePost("x")).rejects.toThrow(/Instagram không cho xóa/);
+  });
+
+  it("đọc bài viết, số liệu, ẩn bình luận", async () => {
+    const ch = make();
+    await ch.start();
+    expect(await ch.listPosts(5)).toEqual([{ id: "1065_99", text: "Áo", createdAt: "2026-11-08T00:00:00+0000", permalink: "https://fb/p", comments: 3, likes: 9 }]);
+    expect((await ch.insights({ days: 3 }))[0]).toMatchObject({ metric: "page_impressions_unique", values: [{ date: "2026-11-07", value: 12 }] });
+    await ch.hideComment("99_1", true);
+    expect(calls.at(-1)!.body).toEqual({ is_hidden: true });
+  });
+
+  it("chữ ký webhook gửi thẳng từ Meta (X-Hub-Signature-256)", () => {
+    const body = JSON.stringify({ object: "page", entry: [] });
+    const sig = "sha256=" + createHmac("sha256", APP_SECRET).update(body).digest("hex");
+    expect(verifyMetaAppSignature(body, sig, APP_SECRET)).toBe(true);
+    expect(verifyMetaAppSignature(body + " ", sig, APP_SECRET)).toBe(false);
+    expect(verifyMetaAppSignature(body, undefined, APP_SECRET)).toBe(false);
   });
 });

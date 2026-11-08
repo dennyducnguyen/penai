@@ -583,7 +583,7 @@ export function makeInboundHandler(
     // Inbox (Zalo, WhatsApp, Fanpage, Instagram): nhân viên đã tắt AI cho hội thoại này,
     // hoặc vừa trả lời tay (web/điện thoại/Meta Business Suite) → AI im trong lúc tạm dừng.
     if (isInboxChannelKind(msg.channelKind)) {
-      const threadId = msg.chatKey.slice(msg.chatKey.indexOf(":") + 1);
+      const threadId = msg.inboxThreadId ?? msg.chatKey.slice(msg.chatKey.indexOf(":") + 1);
       const block = await getInboxThreadAgentBlock(db, ctx, channel.id, threadId).catch(() => null);
       if (block) return { kind: "ignore" };
     }

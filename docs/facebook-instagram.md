@@ -1,8 +1,11 @@
 # Facebook Fanpage và Instagram trong PenAI
 
-Có từ bản **1.19.0**. Mỗi **Fanpage Facebook** (Messenger) hoặc **tài khoản Instagram Business** (tin nhắn Direct) là một kênh của PenAI, gắn **một agent riêng**. Khách nhắn vào Trang → agent trả lời; mọi tin đến/đi nằm trong **📥 Inbox** để nhân viên cùng theo dõi, trả lời tay, bật/tắt AI theo từng khách.
+Có từ bản **1.19.0** (qua hub); **1.20.0** thêm app Facebook riêng, bình luận và MCP "PenAI Kênh". Mỗi **Fanpage Facebook** (Messenger) hoặc **tài khoản Instagram Business** (tin nhắn Direct) là một kênh của PenAI, gắn **một agent riêng**. Khách nhắn vào Trang → agent trả lời; mọi tin đến/đi nằm trong **📥 Inbox** để nhân viên cùng theo dõi, trả lời tay, bật/tắt AI theo từng khách.
 
-PenAI **không cần bạn tự tạo Meta App** (ứng dụng trên Meta for Developers) hay khai báo tên miền với Meta: phần đó nằm ở một **hub** (máy chủ trung gian giữ Meta App). Hub mặc định là **chat.hoiai.vn**; bản fork tự dựng hub riêng thì đổi biến `PENAI_META_HUB_URL` (mục 6).
+Có **hai cách nối**, chọn theo từng Trang:
+
+- **Qua hub** (mặc định chat.hoiai.vn): không cần tự tạo Meta App (ứng dụng trên Meta for Developers) — hub giữ app, lo phần Meta duyệt. Mục 1. Bản fork tự dựng hub riêng thì đổi biến `PENAI_META_HUB_URL` (mục 6).
+- **App Facebook riêng**: tự tạo app ở developers.facebook.com, tự cấp quyền cho Trang mình quản trị — không phụ thuộc ai. Mục 7.
 
 | Tính năng | Mục |
 |---|---|
@@ -12,6 +15,9 @@ PenAI **không cần bạn tự tạo Meta App** (ứng dụng trên Meta for De
 | Biết **người trả lời ở nơi khác** (Meta Business Suite, ứng dụng Trang, app khác) → hiện trong Inbox, AI tự tạm im | [4](#4-người-trả-lời-ngoài-penai) |
 | Quy tắc 24 giờ của Meta | [5](#5-giới-hạn-của-meta) |
 | Cách hoạt động, hợp đồng với hub | [6](#6-cách-hoạt-động-cho-người-sửa-mã) |
+| **App Facebook riêng** — tự tạo app, tự cấp quyền, không qua hub | [7](#7-app-facebook-riêng) |
+| **Bình luận**: vào Inbox theo bài viết, AI trả lời công khai + nhắn riêng, nhân viên trả lời từ Inbox | [8](#8-bình-luận) |
+| **MCP "PenAI Kênh"**: một bộ công cụ cho mọi kênh — nhắn tin, đăng bài, bình luận, số liệu; agent PenAI và Claude/ChatGPT cùng dùng | [9](#9-mcp-penai-kênh) |
 
 ---
 
@@ -96,6 +102,8 @@ PenAI ──────────── Graph API (Page Access Token) ──�
 | Adapter kênh (`facebook`, `instagram`): đọc webhook, chữ ký, gửi tin/file, typing, làm mới token, nhận diện tin dội lại | `packages/channels/src/meta-page.ts` |
 | Kênh có Inbox dùng chung (Zalo, WhatsApp, Facebook, Instagram) | `packages/channels/src/inbox-channel.ts`, `apps/server/src/inbox.ts` |
 | API kết nối, đăng ký với hub, route webhook (đọc body gốc) | `apps/server/src/meta-channels.ts` |
+| App Facebook riêng: đăng nhập Facebook, chọn Trang, webhook thẳng từ Meta | `apps/server/src/meta-apps.ts`, bảng `meta_apps` (migration 0038) |
+| MCP "PenAI Kênh" + kết nối nội bộ | `apps/server/src/mcp-channel-tools.ts`, `createInternalMcpServer` trong `mcp-server.ts`, `InternalMcpConnection` trong `mcp-manager.ts` |
 
 **Lưu trữ:** `channels.token_encrypted` = JSON `{pageAccessToken, penaiSecret}` mã hóa AES-256-GCM; `channels.config` = thông tin Trang (`pageId`, `pageName`, `igAccountId`, `igUsername`…), địa chỉ API của hub, kết quả đăng ký — không chứa bí mật. Không có migration: tin nhắn dùng các bảng `inbox_*` sẵn có. `threadId`/`chatKey` = PSID/IGSID của khách.
 
@@ -112,3 +120,59 @@ Hub tự dựng (bản fork) cần làm đúng các điểm sau:
 3. **Đăng ký nhận tin** `POST register_webhook_endpoint {page_id, ig_account_id?, penai_secret, platform, webhook_url}` (kèm header `X-PenAI-Secret`) → `{success:true, data:{…}}`; 4xx = từ chối. Tùy chọn: `data.previous_webhook_url` (địa chỉ cũ bị thay), `data.supports_expected_webhook_url: true` + nhận `expected_webhook_url` (chỉ ghi/gỡ khi địa chỉ hiện tại khớp) → PenAI mới gỡ đăng ký khi xóa kênh.
 4. **Chuyển tiếp webhook**: POST nguyên JSON `{object:"page"|"instagram", entry:[…]}` (một entry mỗi lần) tới `webhook_url`, header `X-PenAI-Signature: sha256=<HMAC-SHA256(penai_secret, body)>`; khuyên dùng thêm `X-HoiAI-Timestamp: <giây>` + `X-HoiAI-Signature: sha256=<HMAC(penai_secret, "<ts>.<body>")>` (PenAI ưu tiên bản này, lệch giờ tối đa 5 phút). PenAI trả 200 ngay, 401 sai chữ ký, 404 kênh không còn, 503 kênh tạm dừng. Gửi lại khi lỗi mạng/5xx được — PenAI bỏ tin trùng theo `mid`. Cần chuyển cả tin dội lại (`message_echoes`).
 5. **Làm mới token** `POST refresh_token_endpoint {page_id, ig_account_id?, penai_secret}` → `{success:true, data:{page_access_token}}` — PenAI gọi khi Graph API báo lỗi 190.
+
+## 7. App Facebook riêng
+
+Dùng khi muốn tự chủ (không phụ thuộc hub) hoặc cần quyền mà hub chưa có. Ở **chế độ phát triển** (Development mode) app dùng được ngay với Trang mà tài khoản đăng nhập quản trị — không cần Meta duyệt.
+
+**Tạo app (một lần):**
+
+1. developers.facebook.com → **Create App** → loại **Business** (hoặc chọn mục đích "Quản lý Trang / Messenger").
+2. Thêm sản phẩm **Facebook Login for Business**, **Webhooks**, **Messenger** (và **Instagram** nếu dùng Instagram).
+3. **App settings → Basic**: lấy **App ID** và **App Secret**.
+4. PenAI → **Channels** → mục **Meta Apps** → **＋ Thêm app** → dán App ID, App Secret → Lưu. Hộp thoại hiện 3 giá trị kèm nút Sao chép:
+   - **Valid OAuth Redirect URI** → dán vào Facebook Login → Settings.
+   - **Webhook Callback URL** + **Verify Token** → Webhooks → chọn **Page** → Subscribe, tick `messages`, `messaging_postbacks`, `message_echoes`, `feed`. Instagram: chọn **Instagram** → tick `messages`, `comments`.
+5. App dùng Facebook Login for Business có **Configuration** thì dán Configuration ID; không thì để trống (PenAI tự xin các quyền: Trang, tin nhắn, bình luận, đăng bài, số liệu, Instagram).
+
+**Nối Trang:** mục Meta Apps → **Đăng nhập Facebook** → cấp quyền, tick các Trang → quay về PenAI, hộp **Chọn Trang** tự mở → chọn agent → **＋ Kênh Facebook** / **＋ Kênh Instagram**. PenAI tự đăng ký Trang gửi sự kiện cho app.
+
+- Token Trang lấy theo cách này không tự hết hạn (trừ khi đổi mật khẩu hoặc gỡ quyền). Token người dùng của app hết hạn sau ~60 ngày: chỉ cần khi chọn thêm Trang — bấm **Đăng nhập lại**, token các kênh tự cập nhật.
+- Token hỏng (Graph API báo lỗi 190): kênh báo "Đăng nhập Facebook lại" ở Channels → Kết nối Trang và Inbox.
+- Đổi App Secret: mục Meta Apps → Cài đặt Meta → dán Secret mới; mọi kênh của app tự cập nhật.
+- Webhook từ Meta tới `/webhooks/meta-app/<mã>`, PenAI kiểm chữ ký `X-Hub-Signature-256` bằng App Secret.
+- Một Trang chỉ nên nối **một cách**: kênh đang qua hub mà nối lại bằng app riêng (hoặc ngược lại) thì kênh chuyển sang cách mới.
+- Muốn khách không có vai trò trong app cũng nhắn được ổn định lâu dài: chuyển app sang Live và qua Meta duyệt các quyền đang dùng.
+
+## 8. Bình luận
+
+Bật sẵn cho mọi kênh Facebook/Instagram (cả hai cách nối; qua hub thì hub phải chuyển tiếp sự kiện `feed`/`comments`).
+
+- Mỗi **bài viết** là một hội thoại trong Inbox (tên 📝 + đoạn đầu bài), bộ lọc **Tin nhắn / Bình luận**. Mỗi bình luận ghi tên người viết.
+- **AI tự xử lý** bình luận mới của khách — bật/tắt từng kiểu ở Inbox → ⚙️ Cài đặt:
+  - **AI trả lời công khai dưới bình luận** (mặc định bật).
+  - **AI nhắn riêng** (Messenger / Instagram Direct) cho người bình luận (mặc định bật) — Meta cho nhắn riêng 1 lần mỗi bình luận, trong 7 ngày; khách trả lời thì thành hội thoại tin nhắn bình thường.
+  - **Nhận bình luận vào Inbox** (tắt = bỏ qua bình luận hoàn toàn).
+- AI nhận đoạn đầu bài viết làm ngữ cảnh; mỗi người bình luận trên mỗi bài có một mạch hội thoại riêng với AI.
+- **Nhân viên trả lời từ Inbox**: bấm **↩ Trả lời** (công khai) hoặc **✉ Nhắn riêng** trên một bình luận rồi gõ; gõ thẳng không chọn = bình luận vào bài.
+- Bình luận do Trang viết trên **Meta Business Suite** cũng hiện (ghi rõ nguồn) và làm AI tạm im ở bài đó theo số phút cài đặt.
+- AI bị tắt cho hội thoại bài viết (Inbox → AI trả lời: Tắt) thì AI không trả lời bình luận của bài đó.
+
+## 9. MCP "PenAI Kênh"
+
+Một bộ công cụ MCP (giao thức để AI gọi công cụ) cho **mọi kênh** — thêm kênh mới không sinh thêm công cụ, công cụ nhận `channel_id`:
+
+| Công cụ | Việc | Quyền |
+|---|---|---|
+| `channels_list` | Danh sách kênh, trạng thái, tính năng | bất kỳ quyền nào dưới đây |
+| `conversations_list`, `messages_get`, `messages_search` | Đọc hội thoại / tin nhắn / bình luận | `channels:messages` |
+| `message_send` | Gửi tin, ảnh; trả lời / nhắn riêng bình luận | `channels:send` |
+| `page_posts_list`, `page_post_create`, `page_post_delete` | Xem, **đăng** (chữ, link, ảnh, nhiều ảnh, video, hẹn giờ Facebook; ảnh / reel / carousel Instagram), xóa bài | `pages:publish` |
+| `page_comments_list`, `page_comment_reply`, `page_comment_hide`, `page_private_reply` | Bình luận | `pages:comments` |
+| `page_insights` | Số liệu theo ngày | `pages:insights` |
+
+**Agent của PenAI dùng:** Dashboard → **MCP** → Thêm → transport **PenAI Kênh (nội bộ)** → tick quyền, (tùy chọn) giới hạn kênh → Tạo. Chạy ngay trong PenAI, không qua mạng, không đăng nhập. Gán cho agent như MCP khác (phạm vi `granted` = chỉ agent được cấp ở trang Agents). Agent đăng được cả ảnh vừa tạo trong thư mục làm việc (`files`).
+
+**Claude / ChatGPT dùng:** Dashboard → 🔗 Kết nối AI bên ngoài → địa chỉ MCP như trước; khi cấp quyền tick thêm các quyền `channels:*` / `pages:*` (kết nối tạo trước 1.20.0 cần kết nối lại). Đọc tin nhắn từ AI bên ngoài vẫn cần quản trị bật "Cho ứng dụng AI bên ngoài đọc" ở Inbox → Cài đặt của từng kênh.
+
+Bài đăng **đăng thẳng** (không qua bước duyệt) — chỉ cấp `pages:publish` cho agent/ứng dụng bạn tin. Mọi lần đăng ghi nhật ký máy chủ (kênh, mã bài, nguồn). Bộ công cụ `zalo_*` / `whatsapp_*` cũ vẫn giữ cho các kết nối đang dùng.
