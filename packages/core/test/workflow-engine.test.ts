@@ -245,6 +245,18 @@ describe("engine", () => {
     expect(r2.res.status).toBe("timeout");
   });
 
+  it("bước bị tắt / nhánh không chạy → steps.<id>.output là null, không lỗi", async () => {
+    const { res } = await run(
+      base([
+        { id: "tat", type: "code", code: "return 1", disabled: true },
+        { id: "nhanh", type: "if", cond: "false", then: [{ id: "khong_chay", type: "code", code: "return 2" }] },
+        { id: "kq", type: "code", code: "return [steps.tat.output, steps.tat.status, steps.khong_chay.output, steps.khong_chay.status]" },
+      ]),
+    );
+    expect(res.status).toBe("success");
+    expect(res.output).toEqual([null, "skipped", null, "pending"]);
+  });
+
   it("thiếu tham số bắt buộc → failed rõ ràng", async () => {
     const { res } = await run(base([], { inputs: { sdt: { type: "string", required: true, note: "Số điện thoại" } } }));
     expect(res.status).toBe("failed");

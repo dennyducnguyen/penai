@@ -7,7 +7,7 @@
  * ghi nhật ký bước → nạp `steps.<id>` cho các bước sau.
  */
 import { ExprEnv, ExprError, stripBraces } from "./expr.js";
-import { parseDuration, type StepBase, type WorkflowDefinition, type WorkflowInput } from "./definition.js";
+import { allStepIds, parseDuration, type StepBase, type WorkflowDefinition, type WorkflowInput } from "./definition.js";
 
 export type RunStatus = "running" | "success" | "failed" | "stopped" | "timeout" | "cancelled";
 export type StepStatus = "success" | "failed" | "skipped" | "dry_run";
@@ -293,6 +293,12 @@ export async function runWorkflow(opts: RunOptions): Promise<RunResult> {
   const inp = coerceInputs(def.inputs, opts.inputs ?? {}, (v) => ex.render(v));
   if (inp.errors.length) return finish("failed", inp.errors.join("; "));
   ex.setGlobal("inputs", inp.values);
+  // Mọi bước có sẵn steps.<id> (chưa chạy / bị tắt / nhánh không đi qua → output null),
+  // để biểu thức như steps.x.output ở bước sau không lỗi "cannot read property of undefined".
+  ex.setGlobal(
+    "steps",
+    Object.fromEntries(allStepIds(def).map((id) => [id, { output: null, error: null, status: "pending", durationMs: 0 }])),
+  );
 
   /** Thay biểu thức; secrets chỉ nạp khi trường được phép. */
   const renderWith = (v: unknown, allowSecrets: boolean): unknown => {
@@ -319,6 +325,7 @@ export async function runWorkflow(opts: RunOptions): Promise<RunResult> {
 
   async function runStep(s: StepBase, path: string, iteration: number | null): Promise<unknown> {
     if (s.disabled) {
+      ex.setStep(s.id, { output: null, status: "skipped", durationMs: 0 });
       log({ stepId: s.id, type: s.type, path, iteration, status: "skipped", input: null, output: null, error: null, startedAt: new Date(), durationMs: 0, attempts: 0 });
       return lastOutput;
     }
