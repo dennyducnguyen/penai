@@ -1300,8 +1300,8 @@ export const INDEX_HTML = `<!doctype html>
     zalo_personal: "Zalo cá nhân qua zca-js (unofficial). Không cần token; tạo kênh xong bấm Kết nối QR. Mọi tin nhắn được lưu vào Inbox để nhân viên cùng xem/trả lời (tắt được trong Inbox → Cài đặt). AI chỉ tự trả lời trong thread được chỉ định demo (hoặc mọi tin riêng nếu tắt pairing).",
     whatsapp_personal: "WhatsApp cá nhân (kết nối không chính thức, kiểu thiết bị đã liên kết). Không cần token; tạo kênh xong bấm Kết nối QR. Điện thoại vẫn dùng WhatsApp bình thường. Mọi tin nhắn được lưu vào Inbox để nhân viên cùng xem/trả lời. AI chỉ tự trả lời trong hội thoại được chỉ định (hoặc mọi tin riêng nếu tắt pairing). Nên dùng số dành riêng — WhatsApp có thể khóa số gửi dồn cho người lạ.",
     feishu: "App credentials Feishu/Lark (app_id:app_secret).",
-    facebook: "Muốn dùng <b>app Facebook riêng</b> (tự cấp quyền, không qua hub)? Đóng hộp này → mục <b>Meta Apps</b> ở trang Channels. Còn dưới đây: Fanpage Facebook (Messenger) nối qua hub HoiAI — không cần tự tạo Meta App. Bấm <b>Kết nối nhanh</b> (đăng nhập hub, chọn Trang, cấp quyền) hoặc dán mã <code>hfb_…</code> lấy ở trang Facebook của hub. Mỗi Trang một kênh, gắn agent riêng. Mọi tin vào Inbox; người trả lời trên Meta Business Suite cũng hiện trong Inbox và AI tự tạm im.",
-    instagram: "Muốn dùng <b>app Facebook riêng</b>? Dùng mục <b>Meta Apps</b> ở trang Channels. Còn dưới đây: Instagram Business (Direct) nối qua hub HoiAI — tài khoản Instagram phải liên kết với một Fanpage. Bấm <b>Kết nối nhanh</b> hoặc dán mã <code>hig_…</code>. Mỗi tài khoản một kênh, gắn agent riêng. Mọi tin vào Inbox.",
+    facebook: "Fanpage Facebook (Messenger + bình luận). Mỗi Trang một kênh, gắn agent riêng. Mọi tin vào Inbox; người trả lời trên Meta Business Suite cũng hiện trong Inbox và AI tự tạm im.",
+    instagram: "Instagram Business (Direct + bình luận) — tài khoản Instagram phải liên kết với một Fanpage. Mỗi tài khoản một kênh, gắn agent riêng. Mọi tin vào Inbox.",
     msteams: "Bot Microsoft Teams qua Azure Bot. Token = <b>client secret</b> của App Registration; điền thêm App ID + Tenant ID bên dưới. Azure Bot → Configuration → Messaging endpoint phải trỏ: <code>" + location.origin + "/webhooks/teams</code>."
   };
 
@@ -1370,9 +1370,14 @@ export const INDEX_HTML = `<!doctype html>
       '<div style="flex:1"><label>Microsoft App ID *</label><input id="cAppId" placeholder="00000000-0000-0000-0000-000000000000" style="width:100%" value="' + (isEdit ? esc((existing.config || {}).appId || "") : "") + '"></div>' +
       '<div style="flex:1"><label>Tenant ID <span class="muted">(bot Single Tenant; Multi Tenant để trống)</span></label><input id="cTenant" placeholder="35ee052b-..." style="width:100%" value="' + (isEdit ? esc((existing.config || {}).tenantId || "") : "") + '"></div></div></div>' +
       '<div id="cMetaWrap" style="display:none;margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:10px">' +
-      '<div class="row" style="gap:8px;align-items:center"><button type="button" id="cMetaPop">🔗 Kết nối nhanh với HoiAI</button><span class="muted" style="font-size:.78rem">Mở cửa sổ hub → chọn Trang → Cấp quyền cho PenAI</span></div>' +
+      '<label>Kết nối qua</label><div class="row" style="gap:16px">' +
+      '<label style="display:flex;gap:6px;align-items:center;opacity:1;font-size:.9rem"><input type="radio" name="cMetaMode" value="app" style="width:auto"> App Facebook riêng</label>' +
+      '<label style="display:flex;gap:6px;align-items:center;opacity:1;font-size:.9rem"><input type="radio" name="cMetaMode" value="hub" style="width:auto"> Hub HoiAI (chat.hoiai.vn)</label></div>' +
+      '<div id="cAppWrap" style="margin-top:8px"><div class="row" style="gap:8px"><div style="flex:1"><label>App</label><select id="cMetaApp" style="width:100%"></select></div><div style="flex:1"><label>Trang</label><select id="cMetaPage" style="width:100%"></select></div></div>' +
+      '<div id="cAppMsg" class="muted" style="font-size:.8rem;margin-top:4px"></div></div>' +
+      '<div id="cHubWrap" style="margin-top:8px"><div class="row" style="gap:8px;align-items:center"><button type="button" id="cMetaPop">🔗 Kết nối nhanh với HoiAI</button><span class="muted" style="font-size:.78rem">Mở cửa sổ hub → chọn Trang → Cấp quyền cho PenAI</span></div>' +
       '<label style="margin-top:8px">Hoặc dán mã kết nối <span class="muted">(hfb_… cho Fanpage, hig_… cho Instagram)</span></label><textarea id="cMetaCode" rows="2" style="width:100%;font-family:monospace;font-size:.75rem" placeholder="hfb_eyJ2Ijox..."></textarea>' +
-      '<div id="cMetaInfo" class="muted" style="font-size:.8rem;margin-top:4px"></div></div>' +
+      '<div id="cMetaInfo" class="muted" style="font-size:.8rem;margin-top:4px"></div></div></div>' +
       '<div class="muted" id="cHint" style="font-size:.78rem;margin-top:4px"></div>' +
       '<div class="row" style="margin-top:10px"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cAgentReply"' + (isEdit && (existing.config || {}).agent_reply === false ? "" : " checked") + "> Agent tự trả lời</label>" +
       '<span class="muted" style="font-size:.78rem">Bỏ tick: kênh vẫn kết nối và lưu tin (Inbox), AI không trả lời; lịch hẹn vẫn gửi</span></div>' +
@@ -1405,7 +1410,54 @@ export const INDEX_HTML = `<!doctype html>
     $("#cMetaPop", dlg).onclick = function () {
       metaPopup($("#cKind", dlg).value, function (d) { $("#cMetaCode", dlg).value = d.connect_code; metaInfo(d); });
     };
-    $("#cKind", dlg).onchange = showHint; showHint();
+    // ----- App Facebook riêng: chọn app → chọn Trang -----
+    var metaApps = [], metaPages = [];
+    function metaMode() { var r = dlg.querySelector('input[name="cMetaMode"]:checked'); return r ? r.value : "app"; }
+    function syncMetaMode() {
+      $("#cAppWrap", dlg).style.display = metaMode() === "app" ? "" : "none";
+      $("#cHubWrap", dlg).style.display = metaMode() === "hub" ? "" : "none";
+      if (metaMode() === "app") fillMetaPages();
+    }
+    Array.prototype.forEach.call(dlg.querySelectorAll('input[name="cMetaMode"]'), function (r) { r.onchange = syncMetaMode; });
+    function fillMetaPages() {
+      var kind = $("#cKind", dlg).value, sel = $("#cMetaPage", dlg), msg = $("#cAppMsg", dlg);
+      var a = metaApps.filter(function (x) { return x.id === $("#cMetaApp", dlg).value; })[0];
+      sel.innerHTML = ""; msg.innerHTML = "";
+      if (!a) { msg.innerHTML = 'Chưa có app — đóng hộp này, vào mục <b>Meta Apps</b> → ＋ Thêm app.'; return; }
+      if (!a.loggedIn || a.tokenExpired) { msg.innerHTML = 'App chưa đăng nhập Facebook (hoặc đã hết hạn) — mục <b>Meta Apps</b> → Đăng nhập Facebook.'; return; }
+      msg.textContent = "Đang tải Trang…";
+      api("/v1/meta-apps/" + a.id + "/pages").then(function (j) {
+        metaPages = j.pages || [];
+        var list = metaPages.filter(function (p) { return kind !== "instagram" || p.instagram; });
+        if (!list.length) { msg.innerHTML = kind === "instagram" ? "Không Trang nào có Instagram Business liên kết." : "Tài khoản đã đăng nhập không quản trị Trang nào — Đăng nhập lại và tick Trang."; return; }
+        sel.innerHTML = list.map(function (p) {
+          var linked = kind === "instagram" ? p.instagram.channelId : p.facebookChannelId;
+          var label = kind === "instagram" ? "@" + (p.instagram.username || p.instagram.name) + " (Trang " + p.name + ")" : p.name;
+          return '<option value="' + esc(p.id) + '">' + esc(label) + (linked ? " — đã có kênh" : "") + "</option>";
+        }).join("");
+        msg.textContent = "";
+        sel.onchange();
+      }).catch(function (e) { msg.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+    }
+    $("#cMetaPage", dlg).onchange = function () {
+      var kind = $("#cKind", dlg).value, p = metaPages.filter(function (x) { return x.id === $("#cMetaPage", dlg).value; })[0];
+      if (!p) return;
+      if (!$("#cName", dlg).value.trim() || $("#cName", dlg).dataset.auto === "1") {
+        $("#cName", dlg).value = kind === "instagram" && p.instagram ? "@" + (p.instagram.username || p.instagram.name) : p.name;
+        $("#cName", dlg).dataset.auto = "1";
+      }
+    };
+    $("#cName", dlg).addEventListener("input", function () { $("#cName", dlg).dataset.auto = ""; });
+    $("#cMetaApp", dlg).onchange = fillMetaPages;
+    if (!isEdit) api("/v1/meta-apps").then(function (j) {
+      metaApps = j.apps || [];
+      $("#cMetaApp", dlg).innerHTML = metaApps.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + (a.loggedIn ? " — " + esc(a.fbUserName) : " — chưa đăng nhập") + "</option>"; }).join("");
+      var ready = metaApps.filter(function (a) { return a.loggedIn && !a.tokenExpired; })[0];
+      if (ready) $("#cMetaApp", dlg).value = ready.id;
+      var r = dlg.querySelector('input[name="cMetaMode"][value="' + (metaApps.length ? "app" : "hub") + '"]'); if (r) r.checked = true;
+      syncMetaMode();
+    }).catch(function () { var r = dlg.querySelector('input[name="cMetaMode"][value="hub"]'); if (r) r.checked = true; syncMetaMode(); });
+    $("#cKind", dlg).onchange = function () { showHint(); if (isMetaKind($("#cKind", dlg).value) && metaMode() === "app") fillMetaPages(); }; showHint();
     $("#cCancel", dlg).onclick = function () { dlg.close(); dlg.remove(); };
     $("#cSave", dlg).onclick = function () {
       var name = $("#cName", dlg).value.trim();
@@ -1413,14 +1465,27 @@ export const INDEX_HTML = `<!doctype html>
       var kind = $("#cKind", dlg).value;
       var agentKey = $("#cAgent", dlg).value;
       var errs = [];
-      var metaCode = isMetaKind(kind) && !isEdit ? $("#cMetaCode", dlg).value.trim() : "";
+      var viaApp = isMetaKind(kind) && !isEdit && metaMode() === "app";
+      var metaCode = isMetaKind(kind) && !isEdit && !viaApp ? $("#cMetaCode", dlg).value.trim() : "";
+      var metaPage = viaApp ? $("#cMetaPage", dlg).value : "";
       if (!name && !(isMetaKind(kind) && !isEdit)) errs.push("nhập Tên kênh");
       if (!agentKey) errs.push("chọn Agent (chưa có thì tạo ở trang Agents trước)");
-      if (isMetaKind(kind) && !isEdit && !metaCode) errs.push("bấm Kết nối nhanh hoặc dán mã kết nối");
+      if (viaApp && !metaPage) errs.push("chọn App và Trang (app phải đăng nhập Facebook ở mục Meta Apps)");
+      if (isMetaKind(kind) && !isEdit && !viaApp && !metaCode) errs.push("bấm Kết nối nhanh hoặc dán mã kết nối");
       if (!isEdit && !token && !isPersonalKind(kind) && !isMetaKind(kind)) errs.push("nhập Token");
       if (kind === "msteams" && !$("#cAppId", dlg).value.trim()) errs.push("nhập Microsoft App ID");
       if (errs.length) { $("#cMsg", dlg).innerHTML = '<span class="err">' + esc(errs.join(" · ")) + "</span>"; return; }
       $("#cMsg", dlg).textContent = "Đang lưu...";
+      if (viaApp) {
+        api("/v1/meta-apps/" + $("#cMetaApp", dlg).value + "/connect", { method: "POST", body: { pageId: metaPage, platform: kind, agentKey: agentKey, name: name, requirePairing: $("#cPair", dlg).checked, agentReply: $("#cAgentReply", dlg).checked } })
+          .then(function (r) {
+            toast((r.created ? "Đã tạo kênh " : "Đã cập nhật kênh ") + r.channel.name + (r.subscribed ? " — tin nhắn sẽ về Inbox" : ""));
+            (r.warnings || []).forEach(function (w) { toast(w, true); });
+            dlg.close(); dlg.remove(); onDone();
+          })
+          .catch(function (e) { $("#cMsg", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+        return;
+      }
       if (metaCode) {
         api("/v1/channels/meta/connect", { method: "POST", body: { code: metaCode, agentKey: agentKey, name: name, requirePairing: $("#cPair", dlg).checked, agentReply: $("#cAgentReply", dlg).checked } })
           .then(function (r) {
@@ -1915,6 +1980,7 @@ export const INDEX_HTML = `<!doctype html>
   function openMetaPages(a, onDone) {
     var dlg = el("dialog", { style: "width:680px;max-width:95vw;padding:20px" });
     dlg.innerHTML = "<h3 style='margin:0 0 8px'>Chọn Trang — " + esc(a.name) + "</h3>" +
+      '<div class="muted" style="font-size:.82rem;margin-bottom:6px">Đăng nhập Facebook xong — bước cuối: chọn agent rồi bấm <b>＋ Kênh Facebook</b> ở Trang cần dùng để tạo kênh (kênh hiện trong Danh sách kênh). Sau này cũng tạo được từ ＋ Thêm kênh → Facebook Fanpage → App Facebook riêng.</div>' +
       '<label>Agent trả lời cho kênh tạo mới *</label><div class="row">' + agentSelectHtml("mpAgent") + "</div>" +
       '<div id="mpList" class="muted" style="margin-top:10px">Đang tải danh sách Trang…</div><div class="dialog-actions"><button class="ghost" id="mpX">Đóng</button></div>';
     document.body.appendChild(dlg); dlg.showModal();
@@ -1925,7 +1991,7 @@ export const INDEX_HTML = `<!doctype html>
       if (!agentKey) { toast("Chọn agent trước", 1); return; }
       btn.disabled = true; btn.textContent = "Đang nối…";
       api("/v1/meta-apps/" + a.id + "/connect", { method: "POST", body: { pageId: pageId, platform: platform, agentKey: agentKey } })
-        .then(function (r) { toast((r.created ? "Đã tạo kênh " : "Đã cập nhật kênh ") + r.channel.name); (r.warnings || []).forEach(function (w) { toast(w, 1); }); load(); })
+        .then(function (r) { toast((r.created ? "Đã tạo kênh " : "Đã cập nhật kênh ") + r.channel.name + " — xem ở Danh sách kênh"); (r.warnings || []).forEach(function (w) { toast(w, 1); }); dlg.close(); dlg.remove(); if (onDone) onDone(); })
         .catch(function (e) { toast(e.message, 1); btn.disabled = false; btn.textContent = "Thử lại"; });
     }
     function load() {
