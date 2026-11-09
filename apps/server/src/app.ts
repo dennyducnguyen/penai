@@ -1731,7 +1731,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const embeds = models.filter((m) => m.type === "embedding");
       const emb = embeds.find((m) => m.id === "text-embedding") ?? embeds[0];
       if (emb) {
-        const dims = emb.default_dimensions ?? (emb.dimensions?.includes(1024) ? 1024 : emb.dimensions?.[0]);
+        // Kho tri thức (Vault) lưu vector(768) → chọn 768 khi model hỗ trợ; nếu không thì
+        // theo mặc định của HoiAI (Vault sẽ bỏ qua provider này, chỉ tìm theo từ khóa).
+        const dims =
+          !emb.dimensions?.length || emb.dimensions.includes(768)
+            ? 768
+            : (emb.default_dimensions ?? emb.dimensions[0]);
         embedModel = { slug: emb.id, ...(dims ? { dims } : {}) };
       }
     } catch (err) {
