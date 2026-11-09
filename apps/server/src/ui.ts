@@ -1346,7 +1346,7 @@ export const INDEX_HTML = `<!doctype html>
         else if (kind === "hoiai") base.placeholder = "Để trống = https://chat.hoiai.vn/api/v1";
         else base.placeholder = "Bắt buộc, vd: https://openrouter.ai/api/v1";
         $("#pEmbedWrap", dlg).style.display = kind === "anthropic" ? "none" : "";
-        $("#pEmbedDim", dlg).value = kind === "hoiai" ? 1024 : 768;
+        $("#pEmbedDim", dlg).value = 768;
         showProviderName(); resetProviderModels();
       }
       function previewProviderModels() {

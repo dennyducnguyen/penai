@@ -430,7 +430,7 @@ createServer(async (req, res) => {
   if (path === "/v1/providers/hoiai/device/poll") {
     if (++hoiaiPolls < 3) return json({ status: "pending" });
     if (!providerRows.some((r) => r.name === "hoiai")) {
-      providerRows.push({ id: "pv-hoiai", name: "hoiai", kind: "hoiai", baseUrl: "https://chat.hoiai.vn/api/v1", defaultModel: "flash", defaultEmbeddingModel: "text-embedding", embeddingDimensions: 1024, isDefaultEmbedding: true, enabled: true, hasKey: true });
+      providerRows.push({ id: "pv-hoiai", name: "hoiai", kind: "hoiai", baseUrl: "https://chat.hoiai.vn/api/v1", defaultModel: "flash", defaultEmbeddingModel: "text-embedding", embeddingDimensions: 768, isDefaultEmbedding: true, enabled: true, hasKey: true });
     }
     return json({ status: "ok", provider: { name: "hoiai", defaultModel: "flash" }, account: { email: "a@example.com", credit_vnd: 50000 } });
   }
