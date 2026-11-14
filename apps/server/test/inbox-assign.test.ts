@@ -183,6 +183,7 @@ describe("Inbox — phân công hội thoại (API)", () => {
 
     // Người không trực kênh → báo lỗi, không đổi gì
     expect((await assign(["2001"], [fx.userId])).statusCode).toBe(400);
+    expect((await threadsOf(as("lan"))).map((t) => t.threadId)).toEqual(["2001"]);
     expect((await assign(["2001"], ["khong-phai-uuid"])).statusCode).toBe(400);
     expect((await assign([], [ids.lan!])).statusCode).toBe(400);
 
