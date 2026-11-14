@@ -41,7 +41,16 @@ export interface InboxThread {
   unreadCount: number;
   aiMode: "auto" | "off";
   pausedUntil: string | null;
+  /** Nhân viên được giao hội thoại này (0040). Rỗng = chưa phân công. */
+  assignees: InboxAssignee[];
 }
+
+export interface InboxAssignee {
+  userId: string;
+  name: string;
+}
+
+export type InboxScope = "all" | "assigned";
 
 export interface InboxReactionRow {
   icon: string;
@@ -107,8 +116,28 @@ function mapThread(r: Raw): InboxThread {
     unreadCount: Number(r.unread_count ?? 0),
     aiMode: r.ai_mode === "off" ? "off" : "auto",
     pausedUntil: iso(r.paused_until),
+    assignees: mapAssignees(r.assignees),
   };
 }
+
+function mapAssignees(v: unknown): InboxAssignee[] {
+  if (!Array.isArray(v)) return [];
+  return (v as Raw[]).map((x) => ({ userId: String(x.user_id ?? ""), name: String(x.name ?? "") })).filter((x) => x.userId);
+}
+
+/**
+ * Người được giao của hội thoại `t` — chỉ tính người CÒN được trực kênh
+ * (gỡ kênh khỏi nhân viên thì phân công cũ tự hết hiệu lực, gán lại kênh thì có lại).
+ */
+const ASSIGNEES_SUBQUERY = sql`(SELECT COALESCE(json_agg(json_build_object('user_id', tm.user_id, 'name', au.name) ORDER BY au.name), '[]'::json)
+  FROM inbox_thread_members tm
+  JOIN inbox_channel_members acm ON acm.channel_id = tm.channel_id AND acm.user_id = tm.user_id
+  JOIN users au ON au.id = tm.user_id
+  WHERE tm.channel_id = t.channel_id AND tm.thread_id = t.thread_id)`;
+
+const HAS_ASSIGNEE = sql`EXISTS (SELECT 1 FROM inbox_thread_members tm
+  JOIN inbox_channel_members acm ON acm.channel_id = tm.channel_id AND acm.user_id = tm.user_id
+  WHERE tm.channel_id = t.channel_id AND tm.thread_id = t.thread_id)`;
 
 function mapReactions(v: unknown): InboxReactionRow[] {
   if (!Array.isArray(v)) return [];
@@ -303,6 +332,10 @@ export interface InboxThreadQuery {
   offset?: number;
   /** Sắp theo thread_id cố định (phân trang ổn định cho MCP) thay vì tin mới nhất. */
   stableOrder?: boolean;
+  /** Chỉ hội thoại đã giao cho người này (nhân viên ở chế độ "chỉ hội thoại được giao"). */
+  assignedTo?: string;
+  /** Chỉ hội thoại chưa giao cho ai. */
+  unassignedOnly?: boolean;
 }
 
 export async function listInboxThreads(
@@ -313,25 +346,30 @@ export async function listInboxThreads(
 ): Promise<{ threads: InboxThread[]; total: number }> {
   const limit = Math.min(Math.max(query.limit ?? 50, 1), 500);
   const offset = Math.max(query.offset ?? 0, 0);
-  const conds = [sql`channel_id = ${channelId}`];
+  const conds = [sql`t.channel_id = ${channelId}`];
   if (query.kind) conds.push(sql`kind = ${query.kind}`);
   if (query.unreadOnly) conds.push(sql`unread_count > 0`);
   if (query.withMessagesOnly) conds.push(sql`last_message_at IS NOT NULL`);
   if (query.contactsOnly) conds.push(sql`is_contact = true`);
+  if (query.assignedTo) {
+    conds.push(sql`EXISTS (SELECT 1 FROM inbox_thread_members mine WHERE mine.channel_id = t.channel_id
+      AND mine.thread_id = t.thread_id AND mine.user_id = ${query.assignedTo})`);
+  }
+  if (query.unassignedOnly) conds.push(sql`NOT ${HAS_ASSIGNEE}`);
   const q = query.q?.trim();
   if (q) {
     const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    conds.push(sql`(name ILIKE ${like} OR contact_alias ILIKE ${like} OR thread_id LIKE ${like} OR phone LIKE ${like})`);
+    conds.push(sql`(t.name ILIKE ${like} OR t.contact_alias ILIKE ${like} OR t.thread_id LIKE ${like} OR t.phone LIKE ${like})`);
   }
   const where = sql.join(conds, sql` AND `);
   const order = query.stableOrder
-    ? sql`thread_id ASC`
-    : sql`last_message_at DESC NULLS LAST, name ASC`;
+    ? sql`t.thread_id ASC`
+    : sql`t.last_message_at DESC NULLS LAST, t.name ASC`;
   return withWorkspace(db, ctx, async (tx) => {
     const rows = await tx.execute(
-      sql`SELECT * FROM inbox_threads WHERE ${where} ORDER BY ${order} LIMIT ${limit} OFFSET ${offset}`,
+      sql`SELECT t.*, ${ASSIGNEES_SUBQUERY} AS assignees FROM inbox_threads t WHERE ${where} ORDER BY ${order} LIMIT ${limit} OFFSET ${offset}`,
     );
-    const cnt = await tx.execute(sql`SELECT count(*)::int AS n FROM inbox_threads WHERE ${where}`);
+    const cnt = await tx.execute(sql`SELECT count(*)::int AS n FROM inbox_threads t WHERE ${where}`);
     return {
       threads: (rows.rows as Raw[]).map(mapThread),
       total: Number((cnt.rows[0] as Raw | undefined)?.n ?? 0),
@@ -359,7 +397,8 @@ export async function getInboxThread(
   threadId: string,
 ): Promise<InboxThread | null> {
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`SELECT * FROM inbox_threads WHERE channel_id = ${channelId} AND thread_id = ${threadId}`),
+    tx.execute(sql`SELECT t.*, ${ASSIGNEES_SUBQUERY} AS assignees FROM inbox_threads t
+      WHERE t.channel_id = ${channelId} AND t.thread_id = ${threadId}`),
   );
   const r = res.rows[0] as Raw | undefined;
   return r ? mapThread(r) : null;
@@ -594,16 +633,20 @@ export async function pruneInboxMessages(
   return res.rowCount ?? 0;
 }
 
-// ===== Member được trực kênh Zalo nào =====
+// ===== Member được trực kênh nào + phạm vi (0040) =====
 
 export async function listInboxChannelMembers(
   db: Db,
   ctx: WorkspaceContext,
-): Promise<Array<{ channelId: string; userId: string }>> {
+): Promise<Array<{ channelId: string; userId: string; scope: InboxScope }>> {
   const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`SELECT channel_id, user_id FROM inbox_channel_members`),
+    tx.execute(sql`SELECT channel_id, user_id, scope FROM inbox_channel_members`),
   );
-  return (res.rows as Raw[]).map((r) => ({ channelId: String(r.channel_id), userId: String(r.user_id) }));
+  return (res.rows as Raw[]).map((r) => ({
+    channelId: String(r.channel_id),
+    userId: String(r.user_id),
+    scope: r.scope === "assigned" ? "assigned" : "all",
+  }));
 }
 
 export async function listUserInboxChannelIds(
@@ -611,36 +654,194 @@ export async function listUserInboxChannelIds(
   ctx: WorkspaceContext,
   userId: string,
 ): Promise<string[]> {
-  const res = await withWorkspace(db, ctx, (tx) =>
-    tx.execute(sql`SELECT channel_id FROM inbox_channel_members WHERE user_id = ${userId}`),
-  );
-  return (res.rows as Raw[]).map((r) => String(r.channel_id));
+  return (await listUserInboxChannelScopes(db, ctx, userId)).map((r) => r.channelId);
 }
 
-/** Đặt LẠI danh sách kênh member được trực. Chỉ nhận kênh cá nhân có Inbox (Zalo, WhatsApp). */
+/** Kênh member được trực kèm phạm vi: all = mọi hội thoại, assigned = chỉ hội thoại được giao. */
+export async function listUserInboxChannelScopes(
+  db: Db,
+  ctx: WorkspaceContext,
+  userId: string,
+): Promise<Array<{ channelId: string; scope: InboxScope }>> {
+  const res = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`SELECT channel_id, scope FROM inbox_channel_members WHERE user_id = ${userId}`),
+  );
+  return (res.rows as Raw[]).map((r) => ({
+    channelId: String(r.channel_id),
+    scope: r.scope === "assigned" ? "assigned" : "all",
+  }));
+}
+
+/**
+ * Đặt LẠI danh sách kênh member được trực (mọi loại kênh có Inbox).
+ * `scopes[channelId]` đặt phạm vi; kênh không nêu thì giữ phạm vi đang có (kênh mới: all).
+ */
 export async function setUserInboxChannels(
   db: Db,
   ctx: WorkspaceContext,
   userId: string,
   channelIds: string[],
+  scopes: Record<string, unknown> = {},
 ): Promise<string[]> {
   return withWorkspace(db, ctx, async (tx) => {
     const ids = [...new Set(channelIds.filter((x) => /^[0-9a-f-]{36}$/i.test(x)))];
     const valid = ids.length
       ? (
           (
-            await tx.execute(sql`SELECT id FROM channels WHERE kind IN ('zalo_personal', 'whatsapp_personal')
+            await tx.execute(sql`SELECT id FROM channels
+              WHERE kind IN ('zalo_personal', 'whatsapp_personal', 'facebook', 'instagram')
               AND id IN (${sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `)})`)
           ).rows as Raw[]
         ).map((r) => String(r.id))
       : [];
+    const old = new Map(
+      (
+        (await tx.execute(sql`SELECT channel_id, scope FROM inbox_channel_members WHERE user_id = ${userId}`)).rows as Raw[]
+      ).map((r) => [String(r.channel_id), String(r.scope)]),
+    );
     await tx.execute(sql`DELETE FROM inbox_channel_members WHERE user_id = ${userId}`);
     for (const channelId of valid) {
-      await tx.execute(sql`INSERT INTO inbox_channel_members (workspace_id, channel_id, user_id, granted_by)
-        VALUES (${ctx.workspaceId}, ${channelId}, ${userId}, ${ctx.userId}) ON CONFLICT DO NOTHING`);
+      const want = scopes[channelId];
+      const scope = want === "assigned" || want === "all" ? want : old.get(channelId) === "assigned" ? "assigned" : "all";
+      await tx.execute(sql`INSERT INTO inbox_channel_members (workspace_id, channel_id, user_id, granted_by, scope)
+        VALUES (${ctx.workspaceId}, ${channelId}, ${userId}, ${ctx.userId}, ${scope}) ON CONFLICT DO NOTHING`);
     }
     return valid;
   });
+}
+
+// ===== Phân công hội thoại (0040) =====
+
+export interface InboxStaff {
+  userId: string;
+  name: string;
+  scope: InboxScope;
+  isActive: boolean;
+  /** Số hội thoại đang được giao trên kênh này */
+  assignedCount: number;
+}
+
+/** Nhân viên (member) được trực kênh này — danh sách để chọn khi phân công. */
+export async function listInboxChannelStaff(db: Db, ctx: WorkspaceContext, channelId: string): Promise<InboxStaff[]> {
+  const res = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`SELECT cm.user_id, u.name, cm.scope, u.is_active,
+        (SELECT count(*)::int FROM inbox_thread_members tm WHERE tm.channel_id = cm.channel_id AND tm.user_id = cm.user_id) AS assigned_count
+      FROM inbox_channel_members cm
+      JOIN users u ON u.id = cm.user_id
+      JOIN workspace_members wm ON wm.user_id = cm.user_id AND wm.workspace_id = cm.workspace_id AND wm.role = 'member'
+      WHERE cm.channel_id = ${channelId} ORDER BY u.name`),
+  );
+  return (res.rows as Raw[]).map((r) => ({
+    userId: String(r.user_id),
+    name: String(r.name ?? ""),
+    scope: r.scope === "assigned" ? "assigned" : "all",
+    isActive: r.is_active !== false,
+    assignedCount: Number(r.assigned_count ?? 0),
+  }));
+}
+
+export async function listInboxThreadAssignees(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+  threadId: string,
+): Promise<InboxAssignee[]> {
+  const res = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`SELECT tm.user_id, u.name FROM inbox_thread_members tm
+      JOIN inbox_channel_members cm ON cm.channel_id = tm.channel_id AND cm.user_id = tm.user_id
+      JOIN users u ON u.id = tm.user_id
+      WHERE tm.channel_id = ${channelId} AND tm.thread_id = ${threadId} ORDER BY u.name`),
+  );
+  return mapAssignees(res.rows);
+}
+
+/**
+ * Giao hội thoại cho nhân viên. mode set = thay toàn bộ người được giao của các hội thoại này
+ * (userIds rỗng = bỏ phân công); add = giao thêm. Chỉ nhận người đang được trực kênh.
+ * Trả danh sách người hợp lệ đã dùng.
+ */
+export async function setInboxThreadAssignees(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+  threadIds: string[],
+  userIds: string[],
+  mode: "set" | "add" = "set",
+): Promise<string[]> {
+  const threads = [...new Set(threadIds)].slice(0, 500);
+  if (!threads.length) return [];
+  return withWorkspace(db, ctx, async (tx) => {
+    const wanted = [...new Set(userIds.filter((x) => /^[0-9a-f-]{36}$/i.test(x)))];
+    const valid = wanted.length
+      ? (
+          (
+            await tx.execute(sql`SELECT user_id FROM inbox_channel_members WHERE channel_id = ${channelId}
+              AND user_id IN (${sql.join(wanted.map((i) => sql`${i}::uuid`), sql`, `)})`)
+          ).rows as Raw[]
+        ).map((r) => String(r.user_id))
+      : [];
+    const threadList = sql.join(threads.map((t) => sql`${t}`), sql`, `);
+    if (mode === "set") {
+      await tx.execute(sql`DELETE FROM inbox_thread_members WHERE channel_id = ${channelId} AND thread_id IN (${threadList})`);
+    }
+    for (const threadId of threads) {
+      for (const userId of valid) {
+        await tx.execute(sql`INSERT INTO inbox_thread_members (workspace_id, channel_id, thread_id, user_id, assigned_by)
+          VALUES (${ctx.workspaceId}, ${channelId}, ${threadId}, ${userId}, ${ctx.userId})
+          ON CONFLICT (channel_id, thread_id, user_id) DO NOTHING`);
+      }
+    }
+    return valid;
+  });
+}
+
+/**
+ * Chia tự động xoay vòng: hội thoại CHƯA giao cho ai → giao cho nhân viên ở chế độ
+ * "chỉ hội thoại được giao" (đang hoạt động) lâu nhất chưa được chia. Trả người được giao,
+ * null nếu hội thoại đã có người phụ trách hoặc kênh không có nhân viên nào ở chế độ đó.
+ */
+export async function autoAssignInboxThread(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+  threadId: string,
+): Promise<InboxAssignee | null> {
+  return withWorkspace(db, ctx, async (tx) => {
+    // Hai tin tới cùng lúc không được chia cho hai người khác nhau
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`inbox-assign:${channelId}`}))`);
+    const has = await tx.execute(sql`SELECT 1 FROM inbox_thread_members tm
+      JOIN inbox_channel_members cm ON cm.channel_id = tm.channel_id AND cm.user_id = tm.user_id
+      WHERE tm.channel_id = ${channelId} AND tm.thread_id = ${threadId} LIMIT 1`);
+    if (has.rows.length) return null;
+    const pick = await tx.execute(sql`SELECT cm.user_id, u.name FROM inbox_channel_members cm
+      JOIN users u ON u.id = cm.user_id AND u.is_active IS NOT FALSE
+      JOIN workspace_members wm ON wm.user_id = cm.user_id AND wm.workspace_id = cm.workspace_id AND wm.role = 'member'
+      WHERE cm.channel_id = ${channelId} AND cm.scope = 'assigned'
+      ORDER BY (SELECT max(tm.created_at) FROM inbox_thread_members tm
+                WHERE tm.channel_id = cm.channel_id AND tm.user_id = cm.user_id AND tm.auto) ASC NULLS FIRST,
+               cm.created_at ASC, cm.user_id ASC
+      LIMIT 1`);
+    const r = pick.rows[0] as Raw | undefined;
+    if (!r) return null;
+    await tx.execute(sql`INSERT INTO inbox_thread_members (workspace_id, channel_id, thread_id, user_id, auto, created_at)
+      VALUES (${ctx.workspaceId}, ${channelId}, ${threadId}, ${String(r.user_id)}, true, clock_timestamp())
+      ON CONFLICT (channel_id, thread_id, user_id) DO UPDATE SET auto = true, created_at = clock_timestamp()`);
+    return { userId: String(r.user_id), name: String(r.name ?? "") };
+  });
+}
+
+/** Hội thoại (của kênh) có tin nhắn kèm file này — để kiểm quyền tải file trong Inbox. */
+export async function inboxThreadsOfFile(
+  db: Db,
+  ctx: WorkspaceContext,
+  channelId: string,
+  localPath: string,
+): Promise<string[]> {
+  const res = await withWorkspace(db, ctx, (tx) =>
+    tx.execute(sql`SELECT DISTINCT thread_id FROM inbox_messages
+      WHERE channel_id = ${channelId} AND media->>'localPath' = ${localPath} LIMIT 50`),
+  );
+  return (res.rows as Raw[]).map((r) => String(r.thread_id));
 }
 
 // ===== Chống gửi trùng qua MCP (request_id) =====

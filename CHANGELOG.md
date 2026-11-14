@@ -4,6 +4,17 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.22.0 — 2026-11-15
+
+- **Inbox — phân công hội thoại cho từng nhân viên** (Zalo cá nhân, WhatsApp cá nhân, Fanpage, Instagram). Người dùng → Sửa nhân viên → cạnh mỗi kênh chọn **Tất cả hội thoại** (mặc định, như trước nay) hoặc **Chỉ hội thoại được giao**. Nhân viên ở chế độ sau chỉ thấy, tìm, đọc và trả lời được khách / nhóm chat được giao cho mình. Quản trị và Vận hành vẫn thấy tất cả. Doanh nghiệp không cần phân quyền thì không phải làm gì.
+- **Giao hội thoại**: trong Inbox, nút **👥 Phân công** ở từng hội thoại, hoặc nút **👥 Phân công** trên thanh công cụ để tick nhiều hội thoại rồi giao một lượt. Một hội thoại giao được cho nhiều người. Ô lọc có thêm **Chưa phân công**; tên người phụ trách hiện trong danh sách.
+- **Chia tự động khách mới (xoay vòng)**: Inbox → ⚙️ Cài đặt → **Tự chia khách mới cho nhân viên** — **mặc định TẮT** (giao tay). Bật thì khách nhắn riêng mà chưa ai phụ trách được chia lần lượt cho các nhân viên ở chế độ "Chỉ hội thoại được giao" của kênh. Nhóm chat và bình luận bài viết vẫn giao tay.
+- Nhân viên ở chế độ "Chỉ hội thoại được giao" không dùng kênh đó qua MCP (Claude/ChatGPT kết nối ngoài), không nhắn tin mới cho người chưa được giao, không tra số điện thoại.
+- **Chặt hơn về file**: Thành viên chỉ tải được file / ảnh gắn với tin nhắn của kênh mình trực.
+- **Sửa lỗi**: gán kênh Fanpage / Instagram cho Thành viên ở trang Người dùng trước đây không được lưu — nay đã lưu.
+
+Hướng dẫn: [docs/inbox-phan-cong.md](docs/inbox-phan-cong.md). Cập nhật: `sudo penai update`. Có migration nhỏ (thêm một cột và một bảng), không phải làm gì thêm.
+
 ## 1.21.0 — 2026-11-09
 
 - **Provider HoiAI (chat.hoiai.vn)**: Providers → **＋ Kết nối HoiAI** → mở trang kích hoạt, đăng nhập (hoặc đăng ký) HoiAI, bấm Đồng ý — PenAI tự nhận khóa và tạo provider `hoiai`, không cần tự tạo API key, không cần tên miền/HTTPS. Vẫn dán được khóa `hk_live_…` nếu đã có. Một tài khoản dùng cho chat (chữ, ảnh, tin nhắn thoại), embedding (Kho tri thức — tự đặt 768 chiều cho khớp kho) và tạo ảnh. Hàng `hoiai` có nút **Tài khoản** (credit còn lại, link nạp), **Đăng nhập lại**, **Ngắt kết nối** (thu hồi khóa phía HoiAI).

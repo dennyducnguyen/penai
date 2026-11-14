@@ -3369,7 +3369,7 @@ export const INDEX_HTML = `<!doctype html>
         c.appendChild(table(["Tên", "Email", "Vai trò", "Agent được chat", "Đăng nhập gần nhất", "Trạng thái", ""], j.users, function (u) {
           var tr = el("tr");
           var agentsTxt = u.role === "member" ? (u.agentIds.length ? u.agentIds.map(function (id) { return '<span class="pill">' + esc(agentName(id)) + "</span>"; }).join(" ") : '<span class="err">chưa gán</span>') : '<span class="muted">tất cả</span>';
-          if (u.role === "member" && (u.zaloChannelIds || []).length) agentsTxt += '<div style="margin-top:3px">' + u.zaloChannelIds.map(function (id) { return '<span class="pill">📥 ' + esc(zaloName(id)) + "</span>"; }).join(" ") + "</div>";
+          if (u.role === "member" && (u.zaloChannelIds || []).length) agentsTxt += '<div style="margin-top:3px">' + u.zaloChannelIds.map(function (id) { return '<span class="pill"' + ((u.inboxAssignedChannelIds || []).indexOf(id) >= 0 ? ' title="Chỉ thấy hội thoại được giao"' : "") + '>📥 ' + esc(zaloName(id)) + ((u.inboxAssignedChannelIds || []).indexOf(id) >= 0 ? " · được giao" : "") + "</span>"; }).join(" ") + "</div>";
           var me = state.me && state.me.user && state.me.user.id === u.id;
           tr.innerHTML = "<td>" + esc(u.name) + (me ? ' <span class="pill">bạn</span>' : "") + "</td><td>" + esc(u.email) + "</td><td><span class='role-pill'>" + esc(ROLE_LABELS[u.role] || u.role) + "</span></td><td>" + agentsTxt + "</td><td class='muted'>" + esc(u.lastLoginAt ? String(u.lastLoginAt).slice(0, 16).replace("T", " ") : "chưa") + "</td><td>" + (u.isActive ? '<span class="ok">hoạt động</span>' : '<span class="err">đã khóa</span>') + (u.mustChangePassword ? ' <span class="pill">phải đổi MK</span>' : "") + "</td>";
           var td = el("td", { style: "white-space:nowrap" });
@@ -3404,17 +3404,21 @@ export const INDEX_HTML = `<!doctype html>
         '<label>Vai trò</label><select id="uRole" style="width:100%">' + Object.keys(ROLE_LABELS).map(function (r) { return '<option value="' + r + '">' + esc(ROLE_LABELS[r]) + "</option>"; }).join("") + "</select>" +
         '<div id="uRoleHelp" class="muted" style="margin-top:4px"></div>' +
         '<div id="uAgentWrap"><label>Agent được phép chat</label></div>' +
-        '<div id="uZaloWrap"><label>Kênh được trực trong Inbox (Zalo / WhatsApp / Facebook / Instagram — kênh Zalo, WhatsApp cũng dùng được qua MCP)</label></div>' +
+        '<div id="uZaloWrap"><label>Kênh được trực trong Inbox (Zalo / WhatsApp / Facebook / Instagram — kênh Zalo, WhatsApp cũng dùng được qua MCP)</label><div class="muted" style="font-size:.78rem;margin-bottom:4px">Mỗi kênh chọn phạm vi: <b>Tất cả hội thoại</b> (như trước nay) hoặc <b>Chỉ hội thoại được giao</b> — nhân viên chỉ thấy và trả lời khách / nhóm được phân công ở Inbox (nút 👥 Phân công), và không dùng kênh đó qua MCP.</div></div>' +
         '<div class="dialog-actions"><button class="ghost" id="uCancel">Hủy</button><button id="uSave">' + (isEdit ? "Lưu" : "Tạo tài khoản") + "</button></div>" +
         '<div id="uMsg" style="margin-top:8px"></div>';
       document.body.appendChild(dlg);
       bindPwToggles(dlg);
       $("#uAgentWrap", dlg).appendChild(agentChecks(isEdit ? u.agentIds : []));
-      var zbox = el("div", { "class": "agent-checks", id: "uZalo" });
+      var zbox = el("div", { "class": "agent-checks", id: "uZalo", style: "grid-template-columns:1fr" });
       if (!(DATA.zaloChannels || []).length) zbox.innerHTML = '<span class="muted">Chưa có kênh Zalo cá nhân / WhatsApp cá nhân nào.</span>';
       (DATA.zaloChannels || []).forEach(function (z) {
         var lb = el("label"); var cb = el("input", { type: "checkbox", value: z.id }); if (isEdit && (u.zaloChannelIds || []).indexOf(z.id) >= 0) cb.checked = true;
-        lb.appendChild(cb); lb.appendChild(document.createTextNode(z.name + (z.kind === "whatsapp_personal" ? " (WhatsApp)" : z.kind === "facebook" ? " (Facebook)" : z.kind === "instagram" ? " (Instagram)" : ""))); zbox.appendChild(lb);
+        lb.appendChild(cb); lb.appendChild(document.createTextNode(z.name + (z.kind === "whatsapp_personal" ? " (WhatsApp)" : z.kind === "facebook" ? " (Facebook)" : z.kind === "instagram" ? " (Instagram)" : "")));
+        var sc = el("select", { "class": "uScope", "data-ch": z.id, style: "width:auto;padding:2px 4px;margin-left:8px;font-size:.8rem" });
+        sc.innerHTML = '<option value="all">Tất cả hội thoại</option><option value="assigned">Chỉ hội thoại được giao</option>';
+        sc.value = isEdit && (u.inboxAssignedChannelIds || []).indexOf(z.id) >= 0 ? "assigned" : "all";
+        lb.appendChild(sc); zbox.appendChild(lb);
       });
       $("#uZaloWrap", dlg).appendChild(zbox);
       if (isEdit) { $("#uName", dlg).value = u.name; $("#uEmail", dlg).value = u.email; $("#uRole", dlg).value = u.role; }
@@ -3426,6 +3430,8 @@ export const INDEX_HTML = `<!doctype html>
         var body = { name: $("#uName", dlg).value.trim(), role: $("#uRole", dlg).value };
         body.agentIds = Array.prototype.map.call(dlg.querySelectorAll("#uAgents input:checked"), function (x) { return x.value; });
         body.zaloChannelIds = Array.prototype.map.call(dlg.querySelectorAll("#uZalo input:checked"), function (x) { return x.value; });
+        body.inboxScopes = {};
+        Array.prototype.forEach.call(dlg.querySelectorAll("#uZalo select.uScope"), function (x) { body.inboxScopes[x.getAttribute("data-ch")] = x.value; });
         var req;
         if (isEdit) req = api("/v1/users/" + u.id, { method: "PATCH", body: body });
         else {
@@ -4276,13 +4282,13 @@ ${LIBRARY_EDITOR_UI}
     m.className = "fill pad";
     var touch = (function () { try { return window.matchMedia("(pointer: coarse)").matches; } catch (e) { return false; } })();
     var mobile = function () { return window.matchMedia("(max-width: 760px)").matches; };
-    var S = { channels: [], canManage: false, ch: null, threads: [], cur: null, msgs: [], filter: "", kind: "", img: null, es: null };
+    var S = { channels: [], canManage: false, ch: null, threads: [], cur: null, msgs: [], filter: "", kind: "", img: null, es: null, bulk: false, sel: {} };
     var top = el("div", { "class": "row ibx-top" });
     top.innerHTML = '<select id="ibxCh" style="max-width:260px"></select><span id="ibxSt" class="muted"></span><span class="sp" style="flex:1"></span>' +
-      '<button class="ghost sm" id="ibxNew" title="Nhắn tin mới">＋<span class="tx"> Nhắn tin mới</span></button><button class="ghost sm" id="ibxSync" style="display:none" title="Đồng bộ danh bạ">🔄<span class="tx"> Đồng bộ danh bạ</span></button><button class="ghost sm" id="ibxSet" style="display:none" title="Cài đặt">⚙️<span class="tx"> Cài đặt</span></button>';
+      '<button class="ghost sm" id="ibxBulk" style="display:none" title="Chọn nhiều hội thoại để giao cho nhân viên">👥<span class="tx"> Phân công</span></button><button class="ghost sm" id="ibxNew" title="Nhắn tin mới">＋<span class="tx"> Nhắn tin mới</span></button><button class="ghost sm" id="ibxSync" style="display:none" title="Đồng bộ danh bạ">🔄<span class="tx"> Đồng bộ danh bạ</span></button><button class="ghost sm" id="ibxSet" style="display:none" title="Cài đặt">⚙️<span class="tx"> Cài đặt</span></button>';
     m.appendChild(top);
     var wrap = el("div", { "class": "ibx" });
-    wrap.innerHTML = '<div class="ibx-list"><div class="row" style="padding:8px"><input id="ibxQ" placeholder="Tìm tên, uid, SĐT…"><select id="ibxKind" style="flex:0 0 auto;min-width:0"><option value="">Tất cả</option><option value="direct">Cá nhân</option><option value="group">Nhóm</option><option value="unread">Chưa đọc</option></select></div><div id="ibxThreads" class="ibx-threads"></div></div>' +
+    wrap.innerHTML = '<div class="ibx-list"><div class="row" style="padding:8px"><input id="ibxQ" placeholder="Tìm tên, uid, SĐT…"><select id="ibxKind" style="flex:0 0 auto;min-width:0"><option value="">Tất cả</option><option value="direct">Cá nhân</option><option value="group">Nhóm</option><option value="unread">Chưa đọc</option><option value="unassigned" hidden>Chưa phân công</option><option value="mine" hidden>Giao cho tôi</option></select></div><div id="ibxBulkBar" class="row" style="display:none;padding:0 8px 8px;gap:6px"></div><div id="ibxThreads" class="ibx-threads"></div></div>' +
       '<div class="ibx-chat"><div id="ibxHead" class="ibx-head muted">Chọn một hội thoại bên trái.</div><div id="ibxMsgs" class="ibx-msgs"></div>' +
       '<div class="ibx-compose" id="ibxCompose" style="display:none"><div id="ibxImg"></div><div class="ibx-box"><button class="ib" type="button" id="ibxAttach" title="Gửi ảnh">🖼️</button><input type="file" id="ibxFile" accept="image/png,image/jpeg,image/gif,image/webp" hidden><textarea id="ibxText" rows="1" enterkeyhint="send" placeholder="Nhập tin nhắn…"></textarea><button class="snd" id="ibxSend" title="Gửi" aria-label="Gửi">➤</button></div></div></div>';
     $("#ibxText", wrap).placeholder = touch ? "Nhập tin nhắn…" : "Nhập tin nhắn… (Enter gửi, Shift+Enter xuống dòng, dán ảnh trực tiếp)";
@@ -4299,6 +4305,10 @@ ${LIBRARY_EDITOR_UI}
     function caps() { var c = chInfo(); return (c && c.capabilities) || { groups: true, phoneLookup: true, syncContacts: true, reactions: true, newConversation: true, mcp: true }; }
     function isMetaCh() { var c = chInfo(); return !!(c && isMetaKind(c.kind)); }
     function isPostThread() { return !!(S.cur && String(S.cur.threadId).indexOf("post:") === 0); }
+    // Phân công hội thoại: scope "assigned" = nhân viên chỉ thấy hội thoại được giao
+    function chScope() { var c = chInfo(); return (c && c.scope) || "all"; }
+    function asgNames(t) { return (t.assignees || []).map(function (a) { return a.name; }).join(", "); }
+    function asgBadge(t) { return S.canManage && (t.assignees || []).length ? ' <span class="pill" style="font-size:.7rem" title="Người phụ trách">👤 ' + esc(asgNames(t)) + "</span>" : ""; }
     function renderStatus() {
       var c = chInfo(), st = $("#ibxSt");
       if (!c) { st.innerHTML = ""; return; }
@@ -4306,15 +4316,21 @@ ${LIBRARY_EDITOR_UI}
         (c.inbox ? "" : ' · <span class="err">đang TẮT lưu nội dung</span>') +
         (c.mcpReadMessages ? ' · <span class="pill" title="Ứng dụng AI bên ngoài (MCP) được đọc hội thoại của kênh này">🔓 AI ngoài đọc được tin</span>' : "") +
         (c.agentReply === false ? ' · <span class="pill" title="Channels → Sửa → Agent tự trả lời">🤖 AI đang tắt</span>' : "") +
-        (c.autoReaction ? ' · <span class="pill" title="Tự thả cảm xúc khi khách nhắn">' + (c.autoReaction === "like" ? "👍" : "❤️") + " tự thả</span>" : "");
+        (c.autoReaction ? ' · <span class="pill" title="Tự thả cảm xúc khi khách nhắn">' + (c.autoReaction === "like" ? "👍" : "❤️") + " tự thả</span>" : "") +
+        (c.autoAssign && S.canManage ? ' · <span class="pill" title="Khách mới nhắn riêng được chia lần lượt cho nhân viên (Cài đặt Inbox)">🔁 tự chia khách mới</span>' : "") +
+        (c.scope === "assigned" ? ' · <span class="pill" title="Bạn chỉ thấy các hội thoại quản trị giao cho bạn">👤 chỉ hội thoại được giao</span>' : "");
       var cp = caps();
       $("#ibxSync").style.display = S.canManage && cp.syncContacts !== false ? "" : "none";
-      $("#ibxNew").style.display = cp.newConversation !== false ? "" : "none";
+      $("#ibxNew").style.display = cp.newConversation !== false && chScope() !== "assigned" ? "" : "none";
+      $("#ibxBulk").style.display = S.canManage ? "" : "none";
       $("#ibxSet").style.display = isAdmin() ? "" : "none";
       var kSel = $("#ibxKind"), gOpt = kSel.querySelector('option[value="group"]'), dOpt = kSel.querySelector('option[value="direct"]');
       if (gOpt) { gOpt.hidden = cp.groups === false && !cp.comments; gOpt.textContent = cp.comments ? "Bình luận" : "Nhóm"; }
       if (dOpt) { dOpt.hidden = cp.groups === false && !cp.comments; dOpt.textContent = cp.comments ? "Tin nhắn" : "Cá nhân"; }
       $("#ibxQ").placeholder = isMetaKind(c.kind) ? "Tìm tên khách…" : "Tìm tên, uid, SĐT…";
+      var uOpt = kSel.querySelector('option[value="unassigned"]'), mOpt = kSel.querySelector('option[value="mine"]');
+      if (uOpt) uOpt.hidden = !S.canManage;
+      if (mOpt) mOpt.hidden = S.canManage || chScope() !== "all";
     }
     function aiBadge(t) {
       if (t.aiMode === "off") return '<span title="Đã tắt AI cho hội thoại này">🚫</span>';
@@ -4324,20 +4340,82 @@ ${LIBRARY_EDITOR_UI}
     function threadItem(t) {
       var a = el("div", { "class": "ibx-item" + (S.cur && S.cur.threadId === t.threadId ? " active" : "") });
       a.innerHTML = '<div class="ibx-av' + (t.kind === "group" ? " grp" : "") + '">' + (t.avatar ? '<img src="' + esc(t.avatar) + '" referrerpolicy="no-referrer" alt="">' : ibxInitial(t.contactAlias || t.name)) + '</div>' +
-        '<div class="ibx-mid"><div class="ibx-nm">' + (t.kind === "group" ? "👥 " : "") + esc(t.contactAlias || t.name || t.threadId) + " " + aiBadge(t) + '</div>' + (t.contactAlias && t.name && t.contactAlias !== t.name ? '<div class="ibx-last">Zalo: ' + esc(t.name) + '</div>' : '') + '<div class="ibx-last">' + esc(t.lastMessage || (t.isContact ? "(chưa có tin nhắn)" : "")) + "</div></div>" +
+        '<div class="ibx-mid"><div class="ibx-nm">' + (t.kind === "group" ? "👥 " : "") + esc(t.contactAlias || t.name || t.threadId) + " " + aiBadge(t) + asgBadge(t) + '</div>' + (t.contactAlias && t.name && t.contactAlias !== t.name ? '<div class="ibx-last">Zalo: ' + esc(t.name) + '</div>' : '') + '<div class="ibx-last">' + esc(t.lastMessage || (t.isContact ? "(chưa có tin nhắn)" : "")) + "</div></div>" +
         '<div class="ibx-meta"><div>' + esc(ibxTime(t.lastMessageAt)) + "</div>" + (t.unreadCount ? '<span class="ibx-badge">' + t.unreadCount + "</span>" : "") + "</div>";
       a.onclick = function () { openThread(t); };
+      if (S.bulk) {
+        // Chế độ chọn nhiều để phân công: bấm vào dòng = tick / bỏ tick
+        var cb = el("input", { type: "checkbox", tabindex: "-1", style: "width:auto;margin-right:8px;pointer-events:none" });
+        cb.checked = !!S.sel[t.threadId];
+        a.insertBefore(cb, a.firstChild);
+        a.onclick = function () { if (S.sel[t.threadId]) delete S.sel[t.threadId]; else S.sel[t.threadId] = 1; renderBulk(); renderThreads(); };
+      }
       return a;
+    }
+    function renderBulk() {
+      var bar = $("#ibxBulkBar"); if (!bar) return;
+      bar.style.display = S.bulk ? "" : "none";
+      if (!S.bulk) { bar.innerHTML = ""; return; }
+      var n = Object.keys(S.sel).length;
+      bar.innerHTML = '<span class="muted" style="flex:1;font-size:.85rem">Đã chọn ' + n + ' hội thoại</span><button class="sm" id="ibxBulkGo">Giao cho…</button><button class="ghost sm" id="ibxBulkX">Xong</button>';
+      $("#ibxBulkGo").disabled = !n;
+      $("#ibxBulkGo").onclick = function () { openAssign(Object.keys(S.sel), null); };
+      $("#ibxBulkX").onclick = function () { S.bulk = false; S.sel = {}; renderBulk(); renderThreads(); };
+    }
+    // Hộp phân công: cur = người đang phụ trách (1 hội thoại) hoặc null (giao nhiều hội thoại)
+    function openAssign(ids, cur) {
+      api("/v1/inbox/" + S.ch + "/staff").then(function (j) {
+        var staff = j.staff || [], multi = !cur;
+        var curIds = (cur || []).map(function (a) { return a.userId; });
+        var dlg = el("dialog", { style: "width:480px;padding:20px" });
+        dlg.innerHTML = "<h3 style='margin:0 0 8px'>Phân công " + (ids.length > 1 ? ids.length + " hội thoại" : "hội thoại") + "</h3>" +
+          (staff.length
+            ? '<div class="muted" style="margin-bottom:8px">Tick nhân viên phụ trách. Nhân viên ở chế độ “Chỉ hội thoại được giao” chỉ thấy và trả lời được hội thoại giao cho mình; quản trị và vận hành luôn thấy tất cả.</div><div id="asList" class="agent-checks"></div>' +
+              (multi
+                ? '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem;margin-top:10px"><input type="radio" name="asMode" value="add" checked style="width:auto"> Giao thêm (giữ người đang phụ trách)</label><label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem"><input type="radio" name="asMode" value="set" style="width:auto"> Thay toàn bộ người phụ trách (không tick ai = bỏ phân công)</label>'
+                : '<div class="muted" style="margin-top:8px">Không tick ai = bỏ phân công.</div>')
+            : '<div class="muted">Kênh này chưa có nhân viên nào để giao. Vào <a href="#/users">Người dùng</a> → Sửa nhân viên (vai trò ' + esc(ROLE_LABELS.member || "member") + ') → tick kênh này và chọn “Chỉ hội thoại được giao”.</div>') +
+          '<div id="asMsg" style="margin-top:8px"></div><div class="dialog-actions"><button class="ghost" id="asX">' + (staff.length ? "Hủy" : "Đóng") + "</button>" + (staff.length ? '<button id="asOk">Lưu</button>' : "") + "</div>";
+        document.body.appendChild(dlg);
+        staff.forEach(function (u) {
+          var lb = el("label"), cb = el("input", { type: "checkbox", value: u.userId });
+          if (curIds.indexOf(u.userId) >= 0) cb.checked = true;
+          lb.appendChild(cb);
+          lb.appendChild(document.createTextNode(u.name + (u.scope === "assigned" ? "" : " (thấy mọi hội thoại)") + (u.isActive ? "" : " (đã khóa)") + " · đang giữ " + u.assignedCount));
+          $("#asList", dlg).appendChild(lb);
+        });
+        $("#asX", dlg).onclick = function () { dlg.close(); dlg.remove(); };
+        if ($("#asOk", dlg)) $("#asOk", dlg).onclick = function () {
+          var userIds = Array.prototype.map.call(dlg.querySelectorAll("#asList input:checked"), function (x) { return x.value; });
+          var mode = "set";
+          if (multi) { var r = dlg.querySelector('input[name="asMode"]:checked'); mode = r ? r.value : "add"; }
+          if (mode === "add" && !userIds.length) { $("#asMsg", dlg).innerHTML = '<span class="err">Chọn ít nhất một nhân viên</span>'; return; }
+          $("#asOk", dlg).disabled = true;
+          api("/v1/inbox/" + S.ch + "/assign", { method: "POST", body: { threadIds: ids, userIds: userIds, mode: mode } }).then(function () {
+            dlg.close(); dlg.remove(); toast(userIds.length ? "Đã phân công" : "Đã bỏ phân công");
+            if (multi) { S.sel = {}; renderBulk(); }
+            loadThreads(syncCur);
+          }).catch(function (e) { $("#asOk", dlg).disabled = false; $("#asMsg", dlg).innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+        };
+        dlg.showModal();
+      }).catch(function (e) { toast(e.message, true); });
+    }
+    // Sau khi danh sách tải lại: cập nhật hội thoại đang mở; người bị giới hạn mất quyền thì đóng lại
+    function syncCur() {
+      if (!S.cur) return;
+      var t = S.threads.filter(function (x) { return x.threadId === S.cur.threadId; })[0];
+      if (t) { S.cur = t; renderHead(); return; }
+      if (chScope() === "assigned") { S.cur = null; S.msgs = []; closeThread(); renderHead(); $("#ibxMsgs").innerHTML = ""; $("#ibxCompose").style.display = "none"; }
     }
     function renderThreads() {
       var box = $("#ibxThreads"); box.innerHTML = "";
-      if (!S.threads.length) { box.innerHTML = '<div class="muted" style="padding:12px">' + (S.filter ? "Không tìm thấy." : "Chưa có hội thoại nào. Tin nhắn mới tới tài khoản sẽ tự hiện ở đây.") + "</div>"; return; }
+      if (!S.threads.length) { box.innerHTML = '<div class="muted" style="padding:12px">' + (S.filter ? "Không tìm thấy." : chScope() === "assigned" ? "Chưa có hội thoại nào được giao cho bạn. Quản trị giao hội thoại thì sẽ hiện ở đây." : S.kind === "unassigned" ? "Không còn hội thoại nào chưa phân công." : "Chưa có hội thoại nào. Tin nhắn mới tới tài khoản sẽ tự hiện ở đây.") + "</div>"; return; }
       S.threads.forEach(function (t) { box.appendChild(threadItem(t)); });
     }
-    function loadThreads() {
+    function loadThreads(done) {
       if (!S.ch) return;
-      var k = S.kind, qs = "?limit=200" + (S.filter ? "&q=" + encodeURIComponent(S.filter) : "") + (k === "direct" || k === "group" ? "&kind=" + k : "") + (k === "unread" ? "&unread=1" : "");
-      api("/v1/inbox/" + S.ch + "/threads" + qs).then(function (j) { S.threads = j.threads || []; renderThreads(); })
+      var k = S.kind, qs = "?limit=200" + (S.filter ? "&q=" + encodeURIComponent(S.filter) : "") + (k === "direct" || k === "group" ? "&kind=" + k : "") + (k === "unread" ? "&unread=1" : "") + (k === "unassigned" ? "&assign=none" : "") + (k === "mine" ? "&assign=mine" : "");
+      api("/v1/inbox/" + S.ch + "/threads" + qs).then(function (j) { S.threads = j.threads || []; renderThreads(); if (typeof done === "function") done(); })
         .catch(function (e) { $("#ibxThreads").innerHTML = '<div class="err" style="padding:12px">' + esc(e.message) + "</div>"; });
     }
     function msgBody(x) {
@@ -4410,7 +4488,9 @@ ${LIBRARY_EDITOR_UI}
       h.className = "ibx-head";
       h.innerHTML = '<button class="ibx-back" id="ibxBack" type="button" aria-label="Quay lại danh sách">‹</button><div style="flex:1;min-width:0;overflow:hidden"><b>' + (t.kind === "group" ? "👥 " : "👤 ") + esc(t.contactAlias || t.name || t.threadId) + '</b>' + (t.contactAlias && t.name && t.contactAlias !== t.name ? '<div class="muted">Zalo: ' + esc(t.name) + '</div>' : '') + ' <span class="muted">' + (String(t.threadId).indexOf("post:") === 0 ? "bình luận bài viết · bấm ↩ Trả lời / ✉ Nhắn riêng ở từng bình luận; gõ thẳng = bình luận vào bài" : (t.kind === "group" ? "nhóm" : "cá nhân") + " · " + (isMetaCh() ? (chInfo().kind === "instagram" ? "IGSID" : "PSID") : "uid") + " <code>" + esc(t.threadId) + "</code>") + (t.phone ? " · " + esc(t.phone) : "") + "</span></div>" +
         '<div class="row" style="gap:6px"><span class="muted">AI trả lời:</span><select id="ibxAi" style="padding:3px 6px"><option value="auto">Theo cấu hình kênh</option><option value="off">Tắt cho hội thoại này</option></select>' +
-        (paused ? '<span class="pill">⏸️ tạm dừng tới ' + esc(ibxTime(t.pausedUntil)) + '</span><button class="ghost sm" id="ibxResume">Cho AI trả lời lại</button>' : "") + "</div>";
+        (paused ? '<span class="pill">⏸️ tạm dừng tới ' + esc(ibxTime(t.pausedUntil)) + '</span><button class="ghost sm" id="ibxResume">Cho AI trả lời lại</button>' : "") +
+        (S.canManage ? '<button class="ghost sm" id="ibxAsg" title="Giao hội thoại này cho nhân viên">👥 ' + ((t.assignees || []).length ? esc(asgNames(t)) : "Phân công") + "</button>" : "") + "</div>";
+      var ab = $("#ibxAsg"); if (ab) ab.onclick = function () { openAssign([t.threadId], S.cur ? S.cur.assignees || [] : []); };
       $("#ibxBack").onclick = function () { if (history.state && history.state.ibx) history.back(); else closeThread(); };
       $("#ibxAi").value = t.aiMode || "auto";
       $("#ibxAi").onchange = function () { setAi({ mode: this.value }); };
@@ -4462,6 +4542,7 @@ ${LIBRARY_EDITOR_UI}
       if (i < S.threads.length) S.threads.splice(i, 1);
       if (S.kind === "unread" && !t.unreadCount) { renderThreads(); return; }
       if ((S.kind === "direct" || S.kind === "group") && t.kind !== S.kind) { renderThreads(); return; }
+      if (S.kind === "unassigned" && (t.assignees || []).length) { renderThreads(); return; }
       S.threads.unshift(t); renderThreads();
     }
     function setReply(x, priv) {
@@ -4548,6 +4629,11 @@ ${LIBRARY_EDITOR_UI}
         renderThreads();
         if (S.cur && S.cur.threadId === d.thread.threadId) { S.cur = d.thread; renderHead(); }
       });
+      // Phân công vừa đổi (giao tay hoặc tự chia) → tải lại danh sách
+      es.addEventListener("assign", function (ev) {
+        var d; try { d = JSON.parse(ev.data); } catch (e) { return; }
+        if (d.channelId === S.ch) loadThreads(syncCur);
+      });
       es.addEventListener("message_update", function (ev) {
         var d; try { d = JSON.parse(ev.data); } catch (e) { return; }
         if (d.channelId !== S.ch || !S.cur || S.cur.threadId !== d.threadId) return;
@@ -4563,7 +4649,8 @@ ${LIBRARY_EDITOR_UI}
     var qTimer = null;
     $("#ibxQ").oninput = function () { var v = this.value.trim(); clearTimeout(qTimer); qTimer = setTimeout(function () { S.filter = v; loadThreads(); }, 300); };
     $("#ibxKind").onchange = function () { S.kind = this.value; loadThreads(); };
-    $("#ibxCh").onchange = function () { S.ch = this.value; S.cur = null; S.msgs = []; closeThread(); renderStatus(); renderHead(); $("#ibxMsgs").innerHTML = ""; $("#ibxCompose").style.display = "none"; loadThreads(); };
+    $("#ibxBulk").onclick = function () { S.bulk = !S.bulk; S.sel = {}; renderBulk(); renderThreads(); };
+    $("#ibxCh").onchange = function () { S.ch = this.value; S.cur = null; S.msgs = []; S.bulk = false; S.sel = {}; renderBulk(); if (S.kind === "unassigned" || S.kind === "mine") { S.kind = ""; $("#ibxKind").value = ""; } closeThread(); renderStatus(); renderHead(); $("#ibxMsgs").innerHTML = ""; $("#ibxCompose").style.display = "none"; loadThreads(); };
     $("#ibxSync").onclick = function () {
       var b = this; b.disabled = true;
       api("/v1/inbox/" + S.ch + "/sync-contacts", { method: "POST", body: {} })
@@ -4577,6 +4664,8 @@ ${LIBRARY_EDITOR_UI}
         '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem"><input type="checkbox" id="isOn" style="width:auto"> Lưu nội dung tin nhắn (bật Inbox)</label>' +
         '<div class="muted" style="margin:4px 0 10px">Tắt thì tin mới không được lưu/hiện trong Inbox (tin cũ giữ nguyên). Lưu ý: bật là lưu cả tin riêng tư của tài khoản Zalo này.</div>' +
         '<label>AI tạm im bao nhiêu phút sau khi nhân viên trả lời (0 = không tạm dừng)</label><input id="isPause" type="number" min="0" max="1440" style="width:120px">' +
+        '<label style="display:flex;gap:8px;align-items:center;opacity:1;font-size:.9rem;margin-top:14px"><input type="checkbox" id="isAuto" style="width:auto"> Tự chia khách mới cho nhân viên (xoay vòng)</label>' +
+        '<div class="muted" style="margin:4px 0 0">Mặc định TẮT — quản trị / vận hành tự giao bằng nút 👥 Phân công. Bật thì khách nhắn riêng mà chưa ai phụ trách được chia lần lượt cho các nhân viên đang ở chế độ “Chỉ hội thoại được giao” của kênh này (đặt ở Người dùng → Sửa). Nhóm và bình luận bài viết vẫn giao tay.</div>' +
         (c.kind === "zalo_personal" || isMetaKind(c.kind) ? '<label style="margin-top:14px">Khi khách chỉ gửi ảnh</label><select id="isPhotoAck">' + (isMetaKind(c.kind) ? '<option value="ai">AI xem ảnh và trả lời luôn</option>' : "") + '<option value="short">Xác nhận ngắn ở ảnh đầu</option><option value="off">Im lặng, chỉ lưu ảnh</option></select><div class="muted">Ảnh gửi tiếp trong vòng 30 giây không được xác nhận lặp. Có yêu cầu kèm ảnh thì AI xử lý bình thường.</div>' : '') +
         (caps().reactions !== false ? '<label style="margin-top:14px">Tự thả cảm xúc khi khách nhắn (cá nhân + nhóm)</label><select id="isAutoRx" style="width:200px"><option value="off">Tắt</option><option value="heart">❤️ Thả tim</option><option value="like">👍 Thích</option></select>' +
         '<div class="muted" style="margin:4px 0 0">Thả vào tin cuối mỗi đợt khách nhắn, sau 1–4 giây. Nhóm đông người nhắn nhiều thì tài khoản thả rất nhiều — nền tảng có thể giới hạn tài khoản.</div>' : "") +
@@ -4589,20 +4678,20 @@ ${LIBRARY_EDITOR_UI}
         (isMetaKind(c.kind) ? '<div class="muted" style="margin-top:12px">Người trả lời trên Meta Business Suite / ứng dụng Trang cũng tính là nhân viên trả lời → AI tạm im theo số phút ở trên. Meta chỉ cho Trang nhắn trong 24 giờ kể từ tin cuối của khách.</div>' : "") +
         '<div class="dialog-actions"><button class="ghost" id="isX">Hủy</button><button id="isOk">Lưu</button></div>';
       document.body.appendChild(dlg);
-      $("#isOn", dlg).checked = !!c.inbox; $("#isPause", dlg).value = c.pauseMinutes;
+      $("#isOn", dlg).checked = !!c.inbox; $("#isPause", dlg).value = c.pauseMinutes; $("#isAuto", dlg).checked = !!c.autoAssign;
       if ($("#isMcpRead", dlg)) $("#isMcpRead", dlg).checked = !!c.mcpReadMessages;
       if ($("#isAutoRx", dlg)) $("#isAutoRx", dlg).value = c.autoReaction || "off";
       if ($("#isPhotoAck", dlg)) $("#isPhotoAck", dlg).value = c.photoAck || (isMetaKind(c.kind) ? "ai" : "short");
       if ($("#isCmt", dlg)) { $("#isCmt", dlg).checked = c.comments !== false; $("#isCmtPub", dlg).checked = c.commentAiPublic !== false; $("#isCmtPriv", dlg).checked = c.commentAiPrivate !== false; }
       $("#isX", dlg).onclick = function () { dlg.close(); dlg.remove(); };
       $("#isOk", dlg).onclick = function () {
-        var settings = { enabled: $("#isOn", dlg).checked, pauseMinutes: Number($("#isPause", dlg).value) || 0 };
+        var settings = { enabled: $("#isOn", dlg).checked, pauseMinutes: Number($("#isPause", dlg).value) || 0, autoAssign: $("#isAuto", dlg).checked };
         if ($("#isMcpRead", dlg)) settings.mcpReadMessages = $("#isMcpRead", dlg).checked;
         if ($("#isAutoRx", dlg)) settings.autoReaction = $("#isAutoRx", dlg).value;
         if ($("#isCmt", dlg)) { settings.comments = $("#isCmt", dlg).checked; settings.commentAiPublic = $("#isCmtPub", dlg).checked; settings.commentAiPrivate = $("#isCmtPriv", dlg).checked; }
         if ($("#isPhotoAck", dlg)) settings.photoAck = $("#isPhotoAck", dlg).value;
         api("/v1/inbox/" + c.id + "/settings", { method: "PUT", body: settings })
-          .then(function (j) { c.inbox = j.enabled; c.pauseMinutes = j.pauseMinutes; c.mcpReadMessages = j.mcpReadMessages; c.autoReaction = j.autoReaction; c.photoAck = j.photoAck; c.comments = j.comments; c.commentAiPublic = j.commentAiPublic; c.commentAiPrivate = j.commentAiPrivate; renderStatus(); dlg.close(); dlg.remove(); toast("Đã lưu"); })
+          .then(function (j) { c.inbox = j.enabled; c.pauseMinutes = j.pauseMinutes; c.mcpReadMessages = j.mcpReadMessages; c.autoReaction = j.autoReaction; c.photoAck = j.photoAck; c.comments = j.comments; c.commentAiPublic = j.commentAiPublic; c.commentAiPrivate = j.commentAiPrivate; c.autoAssign = j.autoAssign; renderStatus(); dlg.close(); dlg.remove(); toast("Đã lưu"); })
           .catch(function (e) { toast(e.message, true); });
       };
       dlg.showModal();

@@ -22,7 +22,7 @@ import {
 import { MetaPageChannel, inboxPlatformLabel, isInboxChannel, isInboxChannelKind, inboxCapabilitiesOf, isValidThreadId } from "@penai/channels";
 import type { McpServer } from "@penai/mcp";
 import { channelHandlers } from "./channels-runtime.js";
-import { allowedInboxChannelIds, ImageInputError, isPlatformRejected, prepareOutboundImages, readInboxConfig, sendInbox } from "./inbox.js";
+import { fullInboxChannelIds, ImageInputError, isPlatformRejected, prepareOutboundImages, readInboxConfig, sendInbox } from "./inbox.js";
 import type { McpPrincipal } from "./mcp-server.js";
 
 export const CHANNEL_SCOPES = ["channels:read", "channels:send", "channels:messages", "pages:publish", "pages:comments", "pages:insights"] as const;
@@ -64,7 +64,7 @@ export function addChannelMcpTools(server: McpServer, p: McpPrincipal, deps: { d
   const sendSource = internal ? "agent" : "mcp";
 
   async function channels() {
-    const allowed = await allowedInboxChannelIds(db, p.ctx);
+    const allowed = await fullInboxChannelIds(db, p.ctx);
     const only = p.internal?.channelIds;
     return (await listChannels(db, p.ctx)).filter(
       (c) => isInboxChannelKind(c.kind) && allowed.includes(c.id) && (!only || only.includes(c.id)),
