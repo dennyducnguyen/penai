@@ -8,6 +8,9 @@
  *   gửi text/ảnh, bật/tắt AI theo hội thoại. Nhân viên trả lời (web hoặc điện
  *   thoại) → AI tạm im trong hội thoại đó `inbox_pause_minutes` phút (mặc định 30).
  * - Dùng chung cho MCP server (mcp-server.ts): gửi tin/ảnh, tra SĐT, danh bạ.
+ * - Phân công hội thoại (0040, tùy chọn): member có phạm vi `assigned` trên một kênh chỉ thấy/trả lời
+ *   hội thoại được giao; operator trở lên giao tay, hoặc bật chia tự động xoay vòng cho khách mới
+ *   (`inbox_auto_assign`, mặc định tắt). Member phạm vi `all` và operator trở lên: như trước.
  *
  * Cấu hình theo kênh (channels.config): `inbox` (mặc định true — lưu nội dung),
  * `inbox_pause_minutes` (mặc định 30, 0 = không tạm dừng).
@@ -40,8 +43,16 @@ import {
   latestIncomingInboxMessages,
   upsertInboxContacts,
   recordAudit,
+  autoAssignInboxThread,
+  inboxThreadsOfFile,
+  listInboxChannelStaff,
+  listInboxThreadAssignees,
+  listUserInboxChannelScopes,
+  setInboxThreadAssignees,
   type Db,
+  type InboxAssignee,
   type InboxMessageRow,
+  type InboxScope,
   type InboxThread,
 } from "@penai/db";
 import {
@@ -72,6 +83,8 @@ interface InboxChannelState {
   workspaceId: string;
   enabled: boolean;
   pauseMinutes: number;
+  /** Chia tự động xoay vòng khách mới cho nhân viên "chỉ hội thoại được giao" (mặc định tắt) */
+  autoAssign: boolean;
 }
 
 const inboxState = new Map<string, InboxChannelState>();
@@ -88,6 +101,8 @@ export function readInboxConfig(config: Record<string, unknown>, kind = ""): {
   comments: boolean;
   commentAiPublic: boolean;
   commentAiPrivate: boolean;
+  /** Khách mới (tin riêng) chưa ai phụ trách → tự chia xoay vòng. MẶC ĐỊNH TẮT (quản trị giao tay). */
+  autoAssign: boolean;
 } {
   const raw = Number(config["inbox_pause_minutes"]);
   return {
@@ -103,6 +118,7 @@ export function readInboxConfig(config: Record<string, unknown>, kind = ""): {
     comments: config["comments"] !== false,
     commentAiPublic: config["comment_ai_public"] !== false,
     commentAiPrivate: config["comment_ai_private"] !== false,
+    autoAssign: config["inbox_auto_assign"] === true,
   };
 }
 
@@ -110,24 +126,91 @@ export function readInboxConfig(config: Record<string, unknown>, kind = ""): {
 
 interface SseClient {
   workspaceId: string;
+  userId: string;
   /** null = mọi kênh (operator trở lên) */
   channelIds: Set<string> | null;
+  /** Kênh mà người này chỉ được xem hội thoại được giao */
+  restricted: Set<string>;
   write: (chunk: string) => void;
+  close: () => void;
 }
 
 const sseClients = new Set<SseClient>();
 
-function broadcast(workspaceId: string, channelId: string, event: string, data: unknown): void {
+/**
+ * Ai nhận sự kiện của một kênh:
+ * - "unrestricted": chỉ người thấy mọi hội thoại của kênh (sự kiện không gắn hội thoại cụ thể)
+ * - "all": mọi người trực kênh (sự kiện không chứa nội dung, vd "phân công vừa đổi")
+ * - Set userId: người thấy mọi hội thoại + người bị giới hạn có tên trong danh sách được giao
+ */
+type Audience = "unrestricted" | "all" | Set<string>;
+
+function broadcast(workspaceId: string, channelId: string, event: string, data: unknown, audience: Audience = "unrestricted"): void {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const c of sseClients) {
     if (c.workspaceId !== workspaceId) continue;
     if (c.channelIds && !c.channelIds.has(channelId)) continue;
+    if (c.restricted.has(channelId) && audience !== "all" && (audience === "unrestricted" || !audience.has(c.userId))) continue;
     try {
       c.write(payload);
     } catch {
       sseClients.delete(c);
     }
   }
+}
+
+/** Ngắt kết nối realtime của một người (quyền Inbox vừa đổi) — trình duyệt tự nối lại với quyền mới. */
+export function dropInboxSseForUser(userId: string): void {
+  for (const c of sseClients) {
+    if (c.userId !== userId) continue;
+    sseClients.delete(c);
+    try {
+      c.close();
+    } catch {
+      /* đã đóng */
+    }
+  }
+}
+
+// ===== Người được giao theo hội thoại (bộ nhớ đệm ngắn, xóa ngay khi phân công đổi) =====
+
+const assigneeCache = new Map<string, { at: number; list: InboxAssignee[] }>();
+const ASSIGNEE_TTL_MS = 30_000;
+setInterval(() => {
+  const cut = Date.now() - ASSIGNEE_TTL_MS;
+  for (const [k, v] of assigneeCache) if (v.at < cut) assigneeCache.delete(k);
+}, 60_000).unref();
+
+async function assigneesOf(db: Db, workspaceId: string, channelId: string, threadId: string): Promise<InboxAssignee[]> {
+  const key = `${channelId}:${threadId}`;
+  const hit = assigneeCache.get(key);
+  if (hit && Date.now() - hit.at < ASSIGNEE_TTL_MS) return hit.list;
+  const list = await listInboxThreadAssignees(db, ctxOf(workspaceId), channelId, threadId);
+  assigneeCache.set(key, { at: Date.now(), list });
+  return list;
+}
+
+/** Quên bộ nhớ đệm người được giao: của vài hội thoại, hoặc cả kênh (không truyền threadIds). */
+export function forgetInboxAssignees(channelId: string, threadIds?: string[]): void {
+  if (threadIds) {
+    for (const t of threadIds) assigneeCache.delete(`${channelId}:${t}`);
+    return;
+  }
+  for (const k of assigneeCache.keys()) if (k.startsWith(`${channelId}:`)) assigneeCache.delete(k);
+}
+
+/** Đẩy sự kiện của MỘT hội thoại: gắn người được giao vào `thread`, chỉ gửi cho người được xem hội thoại đó. */
+async function emitThread(
+  db: Db,
+  workspaceId: string,
+  channelId: string,
+  threadId: string,
+  event: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const list = await assigneesOf(db, workspaceId, channelId, threadId).catch(() => [] as InboxAssignee[]);
+  const thread = data["thread"] as InboxThread | undefined;
+  broadcast(workspaceId, channelId, event, thread ? { ...data, thread: { ...thread, assignees: list } } : data, new Set(list.map((x) => x.userId)));
 }
 
 setInterval(() => {
@@ -203,7 +286,7 @@ export function inboxHooks(
   dataDir: string,
 ) {
   const cfg = readInboxConfig(ch.config, ch.kind);
-  inboxState.set(ch.id, { workspaceId: ch.workspaceId, enabled: cfg.enabled, pauseMinutes: cfg.pauseMinutes });
+  inboxState.set(ch.id, { workspaceId: ch.workspaceId, enabled: cfg.enabled, pauseMinutes: cfg.pauseMinutes, autoAssign: cfg.autoAssign });
   const ctx = ctxOf(ch.workspaceId);
   const toInput = (entry: ChannelMessageLog) => ({
     threadId: entry.threadId,
@@ -254,7 +337,19 @@ export function inboxHooks(
       void (async () => {
         const saved = await recordInboxMessage(db, ctx, ch.id, toInput(entry), { pauseMinutes: st.pauseMinutes });
         if (!saved) return;
-        broadcast(ch.workspaceId, ch.id, "message", {
+        // Khách (tin riêng) chưa ai phụ trách + kênh bật chia tự động → giao xoay vòng TRƯỚC khi đẩy tin,
+        // để người vừa được giao nhận luôn tin này.
+        if (st.autoAssign && entry.direction === "in" && entry.peerKind === "direct" && !entry.threadId.startsWith("post:")) {
+          const who = await autoAssignInboxThread(db, ctx, ch.id, entry.threadId).catch((err) => {
+            logger.warn(`inbox.auto_assign lỗi: ${(err as Error).message}`);
+            return null;
+          });
+          if (who) {
+            forgetInboxAssignees(ch.id, [entry.threadId]);
+            broadcast(ch.workspaceId, ch.id, "assign", { channelId: ch.id, threadIds: [entry.threadId] }, "all");
+          }
+        }
+        await emitThread(db, ch.workspaceId, ch.id, entry.threadId, "message", {
           channelId: ch.id,
           thread: saved.thread,
           message: publicMessage(saved.message, ch.workspaceId),
@@ -267,7 +362,7 @@ export function inboxHooks(
           if (name) {
             await setInboxThreadName(db, ctx, ch.id, entry.threadId, name);
             recordInboxContact(db, ctx, ch.id, ch.kind, entry.threadId, name, "group");
-            broadcast(ch.workspaceId, ch.id, "thread", { channelId: ch.id, thread: { ...saved.thread, name } });
+            await emitThread(db, ch.workspaceId, ch.id, entry.threadId, "thread", { channelId: ch.id, thread: { ...saved.thread, name } });
           }
         }
       })().catch((err) => logger.warn(`zalo.inbox_store lỗi: ${(err as Error).message}`));
@@ -296,7 +391,7 @@ export function inboxHooks(
       void upsertInboxContacts(db, ctx, ch.id, [{ threadId: p.threadId, kind: "direct", name: p.name, ...(p.avatar ? { avatar: p.avatar } : {}) }])
         .then(async () => {
           const thread = await getInboxThread(db, ctx, ch.id, p.threadId);
-          if (thread) broadcast(ch.workspaceId, ch.id, "thread", { channelId: ch.id, thread });
+          if (thread) await emitThread(db, ch.workspaceId, ch.id, p.threadId, "thread", { channelId: ch.id, thread });
         })
         .catch((err) => logger.warn(`inbox.peer_profile lỗi: ${(err as Error).message}`));
     },
@@ -309,7 +404,7 @@ export function inboxHooks(
       const apply = (retry: boolean) =>
         setInboxMessageCliId(db, ctx, ch.id, msgId, cliMsgId)
           .then((m) => {
-            if (m) broadcast(ch.workspaceId, ch.id, "message_update", { channelId: ch.id, threadId: m.threadId, message: publicMessage(m, ch.workspaceId) });
+            if (m) void emitThread(db, ch.workspaceId, ch.id, m.threadId, "message_update", { channelId: ch.id, threadId: m.threadId, message: publicMessage(m, ch.workspaceId) });
             else if (retry) setTimeout(() => void apply(false), 3_000).unref?.();
           })
           .catch((err) => logger.warn(`zalo.cli_id_store lỗi: ${(err as Error).message}`));
@@ -326,7 +421,7 @@ export function inboxHooks(
         webUserId: r.webUserId ?? null,
       })
         .then((reactions) =>
-          broadcast(ch.workspaceId, ch.id, "reaction", { channelId: ch.id, threadId: r.threadId, msgId: r.targetMsgId, reactions }),
+          emitThread(db, ch.workspaceId, ch.id, r.threadId, "reaction", { channelId: ch.id, threadId: r.threadId, msgId: r.targetMsgId, reactions }),
         )
         .catch((err) => logger.warn(`zalo.reaction_store lỗi: ${(err as Error).message}`));
     },
@@ -377,21 +472,48 @@ export { latestIncomingInboxMessages, ZALO_REACTIONS, isZaloReactionKey };
 
 export function forgetInboxChannel(channelId: string): void {
   inboxState.delete(channelId);
+  forgetInboxAssignees(channelId);
 }
 
 // ===== Quyền truy cập kênh =====
 
-/** Kênh có Inbox người này được trực: operator trở lên = mọi kênh; member = kênh được gán; viewer = không. */
-export async function allowedInboxChannelIds(db: Db, ctx: WorkspaceContext): Promise<string[]> {
+/**
+ * Kênh có Inbox người này được trực kèm phạm vi: operator trở lên = mọi kênh, mọi hội thoại;
+ * member = kênh được gán, phạm vi `all` (mọi hội thoại) hoặc `assigned` (chỉ hội thoại được giao); viewer = không.
+ */
+export async function inboxChannelScopes(db: Db, ctx: WorkspaceContext): Promise<Map<string, InboxScope>> {
   if (hasRole(ctx.role, "operator")) {
-    return (await listChannels(db, ctx)).filter((c) => isInboxChannelKind(c.kind)).map((c) => c.id);
+    return new Map((await listChannels(db, ctx)).filter((c) => isInboxChannelKind(c.kind)).map((c) => [c.id, "all" as InboxScope]));
   }
-  if (ctx.role === "member") return listUserInboxChannelIds(db, ctx, ctx.userId);
-  return [];
+  if (ctx.role === "member") {
+    return new Map((await listUserInboxChannelScopes(db, ctx, ctx.userId)).map((r) => [r.channelId, r.scope]));
+  }
+  return new Map();
+}
+
+/** Kênh có Inbox người này được trực (kể cả kênh chỉ được xem hội thoại được giao). */
+export async function allowedInboxChannelIds(db: Db, ctx: WorkspaceContext): Promise<string[]> {
+  return [...(await inboxChannelScopes(db, ctx)).keys()];
+}
+
+/**
+ * Kênh người này thấy MỌI hội thoại. Dùng cho MCP server: ứng dụng AI bên ngoài tra danh bạ, đọc và
+ * gửi tin trên cả kênh, nên người chỉ được giao một số hội thoại không dùng kênh đó qua MCP.
+ */
+export async function fullInboxChannelIds(db: Db, ctx: WorkspaceContext): Promise<string[]> {
+  return [...(await inboxChannelScopes(db, ctx))].filter(([, scope]) => scope === "all").map(([id]) => id);
 }
 
 export async function canUseInboxChannel(db: Db, ctx: WorkspaceContext, channelId: string): Promise<boolean> {
-  return (await allowedInboxChannelIds(db, ctx)).includes(channelId);
+  return (await inboxChannelScopes(db, ctx)).has(channelId);
+}
+
+/** Người này được xem/trả lời hội thoại này không (kênh được trực + nếu bị giới hạn thì phải được giao). */
+export async function canUseInboxThread(db: Db, ctx: WorkspaceContext, channelId: string, threadId: string): Promise<boolean> {
+  const scope = (await inboxChannelScopes(db, ctx)).get(channelId);
+  if (!scope) return false;
+  if (scope === "all") return true;
+  return (await assigneesOf(db, ctx.workspaceId, channelId, threadId)).some((x) => x.userId === ctx.userId);
 }
 
 // ===== Ảnh: nạp từ data URL hoặc URL công khai (chống SSRF) =====
@@ -625,6 +747,13 @@ const InboxSettingsBody = z.object({
   comments: z.boolean().optional(),
   commentAiPublic: z.boolean().optional(),
   commentAiPrivate: z.boolean().optional(),
+  autoAssign: z.boolean().optional(),
+});
+
+const AssignBody = z.object({
+  threadIds: z.array(z.string().min(1).max(80)).min(1).max(200),
+  userIds: z.array(z.string().regex(/^[0-9a-f-]{36}$/i)).max(50),
+  mode: z.enum(["set", "add"]).default("set"),
 });
 
 const ReactBody = z.object({ reaction: z.enum(["heart", "like", "haha", "wow", "cry", "angry", "none"]) });
@@ -643,9 +772,25 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
   const { db, dataDir } = deps;
   inboxDataDir = dataDir;
 
-  async function guard(req: FastifyRequest, reply: FastifyReply, channelId: string): Promise<boolean> {
-    if (!/^[0-9a-f-]{36}$/i.test(channelId) || !(await canUseInboxChannel(db, req.authCtx, channelId))) {
+  /** Trả phạm vi của người gọi trên kênh (all / assigned); không được trực → trả lời 403 và trả null. */
+  async function guard(req: FastifyRequest, reply: FastifyReply, channelId: string): Promise<InboxScope | null> {
+    const scope = /^[0-9a-f-]{36}$/i.test(channelId) ? (await inboxChannelScopes(db, req.authCtx)).get(channelId) : undefined;
+    if (!scope) {
       void reply.code(403).send({ error: "Bạn không được trực kênh này" });
+      return null;
+    }
+    return scope;
+  }
+
+  const isAssignee = async (req: FastifyRequest, channelId: string, threadId: string): Promise<boolean> =>
+    (await assigneesOf(db, req.authCtx.workspaceId, channelId, threadId)).some((x) => x.userId === req.authCtx.userId);
+
+  /** Như guard + người bị giới hạn phải được giao hội thoại này. */
+  async function guardThread(req: FastifyRequest, reply: FastifyReply, channelId: string, threadId: string): Promise<boolean> {
+    const scope = await guard(req, reply, channelId);
+    if (!scope) return false;
+    if (scope === "assigned" && !(await isAssignee(req, channelId, threadId))) {
+      void reply.code(403).send({ error: "Hội thoại này chưa được giao cho bạn", code: "THREAD_NOT_ASSIGNED" });
       return false;
     }
     return true;
@@ -657,8 +802,8 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
   for (const base of ["/v1/inbox", "/v1/zalo-inbox"]) {
   // Kênh được trực + trạng thái kết nối
   app.get(`${base}/channels`, async (req) => {
-    const ids = await allowedInboxChannelIds(db, req.authCtx);
-    const all = (await listChannels(db, req.authCtx)).filter((c) => ids.includes(c.id));
+    const scopes = await inboxChannelScopes(db, req.authCtx);
+    const all = (await listChannels(db, req.authCtx)).filter((c) => scopes.has(c.id));
     return {
       channels: all.map((c) => {
         const rt = inboxRuntime(c.id);
@@ -681,6 +826,9 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
           comments: cfg.comments,
           commentAiPublic: cfg.commentAiPublic,
           commentAiPrivate: cfg.commentAiPrivate,
+          autoAssign: cfg.autoAssign,
+          // all = thấy mọi hội thoại; assigned = chỉ hội thoại được giao
+          scope: scopes.get(c.id) ?? "all",
         };
       }),
       canManage: hasRole(req.authCtx.role, "operator"),
@@ -689,7 +837,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
 
   // Realtime
   app.get(`${base}/events`, async (req, reply) => {
-    const ids = await allowedInboxChannelIds(db, req.authCtx);
+    const scopes = await inboxChannelScopes(db, req.authCtx);
     reply.hijack();
     const raw = reply.raw;
     raw.writeHead(200, {
@@ -701,8 +849,11 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     raw.write("event: ready\ndata: {}\n\n");
     const client: SseClient = {
       workspaceId: req.authCtx.workspaceId,
-      channelIds: hasRole(req.authCtx.role, "operator") ? null : new Set(ids),
+      userId: req.authCtx.userId,
+      channelIds: hasRole(req.authCtx.role, "operator") ? null : new Set(scopes.keys()),
+      restricted: new Set([...scopes].filter(([, sc]) => sc === "assigned").map(([id]) => id)),
       write: (chunk) => raw.write(chunk),
+      close: () => raw.end(),
     };
     sseClients.add(client);
     req.raw.on("close", () => sseClients.delete(client));
@@ -710,9 +861,13 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
 
   app.get(`${base}/:channelId/threads`, async (req, reply) => {
     const { channelId } = req.params as { channelId: string };
-    if (!(await guard(req, reply, channelId))) return;
-    const q = req.query as { q?: string; kind?: string; unread?: string; limit?: string; offset?: string; all?: string };
+    const scope = await guard(req, reply, channelId);
+    if (!scope) return;
+    const q = req.query as { q?: string; kind?: string; unread?: string; limit?: string; offset?: string; all?: string; assign?: string };
     const res = await listInboxThreads(db, req.authCtx, channelId, {
+      // Người bị giới hạn: chỉ hội thoại được giao. Người thấy hết: lọc "của tôi" / "chưa phân công" nếu muốn.
+      ...(scope === "assigned" || q.assign === "mine" ? { assignedTo: req.authCtx.userId } : {}),
+      ...(scope === "all" && q.assign === "none" ? { unassignedOnly: true } : {}),
       ...(q.q ? { q: q.q.slice(0, 100) } : {}),
       ...(q.kind === "direct" || q.kind === "group" ? { kind: q.kind } : {}),
       unreadOnly: q.unread === "1",
@@ -726,7 +881,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
 
   app.get(`${base}/:channelId/threads/:threadId/messages`, async (req, reply) => {
     const { channelId, threadId } = req.params as { channelId: string; threadId: string };
-    if (!(await guard(req, reply, channelId))) return;
+    if (!(await guardThread(req, reply, channelId, threadId))) return;
     const q = req.query as { before?: string; limit?: string };
     const [thread, messages] = await Promise.all([
       getInboxThread(db, req.authCtx, channelId, threadId),
@@ -740,14 +895,14 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
 
   app.post(`${base}/:channelId/threads/:threadId/read`, async (req, reply) => {
     const { channelId, threadId } = req.params as { channelId: string; threadId: string };
-    if (!(await guard(req, reply, channelId))) return;
+    if (!(await guardThread(req, reply, channelId, threadId))) return;
     await markInboxThreadRead(db, req.authCtx, channelId, threadId);
     return { ok: true };
   });
 
   app.post(`${base}/:channelId/threads/:threadId/send`, async (req, reply) => {
     const { channelId, threadId } = req.params as { channelId: string; threadId: string };
-    if (!(await guard(req, reply, channelId))) return;
+    if (!(await guardThread(req, reply, channelId, threadId))) return;
     if (!isValidThreadId(kindOf(channelId), threadId)) return reply.code(400).send({ error: "Mã hội thoại không hợp lệ" });
     const parsed = SendBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Dữ liệu không hợp lệ" });
@@ -783,9 +938,14 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
   // Nhắn tin mới cho uid/SĐT chưa có trong danh sách
   app.post(`${base}/:channelId/new`, async (req, reply) => {
     const { channelId } = req.params as { channelId: string };
-    if (!(await guard(req, reply, channelId))) return;
+    const scope = await guard(req, reply, channelId);
+    if (!scope) return;
     const parsed = NewMessageBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Dữ liệu không hợp lệ" });
+    // Người chỉ được giao một số hội thoại: không tự mở hội thoại với người/nhóm chưa được giao, không tra theo SĐT
+    if (scope === "assigned" && (!parsed.data.to || !(await isAssignee(req, channelId, parsed.data.to)))) {
+      return reply.code(403).send({ error: "Người/nhóm này chưa được giao cho bạn — nhờ quản trị phân công trước.", code: "THREAD_NOT_ASSIGNED" });
+    }
     if (inboxRuntime(channelId) && !personalRuntime(channelId)) {
       return reply.code(400).send({ error: `${platformOf(channelId)} chỉ cho Trang trả lời người đã nhắn tới — không nhắn tin mới được.` });
     }
@@ -826,7 +986,9 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
 
   app.get(`${base}/:channelId/find-phone`, async (req, reply) => {
     const { channelId } = req.params as { channelId: string };
-    if (!(await guard(req, reply, channelId))) return;
+    const scope = await guard(req, reply, channelId);
+    if (!scope) return;
+    if (scope === "assigned") return reply.code(403).send({ error: "Bạn chỉ được trực các hội thoại được giao — không tra số điện thoại được." });
     const phone = String((req.query as { phone?: string }).phone ?? "").trim();
     if (!/^\+?\d{8,15}$/.test(phone)) return reply.code(400).send({ error: "Số điện thoại không hợp lệ" });
     const rt = personalRuntime(channelId);
@@ -837,7 +999,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
 
   app.put(`${base}/:channelId/threads/:threadId/ai`, async (req, reply) => {
     const { channelId, threadId } = req.params as { channelId: string; threadId: string };
-    if (!(await guard(req, reply, channelId))) return;
+    if (!(await guardThread(req, reply, channelId, threadId))) return;
     const parsed = AiBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Dữ liệu không hợp lệ" });
     const existing = await getInboxThread(db, req.authCtx, channelId, threadId);
@@ -846,8 +1008,10 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
       ...(parsed.data.resume ? { resume: true } : {}),
       kind: existing?.kind ?? "direct",
     });
-    if (thread) broadcast(req.authCtx.workspaceId, channelId, "thread", { channelId, thread });
-    return { thread };
+    if (!thread) return { thread };
+    const assignees = await assigneesOf(db, req.authCtx.workspaceId, channelId, threadId);
+    await emitThread(db, req.authCtx.workspaceId, channelId, threadId, "thread", { channelId, thread });
+    return { thread: { ...thread, assignees } };
   });
 
   // Đồng bộ danh bạ ngay (operator trở lên)
@@ -867,7 +1031,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
   // Nhân viên thả / gỡ cảm xúc vào tin trong Inbox
   app.post(`${base}/:channelId/threads/:threadId/messages/:messageId/react`, async (req, reply) => {
     const { channelId, threadId, messageId } = req.params as { channelId: string; threadId: string; messageId: string };
-    if (!(await guard(req, reply, channelId))) return;
+    if (!(await guardThread(req, reply, channelId, threadId))) return;
     const parsed = ReactBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Cảm xúc không hợp lệ" });
     try {
@@ -907,6 +1071,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     if (parsed.data.comments !== undefined) config["comments"] = parsed.data.comments;
     if (parsed.data.commentAiPublic !== undefined) config["comment_ai_public"] = parsed.data.commentAiPublic;
     if (parsed.data.commentAiPrivate !== undefined) config["comment_ai_private"] = parsed.data.commentAiPrivate;
+    if (parsed.data.autoAssign !== undefined) config["inbox_auto_assign"] = parsed.data.autoAssign;
     await updateChannel(db, req.authCtx, channelId, { config });
     const cfg = readInboxConfig(config, row.kind);
     // Đặt "số phút AI tạm im" về 0 = không tạm dừng nữa → gỡ luôn các lượt tạm dừng đang treo,
@@ -916,7 +1081,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
       if (cleared) broadcast(req.authCtx.workspaceId, channelId, "contacts", { channelId, count: cleared });
     }
     const st = inboxState.get(channelId);
-    if (st) Object.assign(st, { enabled: cfg.enabled, pauseMinutes: cfg.pauseMinutes });
+    if (st) Object.assign(st, { enabled: cfg.enabled, pauseMinutes: cfg.pauseMinutes, autoAssign: cfg.autoAssign });
     personalRuntime(channelId)?.setAutoReaction(cfg.autoReaction);
     const metaRt = channelHandlers.get(channelId)?.channel;
     if (metaRt instanceof MetaPageChannel) metaRt.updateOptions(config);
@@ -924,14 +1089,57 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; dataDi
     return cfg;
   });
 
+  // Nhân viên của kênh (để chọn khi phân công) — operator trở lên
+  app.get(`${base}/:channelId/staff`, async (req, reply) => {
+    const { channelId } = req.params as { channelId: string };
+    if (!hasRole(req.authCtx.role, "operator")) return reply.code(403).send({ error: "Cần quyền operator trở lên" });
+    if (!(await guard(req, reply, channelId))) return;
+    return { staff: await listInboxChannelStaff(db, req.authCtx, channelId) };
+  });
+
+  // Giao hội thoại cho nhân viên (một hoặc nhiều hội thoại) — operator trở lên.
+  // mode set: thay người được giao (userIds rỗng = bỏ phân công); add: giao thêm.
+  app.post(`${base}/:channelId/assign`, async (req, reply) => {
+    const { channelId } = req.params as { channelId: string };
+    if (!hasRole(req.authCtx.role, "operator")) return reply.code(403).send({ error: "Cần quyền operator trở lên" });
+    if (!(await guard(req, reply, channelId))) return;
+    const parsed = AssignBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Dữ liệu không hợp lệ" });
+    const { threadIds, userIds, mode } = parsed.data;
+    if (threadIds.some((t) => !isValidThreadId(kindOf(channelId), t))) return reply.code(400).send({ error: "Mã hội thoại không hợp lệ" });
+    if (mode === "add" && !userIds.length) return reply.code(400).send({ error: "Chọn ít nhất một nhân viên" });
+    const used = await setInboxThreadAssignees(db, req.authCtx, channelId, threadIds, userIds, mode);
+    if (userIds.length && !used.length) {
+      return reply.code(400).send({ error: "Nhân viên được chọn chưa được gán trực kênh này (Người dùng → Sửa → tick kênh)." });
+    }
+    forgetInboxAssignees(channelId, threadIds);
+    await recordAudit(db, req.authCtx, "inbox.assign", { channelId, threads: threadIds.length, userIds: used, mode });
+    broadcast(req.authCtx.workspaceId, channelId, "assign", { channelId, threadIds }, "all");
+    return { ok: true, userIds: used, threads: threadIds.length };
+  });
+
   // File/ảnh đã gửi (lưu trong workspace) — chỉ người trực kênh
   app.get(`${base}/:channelId/file`, async (req, reply) => {
     const { channelId } = req.params as { channelId: string };
-    if (!(await guard(req, reply, channelId))) return;
+    const scope = await guard(req, reply, channelId);
+    if (!scope) return;
     const p = String((req.query as { p?: string }).p ?? "");
     const ws = resolve(join(dataDir, req.authCtx.workspaceId));
     const abs = resolve(ws, p);
     if (!p || !abs.startsWith(ws + sep)) return reply.code(400).send({ error: "Đường dẫn không hợp lệ" });
+    // Nhân viên (member): chỉ tải được file gắn với một tin nhắn của kênh này — và nếu bị giới hạn
+    // thì tin đó phải thuộc hội thoại được giao. (Operator trở lên vốn xem được file của workspace.)
+    if (req.authCtx.role === "member") {
+      const threads = await inboxThreadsOfFile(db, req.authCtx, channelId, abs);
+      let ok = threads.length > 0 && scope === "all";
+      for (const t of scope === "assigned" ? threads : []) {
+        if (await isAssignee(req, channelId, t)) {
+          ok = true;
+          break;
+        }
+      }
+      if (!ok) return reply.code(404).send({ error: "Không tìm thấy file" });
+    }
     const st = await stat(abs).catch(() => null);
     if (!st?.isFile() || st.size > 50 * 1024 * 1024) return reply.code(404).send({ error: "Không tìm thấy file" });
     const buf = await readFile(abs);

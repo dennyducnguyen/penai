@@ -53,8 +53,11 @@ describe("Inbox — cấu hình + ảnh gửi đi", () => {
   it("readInboxConfig: mặc định bật lưu, tạm dừng 30 phút", () => {
     expect(readInboxConfig({})).toEqual({
       enabled: true, pauseMinutes: 30, mcpReadMessages: false, autoReaction: null, agentReply: true, photoAck: "short",
-      comments: true, commentAiPublic: true, commentAiPrivate: true,
+      comments: true, commentAiPublic: true, commentAiPrivate: true, autoAssign: false,
     });
+    // Chia tự động khách mới: mặc định tắt, chỉ bật khi đặt đúng true
+    expect(readInboxConfig({ inbox_auto_assign: true }).autoAssign).toBe(true);
+    expect(readInboxConfig({ inbox_auto_assign: "true" }).autoAssign).toBe(false);
     // Fanpage/Instagram: khách chỉ gửi ảnh → mặc định AI trả lời luôn; tắt từng kiểu trả lời bình luận
     expect(readInboxConfig({ comment_ai_private: false }, "facebook")).toMatchObject({ photoAck: "ai", commentAiPublic: true, commentAiPrivate: false });
     expect(readInboxConfig({ inbox: false, inbox_pause_minutes: 0 })).toMatchObject({ enabled: false, pauseMinutes: 0, mcpReadMessages: false });

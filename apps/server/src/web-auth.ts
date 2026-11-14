@@ -9,6 +9,7 @@
  * (allowlist fail-closed) — không phụ thuộc vào việc UI có ẩn menu hay không.
  */
 import { isInboxChannelKind } from "@penai/channels";
+import { dropInboxSseForUser } from "./inbox.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   ROLE_LABELS,
@@ -246,6 +247,11 @@ function requireRole(req: FastifyRequest, reply: FastifyReply, min: WorkspaceRol
   return true;
 }
 
+/** `{ "<channelId>": "all" | "assigned" }` từ body — giá trị lạ bị bỏ qua ở lớp DB. */
+function scopesOf(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}
+
 function isRole(v: unknown): v is WorkspaceRole {
   return typeof v === "string" && (WORKSPACE_ROLES as readonly string[]).includes(v);
 }
@@ -376,6 +382,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       users: users.map((u) => ({
         ...u,
         zaloChannelIds: zaloMembers.filter((m) => m.userId === u.id).map((m) => m.channelId),
+        // Kênh mà người này chỉ thấy hội thoại được giao (các kênh còn lại: thấy mọi hội thoại)
+        inboxAssignedChannelIds: zaloMembers.filter((m) => m.userId === u.id && m.scope === "assigned").map((m) => m.channelId),
       })),
       agents: agents.map((a) => ({ id: a.id, key: a.key, name: a.name })),
       zaloChannels: channels.filter((c) => isInboxChannelKind(c.kind)).map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
@@ -392,6 +400,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       role?: unknown;
       agentIds?: unknown;
       zaloChannelIds?: unknown;
+      inboxScopes?: unknown;
       mustChangePassword?: unknown;
     };
     if (!validEmail(b.email)) return reply.code(400).send({ error: "Email không hợp lệ" });
@@ -419,7 +428,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     }
     const zaloIds = Array.isArray(b.zaloChannelIds) ? b.zaloChannelIds.filter((x): x is string => typeof x === "string") : [];
     if (role === "member" && zaloIds.length) {
-      await setUserInboxChannels(db, req.authCtx, created.id, zaloIds);
+      await setUserInboxChannels(db, req.authCtx, created.id, zaloIds, scopesOf(b.inboxScopes));
     }
     await recordAudit(db, req.authCtx, "user.create", { userId: created.id, email: b.email, role });
     return reply.code(201).send({ id: created.id, reusedExisting: created.reusedExisting });
@@ -431,7 +440,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     if (!(await isWorkspaceMember(db, req.authCtx, id))) {
       return reply.code(404).send({ error: "Người dùng không thuộc workspace" });
     }
-    const b = (req.body ?? {}) as { name?: unknown; role?: unknown; isActive?: unknown; agentIds?: unknown; zaloChannelIds?: unknown };
+    const b = (req.body ?? {}) as { name?: unknown; role?: unknown; isActive?: unknown; agentIds?: unknown; zaloChannelIds?: unknown; inboxScopes?: unknown };
     const self = id === req.authCtx.userId;
     if (b.role !== undefined) {
       if (!isRole(b.role)) return reply.code(400).send({ error: "Role không hợp lệ" });
@@ -462,8 +471,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
         req.authCtx,
         id,
         b.zaloChannelIds.filter((x): x is string => typeof x === "string"),
+        scopesOf(b.inboxScopes),
       );
     }
+    // Quyền Inbox có thể vừa đổi (vai trò, khóa, kênh, phạm vi) → ngắt realtime để trình duyệt nối lại với quyền mới
+    dropInboxSseForUser(id);
     await recordAudit(db, req.authCtx, "user.update", {
       userId: id,
       ...(b.role !== undefined ? { role: b.role } : {}),
@@ -497,6 +509,9 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     const ok = await removeWorkspaceMember(db, req.authCtx, id);
     if (!ok) return reply.code(404).send({ error: "Người dùng không thuộc workspace" });
     await revokeAllWebSessions(db, id);
+    // Gỡ luôn quyền trực kênh: phân công hội thoại của người này hết hiệu lực, không còn được chia khách
+    await setUserInboxChannels(db, req.authCtx, id, []);
+    dropInboxSseForUser(id);
     await recordAudit(db, req.authCtx, "user.remove", { userId: id });
     return { removed: true };
   });

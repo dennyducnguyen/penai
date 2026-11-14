@@ -4,6 +4,16 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.22.0 — 2026-11-15
+
+- **Inbox — phân công hội thoại cho từng nhân viên** (Zalo cá nhân, WhatsApp cá nhân, Fanpage, Instagram). Người dùng → Sửa nhân viên → cạnh mỗi kênh chọn **Tất cả hội thoại** (mặc định, như trước nay) hoặc **Chỉ hội thoại được giao**. Nhân viên ở chế độ sau chỉ thấy, tìm, đọc và trả lời được khách / nhóm chat được giao cho mình. Quản trị và Vận hành vẫn thấy tất cả. Doanh nghiệp không cần phân quyền thì không phải làm gì.
+- **Giao hội thoại**: trong Inbox, nút **👥 Phân công** ở từng hội thoại, hoặc nút **👥 Phân công** trên thanh công cụ để tick nhiều hội thoại rồi giao một lượt. Một hội thoại giao được cho nhiều người. Ô lọc có thêm **Chưa phân công**; tên người phụ trách hiện trong danh sách.
+- **Chia tự động khách mới (xoay vòng)**: Inbox → ⚙️ Cài đặt → **Tự chia khách mới cho nhân viên** — **mặc định TẮT** (giao tay). Bật thì khách nhắn riêng mà chưa ai phụ trách được chia lần lượt cho các nhân viên ở chế độ "Chỉ hội thoại được giao" của kênh. Nhóm chat và bình luận bài viết vẫn giao tay.
+- Nhân viên ở chế độ "Chỉ hội thoại được giao" không dùng kênh đó qua MCP (Claude/ChatGPT kết nối ngoài), không nhắn tin mới cho người chưa được giao, không tra số điện thoại.
+- **Chặt hơn về file**: Thành viên chỉ tải được file / ảnh gắn với tin nhắn của kênh mình trực.
+- **Sửa lỗi**: gán kênh Fanpage / Instagram cho Thành viên ở trang Người dùng trước đây không được lưu — nay đã lưu.
+
+Hướng dẫn: [docs/inbox-phan-cong.md](docs/inbox-phan-cong.md). Cập nhật: `sudo penai update`. Có migration nhỏ (thêm một cột và một bảng), không phải làm gì thêm.
 ## 1.21.1 — 2026-11-15
 
 - **Đăng nhập Google Antigravity — sửa lỗi "Invalid code verifier"**: trước đây link đăng nhập chỉ sống 60 giây; đăng nhập Google lâu hơn (chọn tài khoản, xác minh 2 bước) là phiên chết, bấm Đăng nhập lại rồi dán mã lấy từ tab Google cũ thì bị từ chối. Nay link dùng được **5 phút**, trang Providers **đếm ngược** thời gian còn lại, hết hạn hoặc dán mã hỏng thì có ngay nút **Lấy link mới** (không phải tải lại trang) và báo lỗi bằng lời dễ hiểu. Dán nguyên link có `?code=…` cũng được.

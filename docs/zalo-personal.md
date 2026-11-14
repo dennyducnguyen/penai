@@ -91,7 +91,7 @@ Dashboard → **📥 Inbox Zalo**.
 | Vai trò | Quyền |
 |---|---|
 | Quản trị, Vận hành | Mọi kênh Zalo của workspace |
-| Thành viên | Chỉ kênh được gán: Người dùng → Sửa → tick **"Kênh Zalo được trực"** |
+| Thành viên | Chỉ kênh được gán: Người dùng → Sửa → tick **"Kênh Zalo được trực"**. Từ 1.22.0 có thể giới hạn tiếp xuống **chỉ khách / nhóm được giao** — xem [inbox-phan-cong.md](inbox-phan-cong.md) |
 | Chỉ xem | Không |
 
 ---
