@@ -130,6 +130,10 @@ describe("Inbox — giao hội thoại", () => {
     expect(await setInboxThreadAssignees(dbh.db, ctxA(), ch, ["3003"], [fx.userId], "add")).toEqual([]);
     expect(await listInboxThreadAssignees(dbh.db, ctxA(), ch, "3003")).toEqual([]);
 
+    // "Thay người phụ trách" bằng người không hợp lệ → giữ nguyên người cũ
+    expect(await setInboxThreadAssignees(dbh.db, ctxA(), ch, ["3001"], [fx.userId], "set")).toEqual([]);
+    expect((await listInboxThreadAssignees(dbh.db, ctxA(), ch, "3001")).map((a) => a.name)).toEqual(["Minh"]);
+
     await setInboxThreadAssignees(dbh.db, ctxA(), ch, ["3001", "3002"], [], "set");
     expect((await listInboxThreads(dbh.db, ctxA(), ch, { unassignedOnly: true })).total).toBe(4);
   });
