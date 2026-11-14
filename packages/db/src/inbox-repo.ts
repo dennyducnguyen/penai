@@ -780,6 +780,8 @@ export async function setInboxThreadAssignees(
           ).rows as Raw[]
         ).map((r) => String(r.user_id))
       : [];
+    // Chọn người nhưng không ai hợp lệ → không đổi gì (không xóa người đang phụ trách)
+    if (wanted.length && !valid.length) return [];
     const threadList = sql.join(threads.map((t) => sql`${t}`), sql`, `);
     if (mode === "set") {
       await tx.execute(sql`DELETE FROM inbox_thread_members WHERE channel_id = ${channelId} AND thread_id IN (${threadList})`);
