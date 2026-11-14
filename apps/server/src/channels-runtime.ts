@@ -40,7 +40,7 @@ import {
   type RunHooks,
 } from "@penai/channels";
 import { forgetInboxChannel, inboxHooks } from "./inbox.js";
-import { isInboxChannelKind, isMetaChannelKind, isPersonalChannelKind } from "@penai/channels";
+import { isInboxChannelKind, isMetaChannelKind, isPersonalChannelKind, pairingGateApplies } from "@penai/channels";
 import { PhotoBurst, readPhotoAcknowledgement } from "./photo-burst.js";
 
 /** Handler + channel theo channelId — cho webhook route (WhatsApp, Teams) dùng. */
@@ -640,8 +640,10 @@ export function makeInboundHandler(
       (logger.warn(`upsertContact (pre-pairing) lỗi: ${(err as Error).message}`), undefined),
     );
 
-    // Gate pairing (fail-closed): DM lạ chưa duyệt → cấp mã, chờ admin duyệt
-    if (channel.requirePairing) {
+    // Gate pairing (fail-closed): DM lạ chưa duyệt → cấp mã, chờ admin duyệt.
+    // Kênh Zalo/WhatsApp cá nhân không qua cổng này: tin tới được đây nghĩa là
+    // thread đã được duyệt ở "Danh sách chờ duyệt" của kênh — duyệt một lần là đủ.
+    if (pairingGateApplies(channel.kind, channel.requirePairing)) {
       const paired = await isPaired(db, ctx, channel.id, msg.senderId);
       if (!paired) {
         // Người lạ nhắn liên tục: không tạo mã mới mỗi tin (phình bảng

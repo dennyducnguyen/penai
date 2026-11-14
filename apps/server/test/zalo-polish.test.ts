@@ -70,6 +70,15 @@ describe("Zalo photo-only runtime", () => {
     expect(await readdir(join(dir, fx.wsA, "users", "zalo_personal-photos"))).not.toHaveLength(0);
     expect(await handler(inbound())).toEqual({ kind: "reply", text: "Đã nhận hình ạ." });
   });
+  it("kênh bật yêu cầu pairing: thread đã duyệt được AI trả lời luôn, không cấp mã pairing (duyệt một lần)", async () => {
+    const handler = makeInboundHandler(rt, new Scheduler(), { ...channel, requirePairing: true });
+    requests.length = 0;
+    const result = await handler(inbound("nguoi-moi", "Chào shop", false));
+    expect(result.kind).toBe("reply");
+    expect(requests.length).toBeGreaterThan(0);
+    const pending = await app.inject({ method: "GET", url: "/v1/channel-pairings/pending", headers: auth() });
+    expect(pending.json().pending.filter((p: { channelId: string }) => p.channelId === channel.id)).toHaveLength(0);
+  });
   it("processes a photo with a caption and supports changing acknowledgement to silence without reconnecting", async () => {
     const handler = makeInboundHandler(rt, new Scheduler(), channel);
     requests.length = 0;

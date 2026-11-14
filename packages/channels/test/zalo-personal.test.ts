@@ -290,3 +290,13 @@ describe("Zalo Personal inbound media", () => {
     expect(parseZaloAttachmentParams(undefined)).toEqual({});
   });
 });
+
+describe("pairingGateApplies", () => {
+  it("kênh Zalo/WhatsApp cá nhân không qua cổng pairing — duyệt thread là đủ", async () => {
+    const { pairingGateApplies } = await import("../src/personal.js");
+    expect(pairingGateApplies("zalo_personal", true)).toBe(false);
+    expect(pairingGateApplies("whatsapp_personal", true)).toBe(false);
+    expect(pairingGateApplies("telegram", true)).toBe(true);
+    expect(pairingGateApplies("telegram", false)).toBe(false);
+  });
+});
