@@ -173,6 +173,13 @@ async function queryOverview(db: Db, ctx: WorkspaceContext, contactId: string | 
              CASE
                WHEN c.channel_id IS NULL THEN 'khong_ro'
                WHEN ch.require_pairing = false THEN 'khong_can'
+               -- Zalo/WhatsApp cá nhân: không có pairing — "đã duyệt" = thread nằm trong danh sách được phép
+               WHEN ch.kind IN ('zalo_personal', 'whatsapp_personal') THEN
+                 CASE WHEN jsonb_exists(
+                        CASE WHEN jsonb_typeof(ch.config->'demo_threads') = 'array'
+                             THEN ch.config->'demo_threads' ELSE '[]'::jsonb END,
+                        COALESCE(c.metadata->>'peer_kind', c.metadata->>'zalo_kind', 'direct') || ':' || c.external_id)
+                      THEN 'da_duyet' ELSE 'chua_duyet' END
                WHEN EXISTS (
                  SELECT 1 FROM channel_pairings p
                  WHERE p.channel_id = c.channel_id AND p.external_user_id = c.external_id

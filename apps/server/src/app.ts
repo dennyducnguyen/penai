@@ -2039,7 +2039,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return {
       pending: rows.flatMap((pairing) => {
         const channel = channelById.get(pairing.channelId);
-        if (!channel) return [];
+        if (!channel || isPersonalChannelKind(channel.kind)) return [];
         return [{
           channelId: pairing.channelId,
           channelName: channel.name,
@@ -2065,7 +2065,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const nameOf = await pairingDisplayNames(req.authCtx, [{ id, kind: row.kind }]);
     return {
       pending: rows
-        .filter((p) => p.channelId === id)
+        .filter((p) => p.channelId === id && !isPersonalChannelKind(row.kind))
         .map((p) => ({
           code: p.code,
           externalUserId: p.externalUserId,
@@ -2821,14 +2821,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       // Luồng dán code: CLI in URL OAuth, người dùng đăng nhập rồi dán
       // authorization code vào POST .../login/code.
       try {
-        const { url } = await provider.startLogin();
+        const started = await provider.startLogin();
         return {
-          authorizeUrl: url,
+          authorizeUrl: started.url,
+          // Antigravity: link chỉ đi với đúng phiên đang chờ — UI đếm ngược hạn này
+          ...("expiresInSec" in started ? { expiresInSec: started.expiresInSec } : {}),
           mode: "paste_code",
           note:
             provider instanceof ClaudeCodeProvider
               ? "Mở link, đăng nhập tài khoản Claude (Max), copy authorization code rồi dán vào ô bên dưới."
-              : "Mở link, đăng nhập Google có gói Antigravity, copy authorization code rồi dán vào ô bên dưới trong ~60 giây.",
+              : "Mở link, đăng nhập Google có gói Antigravity, copy authorization code rồi dán vào ô bên dưới trong 5 phút. Mỗi lần lấy link mới thì link cũ hết dùng được.",
         };
       } catch (err) {
         return reply.code(500).send({ error: (err as Error).message });

@@ -17,6 +17,16 @@ export function isPersonalChannelKind(kind: string): kind is PersonalChannelKind
   return (PERSONAL_CHANNEL_KINDS as readonly string[]).includes(kind);
 }
 
+/**
+ * Kênh có áp cổng pairing (cấp mã, chờ quản trị viên duyệt từng người) không.
+ * Kênh tài khoản cá nhân (Zalo, WhatsApp) KHÔNG áp: adapter chỉ chuyển tin của
+ * thread quản trị viên đã duyệt trong "Danh sách chờ duyệt" (hoặc mọi tin riêng
+ * khi kênh tắt "yêu cầu pairing") — duyệt thread là đủ, không bắt duyệt lần hai.
+ */
+export function pairingGateApplies(kind: string, requirePairing: boolean): boolean {
+  return requirePairing && !isPersonalChannelKind(kind);
+}
+
 /** Tên nền tảng để hiện cho người dùng. */
 export const PERSONAL_PLATFORM_LABEL: Record<PersonalChannelKind, string> = {
   zalo_personal: "Zalo",
