@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -67,13 +67,63 @@ function isAuthError(text: string): boolean {
   return AUTH_ERROR_RE.test(text);
 }
 
+/** Phiên đăng nhập đang chờ người dùng dán mã (một tiến trình `agy` tương tác). */
+interface LoginSession {
+  child: ChildProcessWithoutNullStreams;
+  /** Toàn bộ output thô của tiến trình (có mã điều khiển terminal). */
+  raw: string;
+  expiresAt: number;
+  ttlTimer: ReturnType<typeof setTimeout>;
+  submitting: boolean;
+  exited: boolean;
+}
+
+/** Một link đăng nhập dùng được trong bao lâu (tiến trình `agy` ~270 MB chờ suốt thời gian này). */
+export const ANTIGRAVITY_LOGIN_TTL_MS = 5 * 60_000;
+
+const ANSI_RE = /\x1b\[[0-9;?$>]*[a-zA-Z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[=>()][0-9A-B]?/g;
+
+/** Output màn hình terminal → chữ thường một dòng (bỏ mã điều khiển, gộp khoảng trắng). */
+export function plainTerminalText(raw: string): string {
+  return raw.replace(ANSI_RE, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Người dùng có thể dán nguyên link trang hiện mã (…?code=4/0A…&state=…) thay vì
+ * chỉ mã — lấy đúng phần mã; bỏ khoảng trắng/xuống dòng lẫn vào khi copy.
+ */
+export function normalizeAuthCode(input: string): string {
+  const s = input.trim();
+  const m = /[?&]code=([^&#\s]+)/.exec(s);
+  if (m) {
+    try {
+      return decodeURIComponent(m[1]!);
+    } catch {
+      return m[1]!;
+    }
+  }
+  return s.replace(/\s+/g, "");
+}
+
+/** Diễn giải lỗi `agy` báo sau khi dán mã thành hướng dẫn cho người dùng. */
+export function explainLoginError(detail: string): string {
+  const again = "Bấm «Lấy link mới», đóng các tab Google cũ, đăng nhập lại bằng link mới rồi dán mã.";
+  if (/invalid code verifier/i.test(detail)) {
+    return `Mã này lấy từ một link đăng nhập khác (link cũ) nên Google từ chối. ${again}`;
+  }
+  if (/invalid_grant|bad request|malformed/i.test(detail)) {
+    return `Mã không đúng, đã dùng rồi hoặc đã hết hạn. ${again}`;
+  }
+  return `Đăng nhập chưa thành công (${detail.slice(0, 200) || "không rõ lỗi"}). ${again}`;
+}
+
 export class AntigravityProvider implements Provider {
   private scratchDir: string;
   private schemaFile: string;
   private authState: AntigravityAuthState = "unknown";
   private authCheckedAt = 0;
-  private loginChild: ChildProcessWithoutNullStreams | null = null;
-  private loginBuffer = "";
+  private authCheckInFlight: Promise<AntigravityAuthState> | null = null;
+  private login: LoginSession | null = null;
 
   constructor(
     readonly name: string,
@@ -105,108 +155,202 @@ export class AntigravityProvider implements Provider {
     if (!force && this.authState !== "unknown" && Date.now() - this.authCheckedAt < 60_000) {
       return this.authState;
     }
-    if (this.authState === "awaiting_code" && this.loginChild) return this.authState;
+    // Đang chờ người dùng dán mã: không chạy thêm `agy` (mỗi tiến trình ~200 MB).
+    if (this.authState === "awaiting_code" && this.login) return this.authState;
+    // Gộp các lần kiểm tra trùng nhau: Dashboard hỏi /v1/providers mỗi 3 giây —
+    // không để nhiều tiến trình `agy models` chạy song song.
+    if (this.authCheckInFlight) return this.authCheckInFlight;
+    this.authCheckInFlight = (async () => {
+      try {
+        await this.listModels();
+        this.authState = "ok";
+      } catch (err) {
+        // listModels đã tự đặt "needs_login" khi CLI báo chưa đăng nhập — giữ nguyên.
+        // Trước đây chỗ này hạ về "unknown" (không được cache) nên khi chưa đăng nhập,
+        // MỖI lần Dashboard hỏi lại sinh một tiến trình `agy models`.
+        if (this.authState !== "needs_login") {
+          this.authState = isAuthError((err as Error).message)
+            ? "needs_login"
+            : this.authState === "ok"
+              ? "ok"
+              : "unknown";
+        }
+      }
+      this.authCheckedAt = Date.now();
+      return this.authState;
+    })().finally(() => {
+      this.authCheckInFlight = null;
+    });
+    return this.authCheckInFlight;
+  }
+
+  /** File token `agy` ghi khi đăng nhập xong — dấu hiệu thành công không tốn tiến trình. */
+  private tokenMtime(): number {
     try {
-      await this.listModels();
-      this.authState = "ok";
-    } catch (err) {
-      this.authState = isAuthError((err as Error).message) ? "needs_login" : this.authState === "ok" ? "ok" : "unknown";
+      return statSync(path.join(agyDataDir(), "antigravity-oauth-token")).mtimeMs;
+    } catch {
+      return 0;
     }
-    this.authCheckedAt = Date.now();
-    return this.authState;
+  }
+
+  /** Kết thúc phiên đăng nhập đang chờ (nếu có) và giải phóng tiến trình. */
+  private endLogin(session: LoginSession | null = this.login): void {
+    if (!session) return;
+    clearTimeout(session.ttlTimer);
+    if (!session.exited) session.child.kill();
+    if (this.login === session) {
+      this.login = null;
+      if (this.authState === "awaiting_code") {
+        this.authState = "needs_login";
+        this.authCheckedAt = Date.now();
+      }
+    }
   }
 
   /**
-   * Bắt đầu đăng nhập: spawn agy chế độ print (chưa auth → in URL OAuth và chờ
-   * code qua stdin). Trả URL cho UI; giữ process chờ submitCode().
-   * Lưu ý CLI chỉ chờ ~60 giây — quá hạn thì bấm đăng nhập lại (URL mới).
+   * Bắt đầu đăng nhập: chạy `agy` chế độ TƯƠNG TÁC dưới PTY giả, chọn "Google
+   * OAuth", lấy link cho UI rồi giữ tiến trình chờ submitCode().
+   *
+   * Vì sao không dùng chế độ print (`agy -p`) như trước: print chỉ chờ mã đúng 60
+   * giây rồi thoát (đo 15/11/2026 với agy 1.5.9, `--print-timeout` không kéo dài
+   * được). Đăng nhập Google có xác minh 2 bước thường lâu hơn → phiên chết, người
+   * dùng bấm Đăng nhập lần nữa (link + mã bí mật PKCE mới) rồi dán mã lấy từ tab
+   * Google cũ → Google trả "Invalid code verifier". Màn hình đăng nhập tương tác
+   * không có hạn này (đo: vẫn nhận mã sau hơn 3 phút).
    */
-  async startLogin(): Promise<{ url: string }> {
-    if (this.loginChild) {
-      this.loginChild.kill();
-      this.loginChild = null;
+  async startLogin(): Promise<{ url: string; expiresInSec: number }> {
+    this.endLogin();
+    // Đã đăng nhập sẵn thì màn hình tương tác không hiện link — kiểm tra trước.
+    if ((await this.checkAuth(true)) === "ok") {
+      throw new Error("Provider đã đăng nhập sẵn — không cần đăng nhập lại");
     }
-    this.loginBuffer = "";
-    const loginArgs = ["-p", "ok", "--output-format", "json", "--model", "gemini-3.5-flash-low"];
-    // agy treo nếu stdin là pipe thường — trên Linux bọc qua `script` để cấp PTY
-    // giả (in URL ngay, vẫn ghi được code qua stdin). Windows dev: spawn thẳng.
+    this.endLogin(); // một lần bấm khác có thể đã mở phiên trong lúc chờ kiểm tra
+    // `script` cấp PTY giả (agy cần terminal thật). stty cols rộng: link ~700 ký tự
+    // phải nằm trên MỘT dòng, không bị ngắt giữa chừng. Windows (máy dev) không có
+    // `script` — chạy thẳng, có thể không lấy được link.
     const child =
       process.platform === "win32"
-        ? spawn(this.command, loginArgs, {
-            cwd: this.scratchDir,
-            env: process.env,
-            windowsHide: true,
-          })
+        ? spawn(this.command, [], { cwd: this.scratchDir, env: process.env, windowsHide: true })
         : spawn(
             "script",
-            ["-qec", [this.command, ...loginArgs].map(shellQuote).join(" "), "/dev/null"],
+            ["-qec", `stty cols 1000 rows 50 2>/dev/null; ${shellQuote(this.command)}`, "/dev/null"],
             { cwd: this.scratchDir, env: { ...process.env, TERM: "xterm" } },
           );
-    this.loginChild = child;
+    const session: LoginSession = {
+      child,
+      raw: "",
+      expiresAt: Date.now() + ANTIGRAVITY_LOGIN_TTL_MS,
+      ttlTimer: setTimeout(() => this.endLogin(session), ANTIGRAVITY_LOGIN_TTL_MS),
+      submitting: false,
+      exited: false,
+    };
+    this.login = session;
+    child.stdin.on("error", () => {});
     child.on("exit", () => {
-      if (this.loginChild === child) {
-        this.loginChild = null;
-        if (this.authState === "awaiting_code") {
-          // Có thể đã hoàn tất qua trình duyệt (CLI tự poll) — xác minh lại.
-          this.authState = "unknown";
-          void this.checkAuth(true).catch(() => {});
-        }
-      }
+      session.exited = true;
+      this.endLogin(session);
     });
-    const url = await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        child.kill();
-        reject(new Error("agy không in URL đăng nhập trong 20s — thử lại"));
-      }, 20_000);
-      const onData = (chunk: Buffer) => {
-        this.loginBuffer += chunk.toString("utf8");
-        const m = AUTH_URL_RE.exec(this.loginBuffer);
-        if (m) {
+    try {
+      const url = await new Promise<string>((resolve, reject) => {
+        let choseOAuth = false;
+        const fail = (err: Error) => {
           clearTimeout(timer);
-          resolve(m[0]);
-        } else if (/"status"\s*:\s*"SUCCESS"/.test(this.loginBuffer)) {
-          // đã đăng nhập sẵn từ trước — không cần URL
-          clearTimeout(timer);
-          child.kill();
-          this.loginChild = null;
-          this.authState = "ok";
-          reject(new Error("Provider đã đăng nhập sẵn — không cần đăng nhập lại"));
-        }
-      };
-      child.stdout.on("data", onData);
-      child.stderr.on("data", onData);
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        reject(new Error(`Không chạy được ${this.command}: ${err.message}`));
+          reject(err);
+        };
+        const timer = setTimeout(() => {
+          const tail = plainTerminalText(session.raw).slice(-300);
+          fail(new Error(`agy không hiện link đăng nhập trong 25s${tail ? ` (màn hình: ${tail})` : ""} — thử lại`));
+        }, 25_000);
+        const onData = (chunk: Buffer) => {
+          session.raw += chunk.toString("utf8");
+          // Link đã in trọn khi sau nó có ký tự khác (xuống dòng / mã điều khiển)
+          const m = AUTH_URL_RE.exec(session.raw);
+          if (m && m.index + m[0].length < session.raw.length) {
+            clearTimeout(timer);
+            resolve(m[0]);
+            return;
+          }
+          // Màn hình đầu: "Select login method: > 1. Google OAuth" — Enter chọn mục 1
+          if (!choseOAuth && /Select login method/i.test(plainTerminalText(session.raw))) {
+            choseOAuth = true;
+            setTimeout(() => child.stdin.write("\r"), 300);
+          }
+        };
+        child.stdout.on("data", onData);
+        child.stderr.on("data", onData);
+        child.on("error", (err) => fail(new Error(`Không chạy được ${this.command}: ${err.message}`)));
+        child.on("exit", () => fail(new Error("agy thoát trước khi hiện link đăng nhập — thử lại")));
       });
-    });
-    this.authState = "awaiting_code";
-    return { url };
+      this.authState = "awaiting_code";
+      return { url, expiresInSec: Math.max(1, Math.round((session.expiresAt - Date.now()) / 1000)) };
+    } catch (err) {
+      this.endLogin(session);
+      throw err;
+    }
   }
 
-  /** Dán authorization code từ trình duyệt vào stdin của phiên đăng nhập đang chờ. */
-  async submitCode(code: string): Promise<{ ok: boolean; message: string }> {
-    const child = this.loginChild;
-    if (!child) {
-      return { ok: false, message: "Không có phiên đăng nhập đang chờ — bấm Đăng nhập lại (URL hết hạn sau ~60 giây)" };
+  /** Dán authorization code từ trình duyệt vào phiên đăng nhập đang chờ. */
+  async submitCode(input: string): Promise<{ ok: boolean; message: string }> {
+    const session = this.login;
+    if (!session || session.exited) {
+      return {
+        ok: false,
+        message:
+          "Link đăng nhập đã hết hạn nên mã này không dùng được nữa. Bấm «Lấy link mới», " +
+          "đóng các tab Google cũ, đăng nhập lại bằng link mới rồi dán mã.",
+      };
     }
-    child.stdin.write(code.trim() + "\n");
-    const exited = await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => resolve(false), 90_000);
-      child.on("exit", () => {
-        clearTimeout(timer);
-        resolve(true);
+    if (session.submitting) return { ok: false, message: "Đang xác thực mã vừa dán — chờ vài giây" };
+    const code = normalizeAuthCode(input);
+    if (!code) return { ok: false, message: "Mã trống — copy lại mã trên trang Google vừa đăng nhập" };
+    session.submitting = true;
+    const mark = session.raw.length;
+    const tokenBefore = this.tokenMtime();
+    session.child.stdin.write(code + "\r");
+    // Chờ một trong ba: agy báo lỗi trên màn hình, file token được ghi, tiến trình thoát.
+    const outcome = await new Promise<{ kind: "error"; detail: string } | { kind: "token" | "exit" | "timeout" }>(
+      (resolve) => {
+        const started = Date.now();
+        const timer = setInterval(() => {
+          const text = plainTerminalText(session.raw.slice(mark));
+          const err = /Got an error:\s*(.*?)(?:\s*Press any key|$)/i.exec(text);
+          if (err) return finish({ kind: "error", detail: err[1]!.trim() });
+          if (this.tokenMtime() > tokenBefore) return finish({ kind: "token" });
+          if (session.exited) return finish({ kind: "exit" });
+          if (Date.now() - started > 30_000) return finish({ kind: "timeout" });
+        }, 300);
+        const finish = (o: { kind: "error"; detail: string } | { kind: "token" | "exit" | "timeout" }) => {
+          clearInterval(timer);
+          resolve(o);
+        };
+      },
+    );
+    // Mã đã dùng (đúng hay sai) thì link này hết giá trị: sau lỗi agy sinh link +
+    // mã bí mật mới. Đóng tiến trình TRƯỚC khi kiểm tra để không chồng RAM.
+    if (outcome.kind === "token") await new Promise((r) => setTimeout(r, 1_500));
+    this.endLogin(session);
+    if (!session.exited) {
+      await new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, 4_000);
+        session.child.once("exit", () => {
+          clearTimeout(t);
+          resolve();
+        });
       });
-    });
-    this.loginChild = null;
-    if (!exited) {
-      child.kill();
-      return { ok: false, message: "Đăng nhập không phản hồi sau 90s — thử lại" };
+    }
+    if (outcome.kind === "error") {
+      this.authState = "needs_login";
+      this.authCheckedAt = Date.now();
+      return { ok: false, message: explainLoginError(outcome.detail) };
     }
     const state = await this.checkAuth(true);
     if (state === "ok") return { ok: true, message: "Đăng nhập thành công" };
-    const tail = this.loginBuffer.slice(-400).replace(/\s+/g, " ").trim();
-    return { ok: false, message: `Đăng nhập chưa thành công (${tail || "không rõ lỗi"})` };
+    return {
+      ok: false,
+      message:
+        "Đã gửi mã nhưng chưa thấy đăng nhập thành công. Bấm «Lấy link mới», đóng các tab Google cũ, " +
+        "đăng nhập lại bằng link mới rồi dán mã.",
+    };
   }
 
   // ===== Models =====

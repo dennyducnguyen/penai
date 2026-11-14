@@ -1043,21 +1043,45 @@ export const INDEX_HTML = `<!doctype html>
         if (old) old.remove();
         f.className = "pv-login-flow";
         container.appendChild(f);
+        var input = f.querySelector(".pv-code"), submit = f.querySelector(".pv-code-btn"), msg = f.querySelector(".pv-code-msg");
+        var busy = false, done = false;
+        // Mỗi link chỉ đi với đúng phiên đang chờ trên server: hiện rõ hạn của link,
+        // hết hạn thì mở lại nút để lấy link mới (mã lấy từ link cũ sẽ bị từ chối).
+        // Provider không báo hạn (Claude): giữ cách cũ — ngừng tự kiểm tra sau 4 phút, ô dán vẫn dùng được
+        var hasTtl = Number(r.expiresInSec) > 0, deadline = Date.now() + (hasTtl ? Number(r.expiresInSec) : 240) * 1000;
+        var left = el("div", { "class": "muted", style: "font-size:.78rem;margin-top:6px" });
+        f.appendChild(left);
+        function stop() { done = true; clearInterval(poll); clearInterval(tick); }
+        function reopen(text) { btn.disabled = false; btn.textContent = text || oldText; }
+        var tick = setInterval(function () {
+          if (!f.isConnected) { stop(); return; }
+          var s = Math.round((deadline - Date.now()) / 1000);
+          if (!hasTtl) { if (s <= 0) clearInterval(poll); return; }
+          if (s > 0) { left.textContent = "Link này còn dùng được " + Math.floor(s / 60) + " phút " + (s % 60) + " giây. Chỉ dán mã lấy từ đúng link này."; return; }
+          if (busy) return;
+          stop(); submit.disabled = true; input.disabled = true;
+          left.innerHTML = '<span class="err">Link đã hết hạn — bấm «Lấy link mới», đóng tab Google cũ rồi đăng nhập lại bằng link mới.</span>';
+          reopen("Lấy link mới");
+        }, 1000);
         var poll = setInterval(function () {
           api("/v1/providers").then(function (jj) {
             var cur = jj.providers.find(function (x) { return x.name === p.name; });
-            if (cur && cur.loggedIn) { clearInterval(poll); toast(label + ": đăng nhập thành công"); PAGES.providers(); }
+            if (cur && cur.loggedIn && !done) { stop(); toast(label + ": đăng nhập thành công"); PAGES.providers(); }
           }).catch(function () {});
         }, 3000);
-        setTimeout(function () { clearInterval(poll); }, 240000);
-        var input = f.querySelector(".pv-code"), submit = f.querySelector(".pv-code-btn"), msg = f.querySelector(".pv-code-msg");
         submit.onclick = function () {
           var codeVal = input.value.trim();
+          if (busy || done) return;
           if (!codeVal) { msg.innerHTML = '<span class="err">Hãy dán code</span>'; return; }
-          submit.disabled = true; msg.textContent = "Đang xác thực...";
+          busy = true; submit.disabled = true; msg.textContent = "Đang xác thực...";
           api("/v1/providers/" + p.name + "/login/code", { method: "POST", body: { code: codeVal } })
-            .then(function () { clearInterval(poll); toast(label + ": đăng nhập thành công"); PAGES.providers(); })
-            .catch(function (e) { submit.disabled = false; msg.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; });
+            .then(function () { stop(); toast(label + ": đăng nhập thành công"); PAGES.providers(); })
+            .catch(function (e) {
+              busy = false; submit.disabled = false;
+              msg.innerHTML = '<span class="err">' + esc(e.message) + "</span>";
+              // Luôn cho lấy link mới ngay, không phải tải lại trang
+              reopen("Lấy link mới");
+            });
         };
         input.onkeydown = function (ev) { if (ev.key === "Enter") submit.onclick(); };
       }).catch(function (e) {
@@ -1701,7 +1725,7 @@ export const INDEX_HTML = `<!doctype html>
     dlg.innerHTML = '<h3 style="margin:0 0 8px">Kết nối ' + P + ' cá nhân — ' + esc(ch.name) + '</h3>' +
       '<div class="muted" style="margin-bottom:10px">' + (isWa
         ? "Kết nối không chính thức, PenAI là một «thiết bị đã liên kết» của tài khoản WhatsApp — điện thoại vẫn dùng bình thường. WhatsApp có thể giới hạn hoặc khóa số gửi dồn cho người lạ; nên dùng số dành riêng."
-        : "Tích hợp dùng zca-js/API không chính thức; không mở Zalo Web bằng cùng tài khoản trong lúc hệ thống đang lắng nghe.") + '<br><b>Chế độ an toàn luôn bật:</b> sau đăng nhập bot chỉ QUAN SÁT — ghi nhận ai/nhóm nhắn tới (tên, id), không trả lời, không tự gửi tin. Chỉ thread được chỉ định demo bên dưới mới được nhận/gửi. Ngoại lệ: nếu kênh <b>tắt "yêu cầu pairing"</b> thì mọi tin nhắn RIÊNG (DM) được trả lời liền — nhóm vẫn phải chỉ định demo.</div>' +
+        : "Tích hợp dùng zca-js/API không chính thức; không mở Zalo Web bằng cùng tài khoản trong lúc hệ thống đang lắng nghe.") + '<br><b>Chế độ an toàn luôn bật:</b> sau đăng nhập bot chỉ QUAN SÁT — ghi nhận ai/nhóm nhắn tới (tên, id), không trả lời, không tự gửi tin. Chỉ thread được chỉ định demo bên dưới mới được nhận/gửi — <b>duyệt một lần ở đây là AI trả lời luôn</b>, không cần duyệt pairing thêm. Ngoại lệ: nếu kênh <b>tắt "yêu cầu pairing"</b> thì mọi tin nhắn RIÊNG (DM) được trả lời liền — nhóm vẫn phải chỉ định demo.</div>' +
       '<div id="zpState" class="muted">Đang kiểm tra...</div>' +
       '<div id="zpQr" style="text-align:center;margin:12px 0"></div>' +
       '<div class="row"><button id="zpLogin">Tạo mã QR</button><button class="ghost" id="zpLogout" style="display:none">Ngắt kết nối</button><button class="ghost" id="zpClose">Đóng</button></div>' +

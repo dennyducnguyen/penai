@@ -37,7 +37,7 @@ Giống Zalo cá nhân — tài khoản có thể là số đang dùng thật n�
 - Mọi tin đến/đi được lưu vào Inbox (tắt được), nhưng agent **không tự trả lời** ai.
 - Agent chỉ tự trả lời trong hội thoại được chỉ định: Channels → **Kết nối QR** → mục *Danh sách chờ duyệt* → **Chỉ định demo**; hoặc **mọi tin riêng** nếu kênh bỏ tick **"Yêu cầu pairing"** (nhóm vẫn phải chỉ định).
 - Trong nhóm được phép, agent chỉ trả lời khi được **@nhắc**, **trả lời vào tin của mình**, hoặc tin bắt đầu bằng `/`. Muốn trả lời mọi tin trong nhóm: `config.require_mention = false`.
-- Người lạ nhắn khi pairing đang bật: agent im lặng (không tự gửi mã ghép nối); quản trị duyệt ở Channels.
+- Người lạ nhắn khi pairing đang bật: agent im lặng; quản trị bấm **Chỉ định demo** cho hội thoại đó ở *Danh sách chờ duyệt* — **duyệt một lần là AI trả lời luôn** (từ 1.21.1 không còn bước duyệt mã pairing thứ hai).
 - Chế độ an toàn chỉ giới hạn **agent tự trả lời**. Nhân viên gửi từ Inbox và ứng dụng AI gửi qua MCP thì gửi được cho mọi số/nhóm.
 
 Agent nhận được: chữ, ảnh, file (≤ 10 MB). Tin nhắn thoại, video, vị trí, danh thiếp chỉ được ghi chú cho agent.

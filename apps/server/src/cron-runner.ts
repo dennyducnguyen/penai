@@ -20,7 +20,7 @@ import {
   type DueCronJob,
 } from "@penai/db";
 import { formatInZone, nextRun, runAgent, Scheduler } from "@penai/core";
-import type { Channel } from "@penai/channels";
+import { pairingGateApplies, type Channel } from "@penai/channels";
 import { buildLoopDeps, agentOpts, reasoningEffortOf, systemContext, type RuntimeDeps } from "./agent-runtime.js";
 import { channelHandlers, scheduleOnChannelQueue } from "./channels-runtime.js";
 import { createOutboundCollector, describeOutbound, filesMarker, webDirs } from "./web-chat.js";
@@ -154,7 +154,7 @@ export class CronRunner {
 
     const ch = await getChannelById(db, sysCtx, origin.channelId);
     if (!ch) return { ok: false, reason: "Kênh chat của lịch đã bị xóa — lịch được tắt.", disable: true };
-    if (ch.requirePairing && !(await isPaired(db, sysCtx, ch.id, origin.senderId))) {
+    if (pairingGateApplies(ch.kind, ch.requirePairing) && !(await isPaired(db, sysCtx, ch.id, origin.senderId))) {
       return { ok: false, reason: "Người đặt lịch không còn được duyệt trên kênh — lịch được tắt.", disable: true };
     }
     if (!origin.deliver) return { ok: true, ctx: sysCtx };

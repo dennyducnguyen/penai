@@ -14,6 +14,13 @@ số NHỎ khi sửa lỗi).
 - **Sửa lỗi**: gán kênh Fanpage / Instagram cho Thành viên ở trang Người dùng trước đây không được lưu — nay đã lưu.
 
 Hướng dẫn: [docs/inbox-phan-cong.md](docs/inbox-phan-cong.md). Cập nhật: `sudo penai update`. Có migration nhỏ (thêm một cột và một bảng), không phải làm gì thêm.
+## 1.21.1 — 2026-11-15
+
+- **Đăng nhập Google Antigravity — sửa lỗi "Invalid code verifier"**: trước đây link đăng nhập chỉ sống 60 giây; đăng nhập Google lâu hơn (chọn tài khoản, xác minh 2 bước) là phiên chết, bấm Đăng nhập lại rồi dán mã lấy từ tab Google cũ thì bị từ chối. Nay link dùng được **5 phút**, trang Providers **đếm ngược** thời gian còn lại, hết hạn hoặc dán mã hỏng thì có ngay nút **Lấy link mới** (không phải tải lại trang) và báo lỗi bằng lời dễ hiểu. Dán nguyên link có `?code=…` cũng được.
+- **Antigravity chưa đăng nhập không còn làm máy chậm**: trước đây trang Providers cứ 3 giây lại chạy một tiến trình kiểm tra (~200 MB mỗi cái); nay chỉ kiểm tra lại mỗi phút và không chạy trùng.
+- **Zalo / WhatsApp cá nhân — duyệt một lần là AI trả lời**: bấm **Chỉ định demo** cho người/nhóm ở *Danh sách chờ duyệt* là xong. Trước đây kênh bật "Yêu cầu pairing" còn bắt duyệt thêm mã pairing lần hai khi người đó nhắn tiếp.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
 
 ## 1.21.0 — 2026-11-09
 

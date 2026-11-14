@@ -32,6 +32,7 @@ Kênh được thiết kế để đăng nhập được cả **tài khoản Zal
 
 - Agent **chỉ tự trả lời** trong các hội thoại được cho phép:
   - Hội thoại được **"Chỉ định demo"** (Channels → Kết nối QR → danh sách ai/nhóm đã nhắn tới → bấm Chỉ định demo; lưu ở `config.demo_threads`, dạng `group:<id>` / `direct:<id>`).
+  - Bấm **Chỉ định demo** là đủ — **duyệt một lần là AI trả lời luôn** từ tin kế tiếp của người đó (từ 1.21.1 không còn phải duyệt thêm mã pairing ở mục *Yêu cầu chờ duyệt*).
   - **Mọi tin riêng** nếu kênh **bỏ tick "Yêu cầu pairing"**. Nhóm vẫn phải chỉ định demo. ⚠️ Chỉ bỏ tick khi tài khoản dành riêng cho bot — tài khoản thật mà mở tin riêng là agent trả lời cả bạn bè/người thân.
 - Trong nhóm được phép, agent mặc định chỉ trả lời khi được **@nhắc tên**, **trả lời vào tin của bot**, hoặc lệnh `/...`. Muốn trả lời mọi tin trong nhóm: đặt `config.require_mention = false`.
 - Pairing bật mà người gửi chưa được duyệt → agent **im lặng** (không gửi mã ghép nối như các kênh khác); mã vẫn được cấp, quản trị duyệt ở Channels → Yêu cầu chờ duyệt.
