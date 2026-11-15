@@ -4,6 +4,12 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.22.1 — 2026-11-15
+
+- **Providers — sửa nút "Đăng nhập lại" của từng tài khoản ChatGPT**: trong Providers → dòng `codex` → **Chi tiết**, tài khoản ở trạng thái "cần đăng nhập lại" bấm **Đăng nhập lại** trước đây không có gì xảy ra. Nay nút mở link đăng nhập và ô dán link như khi thêm tài khoản; đăng nhập xong tài khoản được cập nhật tại chỗ.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.22.0 — 2026-11-15
 
 - **Inbox — phân công hội thoại cho từng nhân viên** (Zalo cá nhân, WhatsApp cá nhân, Fanpage, Instagram). Người dùng → Sửa nhân viên → cạnh mỗi kênh chọn **Tất cả hội thoại** (mặc định, như trước nay) hoặc **Chỉ hội thoại được giao**. Nhân viên ở chế độ sau chỉ thấy, tìm, đọc và trả lời được khách / nhóm chat được giao cho mình. Quản trị và Vận hành vẫn thấy tất cả. Doanh nghiệp không cần phân quyền thì không phải làm gì.

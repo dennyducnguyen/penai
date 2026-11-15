@@ -993,7 +993,9 @@ export const INDEX_HTML = `<!doctype html>
     // Đăng nhập codex (OAuth). PenAI chạy trên server nên trang callback
     // localhost:1455 mở ở MÁY NGƯỜI DÙNG, server không nhận được → hiện ô dán
     // link callback để hoàn tất. Vẫn poll phòng khi chạy local (tự hoàn tất).
-    function codexLogin(container, pName, btn, expectCount) {
+    // reauthAlias: đăng nhập lại MỘT tài khoản đã có trong pool — xong khi tài khoản đó hết
+    // trạng thái "cần đăng nhập lại" (provider vốn đã loggedIn nhờ tài khoản khác).
+    function codexLogin(container, pName, btn, expectCount, reauthAlias) {
       btn.disabled = true; btn.textContent = "Đang lấy link...";
       api("/v1/providers/" + pName + "/login", { method: "POST" }).then(function (r) {
         window.open(r.authorizeUrl, "_blank");
@@ -1012,7 +1014,10 @@ export const INDEX_HTML = `<!doctype html>
           api("/v1/providers").then(function (jj) {
             var pv = jj.providers.find(function (x) { return x.name === pName; });
             var n = (pv && pv.accounts) ? pv.accounts.length : 0;
-            if (pv && pv.loggedIn && (expectCount === undefined || n > expectCount)) { clearInterval(poll); PAGES.providers(); }
+            var finished = reauthAlias
+              ? !!pv && (pv.accounts || []).some(function (a) { return a.alias === reauthAlias && a.status !== "needs_reauth"; })
+              : !!pv && pv.loggedIn && (expectCount === undefined || n > expectCount);
+            if (finished) { clearInterval(poll); PAGES.providers(); }
           }).catch(function () {});
         }, 2500);
         setTimeout(function () { clearInterval(poll); }, 600000);
@@ -1250,7 +1255,7 @@ export const INDEX_HTML = `<!doctype html>
                   var abtns = el("span");
                   if (a.status === "needs_reauth") {
                     var re = el("button", { "class": "ghost sm" }, "Đăng nhập lại");
-                    re.onclick = function () { codexLogin(p.name, re, undefined); };
+                    re.onclick = function () { codexLogin(detail, p.name, re, undefined, a.alias); };
                     abtns.appendChild(re); abtns.appendChild(document.createTextNode(" "));
                   }
                   var delA = el("button", { "class": "ghost sm" }, "Gỡ");
