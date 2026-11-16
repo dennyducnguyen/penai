@@ -4,6 +4,7 @@ import type {
   ToolCallData,
   WorkspaceContext,
 } from "@penai/shared";
+import { logger } from "@penai/shared";
 import type {
   ChatUsage,
   Provider,
@@ -201,15 +202,39 @@ export type AgentEvent =
   | { type: "done"; finalText: string; iterations: number; usage: ChatUsage }
   | { type: "error"; message: string };
 
+/** Thay cho tin assistant rỗng trong lịch sử khi gửi lại provider. */
+export const EMPTY_TURN_PLACEHOLDER = "(Lượt này kết thúc mà chưa có câu trả lời.)";
+
+/** Chỉ dẫn chèn vào lần gọi chốt khi đã dùng hết số vòng tool. */
+const OUT_OF_STEPS_NOTE =
+  "[Hệ thống] Đã dùng hết số bước gọi tool cho lượt này — không gọi tool nữa. " +
+  "Hãy trả lời người dùng ngay: tóm tắt việc đã làm được, kết quả có trong tay và việc còn dang dở.";
+
+/** Câu chốt thay thế khi mô hình không trả về nội dung. */
+function emptyAnswerText(outOfSteps: boolean, maxIterations: number): string {
+  return outOfSteps
+    ? `⚠️ Đã dùng hết ${maxIterations} bước xử lý cho phép mà chưa có câu trả lời cuối. ` +
+        `Nhắn "tiếp tục" để làm tiếp, hoặc nhờ quản trị viên tăng "Số vòng lặp tối đa" của agent.`
+    : "⚠️ Mô hình không trả về nội dung. Vui lòng thử lại.";
+}
+
 function toProviderMessage(m: StoredMessage): ProviderChatMessage | null {
   if (m.role === "user" && m.content.kind === "text") {
     return { role: "user", content: m.content.text };
   }
   if (m.role === "assistant" && m.content.kind === "assistant") {
+    const hasTools = m.content.toolCalls.length > 0;
+    // Tin assistant rỗng và không gọi tool (phiên cũ lưu trước bản 1.22.2) không
+    // hợp lệ với mọi API: OpenAI-compatible báo 400 "content is required",
+    // Anthropic báo mảng content rỗng. Thay bằng câu giữ chỗ để vẫn xen kẽ
+    // user/assistant và mô hình biết lượt đó chưa có câu trả lời.
+    if (!hasTools && !m.content.text?.trim()) {
+      return { role: "assistant", content: EMPTY_TURN_PLACEHOLDER };
+    }
     return {
       role: "assistant",
       content: m.content.text,
-      ...(m.content.toolCalls.length ? { toolCalls: m.content.toolCalls } : {}),
+      ...(hasTools ? { toolCalls: m.content.toolCalls } : {}),
     };
   }
   if (m.role === "tool" && m.content.kind === "tool_result") {
@@ -296,12 +321,17 @@ export async function* runAgent(
 
     // think — quá max_iterations thì gọi chốt KHÔNG kèm tools để ép trả lời
     const useTools = iterations < agent.maxIterations && toolDefs.length > 0;
+    // Hết số vòng (không phải agent vốn không có tool): nhắc mô hình tổng kết,
+    // nếu không nhiều mô hình trả về rỗng vì đang dở việc mà mất tool.
+    const outOfSteps = !useTools && toolDefs.length > 0 && iterations > 0;
     let response;
     try {
       for await (const ev of deps.provider.chatStream({
         model: agent.model,
         ...(systemPrompt ? { system: systemPrompt } : {}),
-        messages: transcript,
+        messages: outOfSteps
+          ? [...transcript, { role: "user", content: OUT_OF_STEPS_NOTE }]
+          : transcript,
         ...(useTools ? { tools: toolDefs } : {}),
         ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}),
         ...(signal ? { signal } : {}),
@@ -310,10 +340,21 @@ export async function* runAgent(
         else response = ev.response;
       }
     } catch (err) {
-      yield { type: "error", message: (err as Error).message };
+      const message = (err as Error).message;
+      if (!signal?.aborted) {
+        logger.warn(
+          { sessionId, provider: deps.provider.name, model: agent.model, iterations },
+          `agent loop: gọi mô hình lỗi — ${message}`,
+        );
+      }
+      yield { type: "error", message };
       return;
     }
     if (!response) {
+      logger.warn(
+        { sessionId, provider: deps.provider.name, model: agent.model, iterations },
+        "agent loop: provider không trả về kết quả",
+      );
       yield { type: "error", message: "Provider không trả về kết quả" };
       return;
     }
@@ -322,10 +363,19 @@ export async function* runAgent(
 
     // Không còn tool call (hoặc đã hết quota vòng lặp) → chốt câu trả lời
     if (response.toolCalls.length === 0 || !useTools) {
-      const finalText = response.content ?? "";
+      // Không bao giờ lưu/trả câu chốt rỗng: người dùng tưởng chat treo, và tin
+      // rỗng trong lịch sử làm provider từ chối các lượt sau.
+      let finalText = response.content ?? "";
+      if (!finalText.trim()) {
+        finalText = emptyAnswerText(outOfSteps, agent.maxIterations);
+        logger.warn(
+          { sessionId, provider: deps.provider.name, model: agent.model, iterations, outOfSteps },
+          "agent loop: mô hình trả câu chốt rỗng",
+        );
+      }
       await deps.store.appendMessage(ctx, sessionId, {
         role: "assistant",
-        content: { kind: "assistant", text: response.content, toolCalls: [] },
+        content: { kind: "assistant", text: finalText, toolCalls: [] },
       });
       if (deps.onEvent) {
         await deps.onEvent("stop", { sessionId, finalText, iterations }).catch(() => {});

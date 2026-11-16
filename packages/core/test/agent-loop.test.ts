@@ -21,7 +21,12 @@ import {
   TEST_APP_URL,
   type TestFixtures,
 } from "@penai/db/testing";
-import { runAgent, type AgentEvent, type AgentLoopDeps } from "../src/agent-loop.js";
+import {
+  EMPTY_TURN_PLACEHOLDER,
+  runAgent,
+  type AgentEvent,
+  type AgentLoopDeps,
+} from "../src/agent-loop.js";
 
 let fx: TestFixtures;
 let dbh: DbHandle;
@@ -198,6 +203,79 @@ describe("Agent loop (spec-agent-loop)", () => {
     const done = events.at(-1)!;
     expect(done.type === "done" && done.finalText).toBe("chốt");
     expect(done.type === "done" && done.iterations).toBe(3);
+  });
+
+  it("hết max_iterations + mô hình trả rỗng → vẫn có câu chốt báo hết bước, lần gọi chốt có chỉ dẫn tổng kết", async () => {
+    const requests: ChatRequest[] = [];
+    const provider: Provider = {
+      name: "empty-final",
+      async chat(req) {
+        requests.push({ ...req, messages: [...req.messages] });
+        return req.tools?.length
+          ? toolResponse(`call_${Math.floor(Math.random() * 1e9)}`, "current_time")
+          : { content: null, toolCalls: [], stopReason: "end", usage: { inputTokens: 1, outputTokens: 0 } };
+      },
+      async *chatStream(req) {
+        yield { type: "done", response: await this.chat(req) };
+      },
+    };
+    const sessionId = await newSession();
+    const events = await collect(
+      runAgent(makeDeps(provider), {
+        ctx: ctx(),
+        agent: { ...AGENT, maxIterations: 2 },
+        sessionId,
+        userMessage: "làm việc dài",
+      }),
+    );
+    const done = events.at(-1)!;
+    expect(done.type).toBe("done");
+    expect(done.type === "done" && done.finalText).toContain("hết 2 bước");
+    const lastReq = requests.at(-1)!;
+    expect(lastReq.tools).toBeUndefined();
+    const lastMsg = lastReq.messages.at(-1)!;
+    expect(lastMsg.role).toBe("user");
+    expect(lastMsg.content).toContain("hết số bước gọi tool");
+    // Tin lưu trong DB không rỗng; chỉ dẫn hệ thống không lưu vào lịch sử
+    const msgs = await loadMessages(dbh.db, ctx(), sessionId);
+    const last = msgs.at(-1)!;
+    expect(last.role).toBe("assistant");
+    expect((last.content as { text?: string | null }).text).toContain("hết 2 bước");
+    expect(msgs.filter((m) => m.role === "user")).toHaveLength(1);
+  });
+
+  it("mô hình trả rỗng khi chưa gọi tool nào → câu chốt báo thử lại (không lưu tin rỗng)", async () => {
+    const provider = new ScriptedProvider([
+      { content: "  ", toolCalls: [], stopReason: "end", usage: { inputTokens: 1, outputTokens: 0 } },
+    ]);
+    const sessionId = await newSession();
+    const events = await collect(
+      runAgent(makeDeps(provider), { ctx: ctx(), agent: AGENT, sessionId, userMessage: "alo" }),
+    );
+    const done = events.at(-1)!;
+    expect(done.type === "done" && done.finalText).toContain("không trả về nội dung");
+  });
+
+  it("lịch sử có sẵn tin assistant rỗng (phiên cũ) → gửi provider bằng câu giữ chỗ, không gửi content null", async () => {
+    const sessionId = await newSession();
+    await appendMessage(dbh.db, ctx(), sessionId, {
+      role: "user",
+      content: { kind: "text", text: "lượt cũ" },
+    });
+    await appendMessage(dbh.db, ctx(), sessionId, {
+      role: "assistant",
+      content: { kind: "assistant", text: null, toolCalls: [] },
+    });
+    const provider = new ScriptedProvider([textResponse("ok")]);
+    await collect(
+      runAgent(makeDeps(provider), { ctx: ctx(), agent: AGENT, sessionId, userMessage: "tiếp tục" }),
+    );
+    const sent = provider.requests[0]!.messages;
+    expect(sent.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(sent[1]!.content).toBe(EMPTY_TURN_PLACEHOLDER);
+    for (const m of sent) {
+      if (m.role === "assistant" && !m.toolCalls?.length) expect(m.content?.trim()).toBeTruthy();
+    }
   });
 
   it("AC-5: lượt sau nhận đủ history (kể cả tool result cũ)", async () => {

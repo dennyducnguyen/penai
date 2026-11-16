@@ -131,7 +131,9 @@ export class OpenAICompatProvider implements Provider, EmbeddingProvider {
         }
       } else if (m.role === "assistant") {
         const am: OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam =
-          { role: "assistant", content: m.content };
+          // content chỉ được null khi có tool_calls (đặc tả Chat Completions);
+          // provider kiểm tra chặt (HoiAI) trả 400 nếu thiếu.
+          { role: "assistant", content: m.content ?? (m.toolCalls?.length ? null : "") };
         if (m.toolCalls?.length) {
           am.tool_calls = m.toolCalls.map((tc) => ({
             id: tc.id,

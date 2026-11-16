@@ -4,6 +4,15 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
+## 1.22.2 — 2026-11-16
+
+- **Chat không còn "treo" khi agent dùng hết số bước**: trước đây agent dùng hết "Số vòng lặp tối đa" mà mô hình trả về rỗng thì trang Chat không hiện gì, cũng không báo lỗi. Nay agent được nhắc tổng kết việc đã làm ở lần trả lời cuối; nếu mô hình vẫn không trả lời thì người dùng nhận được thông báo rõ: đã hết số bước, nhắn "tiếp tục" để làm tiếp hoặc tăng "Số vòng lặp tối đa" của agent.
+- **Sửa lỗi `400 … The content field is a required field`** (gặp với HoiAI và các provider kiểm tra chặt): cuộc trò chuyện từng có một lượt trả lời rỗng thì các lượt sau bị provider từ chối. Nay PenAI không lưu lượt trả lời rỗng nữa, và các cuộc trò chuyện cũ đã dính lỗi tự chạy lại bình thường (không phải xóa hội thoại).
+- **Lỗi gọi mô hình có trong nhật ký**: `sudo penai logs` nay ghi lại khi provider báo lỗi hoặc mô hình trả lời rỗng (kèm provider, model, mã phiên) — trước đây chỉ xem được trong Traces.
+- **Agent gõ `python` chạy được**: máy chủ Ubuntu/Debian chỉ có `python3` nên lệnh `python …` của agent báo "not found" và tốn một bước. Nay vùng chạy lệnh của agent có sẵn `python` trỏ về `python3`.
+
+Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+
 ## 1.22.1 — 2026-11-15
 
 - **Providers — sửa nút "Đăng nhập lại" của từng tài khoản ChatGPT**: trong Providers → dòng `codex` → **Chi tiết**, tài khoản ở trạng thái "cần đăng nhập lại" bấm **Đăng nhập lại** trước đây không có gì xảy ra. Nay nút mở link đăng nhập và ô dán link như khi thêm tài khoản; đăng nhập xong tài khoản được cập nhật tại chỗ.

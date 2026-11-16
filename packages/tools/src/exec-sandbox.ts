@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readlinkSync, realpathSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { delimiter, dirname, isAbsolute, resolve } from "node:path";
 import { logger } from "@penai/shared";
 
@@ -224,5 +232,32 @@ export function ensureSandboxDirs(homeDir: string): { homeDir: string; tmpDir: s
   const home = resolve(homeDir);
   const tmp = resolve(home, ".sandbox-tmp");
   mkdirSync(tmp, { recursive: true, mode: 0o700 });
+  ensurePythonAlias(home);
   return { homeDir: home, tmpDir: tmp };
+}
+
+/**
+ * Debian/Ubuntu chỉ có `python3`; mô hình hay gõ `python` → "python: not found",
+ * tốn một vòng tool. Tạo sẵn <HOME>/.local/bin/python → python3 (thư mục này
+ * nằm cuối PATH của lệnh exec nên không che `python` thật nếu máy có).
+ */
+export function ensurePythonAlias(
+  homeDir: string,
+  pathEnv = process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+): void {
+  if (process.platform !== "linux") return;
+  try {
+    const dirs = pathEnv.split(":").filter((d) => isAbsolute(d));
+    if (dirs.some((d) => existsSync(resolve(d, "python")))) return;
+    const py3 = dirs.map((d) => resolve(d, "python3")).find((p) => existsSync(p));
+    if (!py3) return;
+    const binDir = resolve(homeDir, ".local", "bin");
+    const link = resolve(binDir, "python");
+    if (nodeFsProbe.symlinkTarget(link) === py3) return;
+    mkdirSync(binDir, { recursive: true });
+    rmSync(link, { force: true });
+    symlinkSync(py3, link);
+  } catch (err) {
+    logger.warn(`exec sandbox: không tạo được lối tắt python → python3 — ${(err as Error).message}`);
+  }
 }
