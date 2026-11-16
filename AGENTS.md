@@ -31,7 +31,8 @@ Trả lời người dùng bằng tiếng Việt; thuật ngữ kỹ thuật l�
    User là `root` thì bỏ chữ `sudo`. Máy chủ đã có PenAI khác → xem mục "Nhiều bản trên một máy".
 4. **Đọc phần cuối kết quả**: địa chỉ Dashboard + email + **mật khẩu quản trị** (chỉ in một lần) → báo ngay cho người dùng và nhắc lưu lại.
 5. **Kiểm tra**: `ssh ... 'sudo penai doctor'` → báo kết quả. Mục "CLI claude/agy chưa cài" là cảnh báo nhẹ (chỉ ảnh hưởng provider Claude/Antigravity).
-6. **Hướng dẫn người dùng bước tiếp theo trong Dashboard:** Providers → đăng nhập ChatGPT/Claude/Antigravity hoặc thêm API key → Agents → agent "Trợ lý" chọn provider/model → Chat thử → Channels nối Telegram/Zalo/Teams.
+6. **Sandbox (vùng cách ly cho lệnh agent chạy) — phải có trước khi bàn giao**: phần cuối kết quả cài và `penai doctor` phải báo sandbox bubblewrap **hoạt động**. Nếu báo "CHƯA có" / "KHÔNG ĐẠT": chạy `ssh ... 'sudo penai install-sandbox'`. Vẫn không được (VPS kiểu OpenVZ/LXC chặn user namespace) → **báo rõ cho người dùng**: PenAI và agent vẫn chạy bình thường, nhưng lệnh agent chạy không được cách ly với máy chủ (đọc được file khác mà user dịch vụ đọc được); muốn an toàn thì đổi sang VPS ảo hóa KVM. Không tự tắt tool `exec`, không tự đổi `PENAI_EXEC_SANDBOX`.
+7. **Hướng dẫn người dùng bước tiếp theo trong Dashboard:** Providers → đăng nhập ChatGPT/Claude/Antigravity hoặc thêm API key → Agents → agent "Trợ lý" chọn provider/model → Chat thử → Channels nối Telegram/Zalo/Teams.
 
 Cài bị dừng giữa chừng: đọc thông báo lỗi, sửa nguyên nhân (DNS, mạng, hết ổ đĩa…), rồi **chạy lại đúng lệnh cũ** — các bước đã xong sẽ được bỏ qua.
 
@@ -43,7 +44,7 @@ ssh ... 'sudo penai update --yes'      # sao lưu → cài bản mới → migra
 ssh ... 'sudo penai status'
 ```
 
-Báo người dùng: phiên bản cũ → mới và danh sách "Thay đổi" mà lệnh in ra. Nếu `update` báo lỗi: lệnh **đã tự quay về bản cũ** — gửi người dùng thông báo lỗi và 30 dòng cuối của file nhật ký được nhắc tới; **không tự sửa tay trên máy chủ**.
+Báo người dùng: phiên bản cũ → mới và danh sách "Thay đổi" mà lệnh in ra. Nếu cuối kết quả có dòng nhắc **máy chưa có sandbox** → chạy `sudo penai install-sandbox` rồi báo kết quả (xem bước 6 của quy trình cài mới). Nếu `update` báo lỗi: lệnh **đã tự quay về bản cũ** — gửi người dùng thông báo lỗi và 30 dòng cuối của file nhật ký được nhắc tới; **không tự sửa tay trên máy chủ**.
 
 ## Việc thường gặp
 
@@ -66,6 +67,7 @@ Báo người dùng: phiên bản cũ → mới và danh sách "Thay đổi" mà
 | Claude báo lỗi "Illegal instruction" / không chạy sau khi cài | CPU của VPS không có tập lệnh AVX2 (kiểu CPU ảo hóa cũ). `sudo penai install-cli claude` tự cài bản 2.1.112 chạy được; `sudo penai doctor` báo rõ. Muốn bản mới: nhờ nhà cung cấp VPS đổi kiểu CPU sang "host" rồi chạy lại lệnh cài |
 | Claude chậm vì nhiều người/kênh/lịch hẹn dùng cùng lúc ("Chờ quá … trong hàng đợi") | Xem: `sudo penai cli-concurrency`. Nâng số tiến trình Claude chạy song song: `sudo penai cli-concurrency 2` (mỗi tiến trình ~220 MB RAM, không cần khởi động lại). Và đặt model dự phòng (dòng dưới) |
 | Bot im lặng khi Claude hết hạn mức hoặc quá tải | Dashboard → Agents → Cấu hình → "Model dự phòng" → ＋ Thêm model dự phòng (nên khác provider, vd agent Claude thì dự phòng bằng `codex`). Model chính lỗi, hết hạn mức hoặc chờ quá lâu thì tự chuyển |
+| Lệnh agent chạy (tool `exec`) cần cách ly với máy chủ / `doctor` báo sandbox không đạt | `sudo penai install-sandbox` (cài bubblewrap + quyền AppArmor, tự khởi động lại dịch vụ). Không có sandbox agent vẫn chạy lệnh được, chỉ là không cách ly. Bắt buộc cách ly: `PENAI_EXEC_SANDBOX=required` trong `penai.env`. Chi tiết: [docs/cai-dat.md](docs/cai-dat.md) |
 | Xem lỗi | `sudo penai logs -n 200` |
 | Sao lưu thủ công | `sudo penai backup` (thêm `--with-data` để lấy cả file người dùng) |
 | Quay về bản trước | `sudo penai rollback --yes` |

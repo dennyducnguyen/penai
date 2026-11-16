@@ -4,14 +4,17 @@
 (tăng số LỚN khi có thay đổi phải làm thêm bước thủ công lúc nâng cấp; số VỪA khi thêm tính năng;
 số NHỎ khi sửa lỗi).
 
-## 1.22.2 — 2026-11-16
+## 1.23.0 — 2026-11-16
+
+- **Sandbox cho lệnh agent chạy — kiểm khi cập nhật, cài bổ sung bằng một lệnh**: sandbox (vùng cách ly bằng bubblewrap) giữ cho lệnh agent chạy chỉ thấy thư mục làm việc của nó, không đọc được bí mật của PenAI hay file khác trên máy chủ. Nay `sudo penai update` kiểm lại sau mỗi lần cập nhật và nhắc nếu máy chưa có; lệnh mới **`sudo penai install-sandbox`** cài gói còn thiếu, cấp quyền cần thiết và bật sandbox. Cài mới: phần kết quả cuối có dòng **Sandbox** báo rõ đã có hay chưa.
+- **Không có sandbox thì agent vẫn chạy được**: bản cài mới đặt `PENAI_EXEC_SANDBOX=auto` (có sandbox thì dùng, không có thì vẫn chạy lệnh, không cách ly). Bản cài cũ giữ nguyên thiết lập đang có. Muốn bắt buộc cách ly: đặt `required` trong `penai.env`. Hướng dẫn: [docs/cai-dat.md](docs/cai-dat.md).
 
 - **Chat không còn "treo" khi agent dùng hết số bước**: trước đây agent dùng hết "Số vòng lặp tối đa" mà mô hình trả về rỗng thì trang Chat không hiện gì, cũng không báo lỗi. Nay agent được nhắc tổng kết việc đã làm ở lần trả lời cuối; nếu mô hình vẫn không trả lời thì người dùng nhận được thông báo rõ: đã hết số bước, nhắn "tiếp tục" để làm tiếp hoặc tăng "Số vòng lặp tối đa" của agent.
 - **Sửa lỗi `400 … The content field is a required field`** (gặp với HoiAI và các provider kiểm tra chặt): cuộc trò chuyện từng có một lượt trả lời rỗng thì các lượt sau bị provider từ chối. Nay PenAI không lưu lượt trả lời rỗng nữa, và các cuộc trò chuyện cũ đã dính lỗi tự chạy lại bình thường (không phải xóa hội thoại).
 - **Lỗi gọi mô hình có trong nhật ký**: `sudo penai logs` nay ghi lại khi provider báo lỗi hoặc mô hình trả lời rỗng (kèm provider, model, mã phiên) — trước đây chỉ xem được trong Traces.
 - **Agent gõ `python` chạy được**: máy chủ Ubuntu/Debian chỉ có `python3` nên lệnh `python …` của agent báo "not found" và tốn một bước. Nay vùng chạy lệnh của agent có sẵn `python` trỏ về `python3`.
 
-Cập nhật: `sudo penai update`. Không có migration, không phải làm gì thêm.
+Cập nhật: `sudo penai update`. Không có migration. Lệnh `penai` trên máy chủ được thay ở cuối lần cập nhật này, nên sau khi cập nhật hãy chạy `sudo penai doctor` một lần: mục sandbox không đạt thì chạy `sudo penai install-sandbox`.
 
 ## 1.22.1 — 2026-11-15
 

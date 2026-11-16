@@ -15,6 +15,7 @@ Script cài đặt tạo lệnh `/usr/local/bin/penai` trên máy chủ. Mọi l
 | `sudo penai reset-password <email>` | Đặt lại mật khẩu đăng nhập Dashboard |
 | `sudo penai install-cli claude\|agy\|all [--force]` | Cài/nâng cấp Claude Code CLI, Antigravity CLI. Máy có CPU không có AVX2 tự cài Claude Code 2.1.112 (bản mới không chạy được trên CPU đó) |
 | `sudo penai cli-concurrency [số]` | Xem / đổi số tiến trình Claude chạy cùng lúc (mỗi tiến trình ~220 MB RAM), không cần khởi động lại |
+| `sudo penai install-sandbox` | Cài bổ sung sandbox (bubblewrap) để lệnh agent chạy được cách ly: cài gói còn thiếu, cấp quyền AppArmor riêng cho bubblewrap, thử lại rồi khởi động lại dịch vụ. Máy đã có sandbox thì không làm gì — [cai-dat.md](cai-dat.md) |
 | `sudo penai auto-update on\|off` | Bật/tắt tự cập nhật (`--channel stable\|main`, `--every 1d`) |
 | `sudo penai set-repo <url> [--key …] [--tags …]` | Đổi nguồn mã (vd bản fork, kể cả repo riêng tư) — [mo-rong.md](mo-rong.md) |
 | `sudo penai version` | Phiên bản lệnh và ứng dụng |
@@ -28,6 +29,7 @@ Script cài đặt tạo lệnh `/usr/local/bin/penai` trên máy chủ. Mọi l
 3. Giải nén bản mới vào thư mục riêng `/opt/penai/releases/<thời-điểm>-<commit>`, cài thư viện.
 4. Nâng cấp database (migration). Migration chỉ **thêm** bảng/cột nên bản cũ vẫn chạy được trên database mới.
 5. Trỏ `/opt/penai/app` sang bản mới, khởi động lại dịch vụ, chờ `/healthz` báo đúng phiên bản mới.
+6. Kiểm sandbox cho lệnh agent chạy: máy chưa có thì in một dòng nhắc `sudo penai install-sandbox` (chỉ nhắc — cập nhật vẫn xong, agent vẫn chạy).
 6. Bản mới không lên → **tự trỏ về bản cũ** và khởi động lại.
 7. Dọn bản cũ, giữ 3 bản gần nhất để `rollback`.
 

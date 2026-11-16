@@ -213,6 +213,7 @@ Cách dùng: sudo penai [--instance <tên>] <lệnh> [tùy chọn]
   install-cli claude|agy|all  Cài/nâng cấp CLI cho provider Claude / Antigravity
   cli-concurrency [số]        Xem/đổi số tiến trình Claude chạy cùng lúc (vd 2)
   install-browser [--force]   Cài/nâng cấp Chromium cho tool trình duyệt của agent
+  install-sandbox             Cài bổ sung sandbox (bubblewrap) để lệnh agent chạy được cách ly
   auto-update on|off [--channel stable|main] [--every 5min]
   set-repo <url> [--key <khóa-ssh>] [--tags <mẫu>]
                               Đổi kho mã nguồn (vd bản fork của bạn; kho riêng tư: khóa SSH chỉ đọc)
@@ -336,6 +337,7 @@ cmd_update() {
     rm -rf "$rel"
     die "Cập nhật thất bại (nhật ký: $log)"
   fi
+  sandbox_notice || true
   install_cli_from "$rel"
   prune_releases
   ok "Đã cập nhật lên $TARGET_NAME (phiên bản $version) — $PUBLIC_URL"
@@ -582,6 +584,60 @@ browser_launch_ok() { # browser_launch_ok <thư mục playwright-core> — mở 
       .then((b) => b.close()).then(() => process.exit(0), (e) => { console.error(e.message); process.exit(1); });' "$1") >>"${log:-/dev/null}" 2>&1
 }
 
+# ------------------------------------------------------------------ sandbox cho lệnh exec của agent
+sandbox_ok() { # bubblewrap chạy được dưới user dịch vụ?
+  command -v bwrap >/dev/null 2>&1 && (cd /tmp && sudo -u "$APP_USER" bwrap --ro-bind / / --dev /dev --proc /proc true) >/dev/null 2>&1
+}
+
+sandbox_mode() { sed -n 's/^PENAI_EXEC_SANDBOX=//p' "$ETC_DIR/penai.env" 2>/dev/null | tail -n1; }
+
+sandbox_notice() { # gọi sau khi cập nhật: báo nếu máy chưa có sandbox (không chặn gì)
+  sandbox_ok && return 0
+  if [[ $(sandbox_mode) == required ]]; then
+    warn "Sandbox (bubblewrap) không chạy được mà bản cài đang đặt PENAI_EXEC_SANDBOX=required → agent KHÔNG chạy được lệnh. Cài bổ sung: sudo penai install-sandbox"
+  else
+    warn "Máy chưa có sandbox (bubblewrap) cho lệnh agent chạy — agent vẫn chạy lệnh được nhưng KHÔNG cách ly với phần còn lại của máy chủ. Cài bổ sung: sudo penai install-sandbox"
+  fi
+}
+
+cmd_install_sandbox() {
+  need_root install-sandbox
+  load_conf
+  if sandbox_ok; then ok "Sandbox bubblewrap đã hoạt động — lệnh agent chạy được cách ly"; return 0; fi
+  if ! command -v bwrap >/dev/null 2>&1; then
+    info "Cài gói bubblewrap (apt)"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-upgrade bubblewrap >/dev/null \
+      || die "Không cài được gói bubblewrap (apt đang bận? mạng?) — thử lại: sudo penai install-sandbox"
+  fi
+  # Ubuntu 23.10+ chặn user namespace với chương trình thường (AppArmor). Không tắt chặn cho cả máy —
+  # chỉ cấp riêng cho /usr/bin/bwrap, và chỉ khi máy chưa có profile nào cho bwrap.
+  if ! sandbox_ok && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null) == 1 ]] \
+     && command -v apparmor_parser >/dev/null && ! grep -rqs '/usr/bin/bwrap' /etc/apparmor.d/; then
+    cat > /etc/apparmor.d/penai-bwrap <<'APPARMOR'
+# Tạo bởi lệnh penai install-sandbox: cho bubblewrap tạo user namespace (sandbox lệnh exec của agent)
+abi <abi/4.0>,
+include <tunables/global>
+
+profile penai-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/penai-bwrap>
+}
+APPARMOR
+    apparmor_parser -r /etc/apparmor.d/penai-bwrap >/dev/null 2>&1 && ok "Cấp quyền AppArmor riêng cho bubblewrap (Ubuntu chặn user namespace)"
+  fi
+  if ! sandbox_ok; then
+    warn "bubblewrap đã cài nhưng không chạy được: máy chủ chặn user namespace (thường gặp ở VPS kiểu OpenVZ/LXC)."
+    warn "Agent vẫn chạy lệnh được nhưng KHÔNG cách ly. Muốn có sandbox: đổi sang VPS ảo hóa KVM rồi chạy lại lệnh này."
+    return 1
+  fi
+  # Ứng dụng chỉ dò bubblewrap một lần lúc chạy lệnh đầu tiên → khởi động lại để nhận sandbox.
+  if systemctl is-active --quiet "$SERVICE"; then
+    systemctl restart "$SERVICE"
+    health_ok || die "Sandbox đã cài nhưng dịch vụ không lên lại — xem: sudo penai logs"
+  fi
+  ok "Đã bật sandbox bubblewrap — từ giờ lệnh agent chạy được cách ly"
+}
+
 cmd_auto_update() {
   need_root auto-update
   local action="${1:-}" every="5min" ch=""
@@ -631,7 +687,7 @@ cmd_doctor() {
   check "Ứng dụng trả lời /healthz" "curl -fsS --max-time 5 http://127.0.0.1:$PORT/healthz"
   check "PostgreSQL (cổng $DB_PORT) + database $DB_NAME" "sudo -u postgres psql -h /var/run/postgresql -p $DB_PORT -d $DB_NAME -tAc 'select 1'"
   check "Extension pgvector" "sudo -u postgres psql -h /var/run/postgresql -p $DB_PORT -d $DB_NAME -tAc \"select 1 from pg_extension where extname='vector'\" | grep -q 1"
-  check "Sandbox bubblewrap cho lệnh exec của agent" "sudo -u $APP_USER bwrap --ro-bind / / --dev /dev --proc /proc true" "agent chạy lệnh không cách ly"
+  check "Sandbox bubblewrap cho lệnh exec của agent" "sandbox_ok" "agent vẫn chạy lệnh nhưng không cách ly — sửa: sudo penai install-sandbox"
   if [[ ! -x $DATA_HOME/.local/bin/claude ]]; then
     warn "CLI claude đã cài — KHÔNG ĐẠT: sudo penai install-cli claude"; fail=1
   elif claude_cli_runs; then
@@ -677,6 +733,7 @@ case "$cmd" in
   install-cli) cmd_install_cli "$@" ;;
   cli-concurrency) cmd_cli_concurrency "$@" ;;
   install-browser) cmd_install_browser "$@" ;;
+  install-sandbox) cmd_install_sandbox ;;
   auto-update) cmd_auto_update "$@" ;;
   set-repo) cmd_set_repo "$@" ;;
   *) cmd_help; die "Không có lệnh '$cmd'" ;;
