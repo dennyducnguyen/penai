@@ -313,10 +313,13 @@ profile penai-bwrap /usr/bin/bwrap flags=(unconfined) {
 APPARMOR
   apparmor_parser -r /etc/apparmor.d/penai-bwrap >/dev/null 2>&1 && ok "Cấp quyền AppArmor riêng cho bubblewrap (Ubuntu chặn user namespace)"
 fi
+# Chế độ auto: có bubblewrap thì lệnh chạy cách ly, không có thì agent vẫn chạy được (không cách ly).
+# Muốn bắt buộc cách ly (không có sandbox thì từ chối chạy lệnh): đặt PENAI_EXEC_SANDBOX=required trong penai.env.
+SANDBOX=auto; SANDBOX_OK=0
 if bwrap_ok; then
-  SANDBOX=required; ok "Sandbox bubblewrap hoạt động — lệnh exec của agent chạy cách ly"
+  SANDBOX_OK=1; ok "Sandbox bubblewrap hoạt động — lệnh exec của agent chạy cách ly"
 else
-  SANDBOX=auto; warn "bubblewrap không chạy được trên máy này (VPS chặn user namespace) — lệnh exec của agent sẽ chạy KHÔNG cách ly"
+  warn "Sandbox bubblewrap KHÔNG chạy được trên máy này (VPS chặn user namespace) — agent vẫn chạy lệnh được nhưng KHÔNG cách ly. Cài bổ sung sau: sudo penai install-sandbox"
 fi
 if [[ $NO_NGINX == 1 ]]; then PUBLIC_URL="http://$(hostname -I | awk '{print $1}'):$PORT"
 elif [[ $NO_SSL == 1 ]]; then PUBLIC_URL="http://$DOMAIN"
@@ -432,6 +435,11 @@ if [[ $GENERATED == 1 ]]; then
   echo "  Mật khẩu    : ${C_B}$ADMIN_PASSWORD${C_OFF}   ← chỉ hiện MỘT lần, hãy lưu lại ngay"
 else
   echo "  Mật khẩu    : (mật khẩu bạn đã đặt bằng --admin-password)"
+fi
+if [[ $SANDBOX_OK == 1 ]]; then
+  echo "  Sandbox     : hoạt động — lệnh agent chạy được cách ly với máy chủ"
+else
+  echo "  Sandbox     : ${C_YEL}CHƯA có${C_OFF} — agent vẫn chạy lệnh được nhưng không cách ly. Cài bổ sung: sudo penai install-sandbox"
 fi
 cat <<EOF
 

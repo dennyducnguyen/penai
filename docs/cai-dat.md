@@ -37,7 +37,16 @@ Script làm lần lượt 10 bước và in tiến độ:
 9. Cài Claude Code CLI và Antigravity CLI (script chính thức của Anthropic và Google).
 10. Cấu hình nginx và xin chứng chỉ HTTPS Let's Encrypt (tự gia hạn).
 
-Cuối cùng script in **địa chỉ, email và mật khẩu quản trị** — mật khẩu chỉ hiện một lần.
+Cuối cùng script in **địa chỉ, email và mật khẩu quản trị** — mật khẩu chỉ hiện một lần — và dòng **Sandbox** (xem ngay dưới).
+
+### Sandbox cho lệnh agent chạy
+
+Agent có tool `exec` để chạy lệnh (Python, Node, pandoc…). **Sandbox** (vùng cách ly, dùng công cụ bubblewrap) làm cho mỗi lệnh chỉ thấy thư mục làm việc của nó — không đọc được bí mật của PenAI, token đăng nhập provider hay file của website khác trên cùng máy chủ.
+
+- Script cài tự cài bubblewrap và bật sandbox. Cài xong dòng `Sandbox : hoạt động` là đủ.
+- Dòng `Sandbox : CHƯA có` nghĩa là máy chủ không cho bubblewrap chạy. **PenAI và agent vẫn chạy bình thường**, chỉ là lệnh agent chạy không được cách ly. Thử cài bổ sung: `sudo penai install-sandbox`. Vẫn không được thì VPS thuộc loại chặn user namespace (OpenVZ/LXC) — muốn có sandbox phải đổi sang VPS ảo hóa KVM.
+- Mỗi lần `sudo penai update` đều kiểm lại và nhắc nếu máy chưa có sandbox; `sudo penai doctor` cũng có mục này.
+- Mặc định `PENAI_EXEC_SANDBOX=auto` trong `/etc/penai/penai.env`: có sandbox thì dùng, không có thì vẫn chạy. Muốn **bắt buộc** cách ly (không có sandbox thì agent từ chối chạy lệnh): đổi thành `required` rồi `sudo penai restart`.
 
 ## 3. Tùy chọn
 
@@ -80,7 +89,7 @@ Mọi thứ của bản `penai2` tách riêng: user `penai2`, `/opt/penai2`, `/e
 | `Chưa xin được HTTPS` | DNS chưa trỏ đúng hoặc cổng 80 bị chặn → mở cổng, rồi `sudo certbot --nginx -d <tên-miền>` và sửa `PENAI_PUBLIC_URL` trong `/etc/penai/penai.env` thành `https://...`, rồi `sudo penai restart` |
 | `Cụm PostgreSQL ... đã chứa một bản PenAI khác` | Máy đã có PenAI → dùng `--instance` + `--new-pg-cluster` như mục 4 |
 | Dừng giữa chừng vì mạng | Chạy lại đúng lệnh cũ — bước đã xong được bỏ qua |
-| `bubblewrap không chạy được` | VPS (thường là OpenVZ/LXC) chặn user namespace → lệnh exec của agent chạy không cách ly. Nên đổi sang VPS KVM. Trên Ubuntu 24.04 script tự tạo profile AppArmor `/etc/apparmor.d/penai-bwrap` chỉ cho riêng bubblewrap |
+| `Sandbox bubblewrap KHÔNG chạy được` / `Sandbox : CHƯA có` | VPS (thường là OpenVZ/LXC) chặn user namespace → agent vẫn chạy lệnh được nhưng không cách ly. Thử `sudo penai install-sandbox`; không được thì đổi sang VPS KVM. Trên Ubuntu 24.04 script tự tạo profile AppArmor `/etc/apparmor.d/penai-bwrap` chỉ cho riêng bubblewrap |
 | Cài xong không vào được trang | `sudo penai doctor` để xem mục nào không đạt |
 
 ## 6. Gỡ cài đặt
